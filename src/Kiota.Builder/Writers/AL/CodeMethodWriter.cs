@@ -7,6 +7,7 @@ using Kiota.Builder.Extensions;
 using Kiota.Builder.OrderComparers;
 
 namespace Kiota.Builder.Writers.AL;
+
 public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionService>
 {
     public CodeMethodWriter(ALConventionService conventionService) : base(conventionService) { }
@@ -286,7 +287,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             writer.IncreaseIndent();
             if (conventions.IsCodeunitType(codeElement.ReturnType))
             {
-                writer.WriteLine($"Clear(TarCodeunit);");
+                writer.WriteLine($"Clear(TargetCodeunit);");
                 writer.WriteLine($"TargetCodeunit.SetBody(JToken, DebugCall);");
                 writer.WriteLine($"CodeunitList.Add(TargetCodeunit);");
             }
