@@ -11,6 +11,7 @@ using Kiota.Builder.Extensions;
 using Kiota.Builder.Writers.AL;
 
 namespace Kiota.Builder.Refiners;
+
 public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 {
     private static ALReservedNamesProvider ReservedNamesProvider { get; } = new();

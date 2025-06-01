@@ -17,7 +17,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var alWriter = writer as ALWriter;
         ArgumentNullException.ThrowIfNull(codeElement);
         ArgumentNullException.ThrowIfNull(alWriter);
-        if (codeElement.IsOfKind(CodeMethodKind.Constructor, CodeMethodKind.ClientConstructor, CodeMethodKind.Deserializer, CodeMethodKind.Factory, CodeMethodKind.RawUrlConstructor, CodeMethodKind.RequestGenerator, CodeMethodKind.RawUrlBuilder)) return;
+        if (codeElement.IsOfKind(CodeMethodKind.Constructor, CodeMethodKind.ClientConstructor, CodeMethodKind.Factory, CodeMethodKind.RawUrlConstructor, CodeMethodKind.RequestGenerator, CodeMethodKind.RawUrlBuilder)) return;
         if (codeElement.ParentIsSkipped()) return; // we can't handle nested classes, but also can't remove them from the model
         if (codeElement.ReturnType == null) throw new InvalidOperationException($"{nameof(codeElement.ReturnType)} should not be null");
         ArgumentNullException.ThrowIfNull(alWriter);
@@ -75,6 +75,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                 WriteRequestExecutorBody(codeElement, writer);
                 break;
             case CodeMethodKind.Deserializer:
+                WriteSetBodyMethodBody(codeElement, writer);
                 break;
             case CodeMethodKind.ClientConstructor:
                 break;
@@ -99,7 +100,6 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             case CodeMethodKind.ComposedTypeMarker:
                 throw new InvalidOperationException("ComposedTypeMarker is not required as interface is explicitly implemented.");
             case CodeMethodKind.Custom:
-                WriteSetBodyMethodBody(codeElement, writer);
                 WriteFromPropertyGetterMethodBody(codeElement, writer);
                 WriteFromPropertySetterMethodBody(codeElement, writer);
                 WriteValidateBodyMethodBody(codeElement, parentClass, writer);
@@ -467,8 +467,6 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     }
     private void WriteSetBodyMethodBody(CodeMethod codeElement, LanguageWriter writer)
     {
-        if (codeElement.Name != "SetBody")
-            return;
         switch (codeElement.Parameters.Count())
         {
             case 1: WriteSetBodyMethodBodyForSingleParameter(codeElement, writer); break;

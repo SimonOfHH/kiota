@@ -6,6 +6,7 @@ using Kiota.Builder.CodeDOM;
 using static Kiota.Builder.CodeDOM.CodeTypeBase;
 
 namespace Kiota.Builder.Writers.AL;
+
 public static class ALVariableProvider
 {
     public static ALConventionService ConventionService { get; } = new();
@@ -196,7 +197,7 @@ public static class ALVariableProvider
             {
                 DocumentationLabel = "Creates a new instance of the model",
             },
-            Kind = CodeMethodKind.Custom,
+            Kind = CodeMethodKind.Deserializer,
         };
         method.AddParameter(GetParameterP($"New{ConventionService.ModelCodeunitJsonBodyVariableName}", "JsonToken", "1"));
         return method;
