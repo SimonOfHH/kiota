@@ -109,17 +109,12 @@ public static class ALVariableProvider
     }
     public static IEnumerable<CodeEnumOption> GetDefaultObjectProperties(CodeEnum codeEnum)
     {
-        return
-        [
-            GetObjectProperty("Access", "Internal").ToCodeEnumOption()
-        ];
+        return new List<CodeEnumOption>();
     }
     public static IEnumerable<CodeProperty> GetDefaultObjectProperties(CodeClass codeClass)
     {
-        return
-        [
-            GetObjectProperty("Access", "Internal")
-        ];
+        return new List<CodeProperty>();
+
     }
     public static IEnumerable<CodeProperty> GetDefaultGlobals(CodeClass codeClass)
     {

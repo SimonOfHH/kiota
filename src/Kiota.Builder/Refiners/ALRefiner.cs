@@ -197,9 +197,17 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     protected static void AddObjectProperties(CodeElement currentElement)
     {
         if (currentElement is CodeClass currentClass)
-            currentClass.AddProperty(ALVariableProvider.GetDefaultObjectProperties(currentClass).ToArray());
+        {
+            var defaults = ALVariableProvider.GetDefaultObjectProperties(currentClass).ToArray();
+            if (defaults.Length != 0)
+                currentClass.AddProperty(defaults);
+        }
         if (currentElement is CodeEnum currentEnum)
-            currentEnum.AddOption(ALVariableProvider.GetDefaultObjectProperties(currentEnum).ToArray());
+        {
+            var defaults = ALVariableProvider.GetDefaultObjectProperties(currentEnum).ToArray();
+            if (defaults.Length != 0)
+                currentEnum.AddOption(defaults);
+        }
         CrawlTree(currentElement, AddObjectProperties);
     }
     protected static void UpdateModelClasses(CodeElement currentElement)
