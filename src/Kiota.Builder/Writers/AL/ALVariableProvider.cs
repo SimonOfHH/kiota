@@ -127,7 +127,7 @@ public static class ALVariableProvider
         {
             GetGlobalVariable("JSONHelper", new CodeType { Name = "codeunit \"JSON Helper SOHH\"", IsExternal = true }, "2", "AA0137"),
             GetGlobalVariable("DebugCall", "Boolean", "4"),
-            GetGlobalVariable($"{ConventionService.ModelCodeunitJsonBodyVariableName}", "JsonToken", "3"),
+            GetGlobalVariable($"{ConventionService.ModelCodeunitJsonBodyVariableName}", "JsonObject", "3"),
             GetGlobalVariable("SubToken", "JsonToken", "3")
         };
         return globals;
@@ -199,7 +199,7 @@ public static class ALVariableProvider
             },
             Kind = CodeMethodKind.Deserializer,
         };
-        method.AddParameter(GetParameterP($"New{ConventionService.ModelCodeunitJsonBodyVariableName}", "JsonToken", "1"));
+        method.AddParameter(GetParameterP($"New{ConventionService.ModelCodeunitJsonBodyVariableName}", "JsonObject", "1"));
         return method;
     }
     public static CodeMethod GetSetBodyFullMethod(CodeClass codeClass)
@@ -238,7 +238,7 @@ public static class ALVariableProvider
             Name = "ToJson",
             SimpleName = "ToJson",
             Access = AccessModifier.Public,
-            ReturnType = new CodeType { Name = "JsonToken" },
+            ReturnType = new CodeType { Name = "JsonObject" },
             Kind = CodeMethodKind.Serializer
         };
         return method;

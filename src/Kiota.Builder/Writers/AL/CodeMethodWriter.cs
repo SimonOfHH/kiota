@@ -139,13 +139,13 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             {
                 writer.WriteLine("// TODO: Fix collection Handling: ");
                 writer.WriteLine("// if ReqConfig.Client().Response().GetIsSuccessStatusCode() then");
-                writer.WriteLine($"//    Target.SetBody(ReqConfig.Client().Response().GetContent().AsJson());");
+                writer.WriteLine($"//    Target.SetBody(ReqConfig.Client().Response().GetContent().AsJson().AsObject());");
             }
             else
             {
                 writer.WriteLine("if ReqConfig.Client().Response().GetIsSuccessStatusCode() then");
                 writer.IncreaseIndent();
-                writer.WriteLine($"Target.SetBody(ReqConfig.Client().Response().GetContent().AsJson());");
+                writer.WriteLine($"Target.SetBody(ReqConfig.Client().Response().GetContent().AsJson().AsObject());");
                 writer.DecreaseIndent();
             }
         }
@@ -288,7 +288,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             if (conventions.IsCodeunitType(codeElement.ReturnType))
             {
                 writer.WriteLine($"Clear(TargetCodeunit);");
-                writer.WriteLine($"TargetCodeunit.SetBody(JToken, DebugCall);");
+                writer.WriteLine($"TargetCodeunit.SetBody(JToken.AsObject(), DebugCall);");
                 writer.WriteLine($"CodeunitList.Add(TargetCodeunit);");
             }
             else
@@ -322,7 +322,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                 {
                     writer.WriteLine($"if {conventions.ModelCodeunitJsonBodyVariableName}.SelectToken('{codeElement.Name}', SubToken) then begin"); // TODO-SF: Think about making this variable-based instead of hardcoded
                     writer.IncreaseIndent();
-                    writer.WriteLine($"TargetCodeunit.SetBody(SubToken, DebugCall);");
+                    writer.WriteLine($"TargetCodeunit.SetBody(SubToken.AsObject(), DebugCall);");
                     writer.WriteLine($"exit(TargetCodeunit);");
                     writer.DecreaseIndent();
                     writer.WriteLine("end;");
@@ -330,10 +330,22 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                 if (conventions.IsEnumType(codeElement.ReturnType))
                 {
                     var enumName = codeElement.ReturnType.GetShortName().ToFirstCharacterUpperCase();
-                    writer.WriteLine($"if {conventions.ModelCodeunitJsonBodyVariableName}.SelectToken('{codeElement.Name}', SubToken) then"); // TODO-SF: Think about making this variable-based instead of hardcoded
+                    writer.WriteLine($"if {conventions.ModelCodeunitJsonBodyVariableName}.SelectToken('{codeElement.Name}', SubToken) then begin"); // TODO-SF: Think about making this variable-based instead of hardcoded
                     writer.IncreaseIndent();
-                    writer.WriteLine($"exit(Enum::{enumName}.FromInteger(Enum::{enumName}.Ordinals().Get(Enum::{enumName}.Names().IndexOf(SubToken.AsValue().AsText()))));");
+                    writer.WriteLine($"// Return value based on captions; needed because it's possible that the \"Names\" differ from the captions");
+                    writer.WriteLine($"Ordinals := Enum::{enumName}.Ordinals();");
+                    writer.WriteLine($"foreach Ordinal in Ordinals do begin");
+                    writer.IncreaseIndent();
+                    writer.WriteLine($"value := Enum::{enumName}.FromInteger(Ordinal);");
+                    writer.WriteLine($"if (Format(value) = SubToken.AsValue().AsText()) then");
+                    writer.IncreaseIndent();
+                    writer.WriteLine($"exit(value);");
                     writer.DecreaseIndent();
+                    writer.DecreaseIndent();
+                    writer.WriteLine($"end;");
+                    writer.DecreaseIndent();
+                    writer.WriteLine($"Error('Invalid value for {codeElement.Name}: %1', SubToken.AsValue().AsText());");
+                    writer.WriteLine($"end;");
                 }
             }
         }
@@ -361,33 +373,33 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         {
             writer.WriteLine($"if {conventions.ModelCodeunitJsonBodyVariableName}.SelectToken('{codeElement.Name}', SubToken) then");
             writer.IncreaseIndent();
-            writer.WriteLine($"SubToken.AsObject().Replace('{codeElement.Name}', {targetName})");
+            writer.WriteLine($"{conventions.ModelCodeunitJsonBodyVariableName}.Replace('{codeElement.Name}', {targetName})");
             writer.DecreaseIndent();
             writer.WriteLine("else");
             writer.IncreaseIndent();
-            writer.WriteLine($"{conventions.ModelCodeunitJsonBodyVariableName}.AsObject().Add('{codeElement.Name}', {targetName});");
+            writer.WriteLine($"{conventions.ModelCodeunitJsonBodyVariableName}.Add('{codeElement.Name}', {targetName});");
             writer.DecreaseIndent();
         }
         else if (conventions.IsEnumType(param.Type))
         {
             writer.WriteLine($"if {conventions.ModelCodeunitJsonBodyVariableName}.SelectToken('{codeElement.Name}', SubToken) then");
             writer.IncreaseIndent();
-            writer.WriteLine($"SubToken.AsObject().Replace('{codeElement.Name}', {targetName}.AsInteger())");
+            writer.WriteLine($"{conventions.ModelCodeunitJsonBodyVariableName}.Replace('{codeElement.Name}', Format({targetName}))");
             writer.DecreaseIndent();
             writer.WriteLine("else");
             writer.IncreaseIndent();
-            writer.WriteLine($"{conventions.ModelCodeunitJsonBodyVariableName}.AsObject().Add('{codeElement.Name}', {targetName}.AsInteger());");
+            writer.WriteLine($"{conventions.ModelCodeunitJsonBodyVariableName}.Add('{codeElement.Name}', Format({targetName}));");
             writer.DecreaseIndent();
         }
         else
         {
             writer.WriteLine($"if {conventions.ModelCodeunitJsonBodyVariableName}.SelectToken('{codeElement.Name}', SubToken) then");
             writer.IncreaseIndent();
-            writer.WriteLine($"SubToken.AsObject().Replace('{codeElement.Name}', {targetName}.ToJson())");
+            writer.WriteLine($"{conventions.ModelCodeunitJsonBodyVariableName}.Replace('{codeElement.Name}', {targetName}.ToJson())");
             writer.DecreaseIndent();
             writer.WriteLine("else");
             writer.IncreaseIndent();
-            writer.WriteLine($"{conventions.ModelCodeunitJsonBodyVariableName}.AsObject().Add('{codeElement.Name}', {targetName}.ToJson());");
+            writer.WriteLine($"{conventions.ModelCodeunitJsonBodyVariableName}.Add('{codeElement.Name}', {targetName}.ToJson());");
             writer.DecreaseIndent();
         }
     }
@@ -454,16 +466,16 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                     writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty(TargetJson, '{variable.Name}', {arrayName});");
                 }
                 else
-                    writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty(TargetJson, '{variable.Name}', {variable.Name}.ToJson());");
+                    writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty(TargetJson, '{variable.Name}', {variable.Name}.ToJson().AsToken());");
             else
             {
                 if (conventions.IsEnumType(variable.Type))
-                    writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty(TargetJson, '{variable.Name}', {variable.Name}.AsInteger());");
+                    writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty(TargetJson, '{variable.Name}', Format({variable.Name}));");
                 else
                     writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty(TargetJson, '{variable.Name}', {variable.Name});");
             }
         }
-        writer.WriteLine($"exit(TargetJson.AsToken());");
+        writer.WriteLine($"exit(TargetJson);");
     }
     private void WriteSetBodyMethodBody(CodeMethod codeElement, LanguageWriter writer)
     {
