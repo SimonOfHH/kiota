@@ -54,6 +54,12 @@ internal static class CodePropertyExtensions
         else
             method.SetSourceFromProperty(property);
         method.AddCustomProperty("method-type", "Getter");
+        if (ConventionService.IsEnumType(property.Type))
+        {
+            method.AddParameter(ALVariableProvider.GetLocalVariableP("Ordinal", "Integer", "2"));
+            method.AddParameter(ALVariableProvider.GetLocalVariableP("Ordinals", "List of [Integer]", "3"));
+            method.AddParameter(ALVariableProvider.GetLocalVariableP("value", property.Type, "1"));
+        }
         switch (property.Type.CollectionKind)
         {
             case CodeTypeCollectionKind.None:
