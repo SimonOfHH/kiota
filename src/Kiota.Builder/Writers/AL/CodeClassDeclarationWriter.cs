@@ -4,6 +4,7 @@ using Kiota.Builder.CodeDOM;
 using Kiota.Builder.Extensions;
 
 namespace Kiota.Builder.Writers.AL;
+
 public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, ALConventionService>
 {
     // TODO-SF: add "Implements" to ClassDeclaration-objects in ALRefiner
@@ -49,6 +50,10 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         conventions.WriteDeprecationAttribute(parentClass, alWriter);
         parentClass.SetCustomProperties(customProperties); // restore custom properties
 
+        if (codeElement.GetShortName() != codeElement.Name)
+        {
+            writer.WriteLine($"// {codeElement.Name} is shortened to {codeElement.GetShortName()} for AL compatibility. Might have implications for the code generation.");
+        }
         alWriter.WriteLine($"codeunit {alWriter.ObjectIdProvider.GetNextCodeunitId()} {codeElement.GetShortName().ToFirstCharacterUpperCase()} {derivation}");
         alWriter.StartBlock();
         alWriter.WriteObjectProperties(parentClass.ObjectProperties().ToObjectProperties());

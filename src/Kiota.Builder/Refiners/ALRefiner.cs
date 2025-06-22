@@ -21,12 +21,20 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         return Task.Run(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
+            ModifyNamespaces(generatedCode);
             RemoveUnusedMethods(generatedCode);
             RemoveAdditionalDataProperty(generatedCode); // we don't support additional data in AL (yet?)
             RemoveNotSupportedParameters(generatedCode);
             cancellationToken.ThrowIfCancellationRequested();
             UpdateApiClientClass(generatedCode, _configuration);
             cancellationToken.ThrowIfCancellationRequested();
+            ConvertUnionTypesToWrapper(generatedCode, // copied from CSharpRefiner, just for testing
+                _configuration.UsesBackingStore,
+                static s => s,
+                true,
+                "SerializationNamespaceName",
+                "IComposedTypeWrapper"
+            );
             MovePropertiesToMethods(generatedCode);
             ModifyMethodName1(generatedCode);
             cancellationToken.ThrowIfCancellationRequested();
@@ -68,6 +76,24 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             }
         }
         CrawlTree(currentElement, childElement => UpdateApiClientClass(childElement, configuration));
+    }
+    protected static void ModifyNamespaces(CodeElement currentElement)
+    {
+        if (currentElement is CodeNamespace currentNamespace)
+        {
+            if (currentNamespace.Name.StartsWith('_'.ToString(), StringComparison.CurrentCulture))
+            {
+                // we don't support namespaces starting with an underscore in AL
+                currentNamespace.Name = currentNamespace.Name.Substring(1);
+            }
+            if (currentNamespace.Name.Contains('_'.ToString(), StringComparison.CurrentCulture))
+            {
+                // we don't support underscores at the beginning of namespaces in AL
+                if (currentNamespace.Name.StartsWith('_'.ToString(), StringComparison.OrdinalIgnoreCase))
+                    currentNamespace.Name = currentNamespace.Name.Substring(1);
+            }
+        }
+        CrawlTree(currentElement, ModifyNamespaces);
     }
     /// <summary>
     /// This method is used to remove unused methods from the current element.
@@ -154,6 +180,10 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 currentClass.RemoveChildElement(additionalDataProperty);
         }
         CrawlTree(currentElement, RemoveAdditionalDataProperty);
+    }
+    protected static void ConvertUnionTypesToWrapper(CodeElement currentElement)
+    {
+
     }
     /// <summary>
     /// In AL, properties are not supported. We need to move them to getter/setter methods.

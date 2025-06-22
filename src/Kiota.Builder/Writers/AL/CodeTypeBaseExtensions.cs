@@ -20,7 +20,13 @@ internal static class CodeTypeBaseExtensions
     }
     public static CodeTypeBase CloneWithoutCollection(this CodeTypeBase codeType)
     {
-        ArgumentNullException.ThrowIfNull(codeType);
+        ArgumentNullException.ThrowIfNull(codeType); // might be CodeIntersectionType
+        if (codeType is CodeIntersectionType intersectionType)
+        {
+            var newIntersectionType = (CodeIntersectionType)intersectionType.Clone();
+            newIntersectionType.CollectionKind = CodeTypeCollectionKind.None;
+            return newIntersectionType;
+        }
         var newType = (CodeType)codeType.Clone();
         newType.CollectionKind = CodeTypeCollectionKind.None;
         return newType;

@@ -479,6 +479,8 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     }
     private void WriteSetBodyMethodBody(CodeMethod codeElement, LanguageWriter writer)
     {
+        if (codeElement.Name == "GetFieldDeserializers")
+            return; // skip for debugging, comes from union types
         switch (codeElement.Parameters.Count())
         {
             case 1: WriteSetBodyMethodBodyForSingleParameter(codeElement, writer); break;

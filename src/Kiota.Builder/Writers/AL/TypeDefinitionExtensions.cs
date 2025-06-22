@@ -51,6 +51,7 @@ internal static class TypeDefinitionExtensions
     private static string ShortenName(string newName)
     {
         ArgumentNullException.ThrowIfNull(newName);
+        // TODO-SF: find more generic approach to this
         if (newName.Contains("Extended", StringComparison.OrdinalIgnoreCase))
             newName = newName.Replace("Extended", "Ext", StringComparison.OrdinalIgnoreCase);
         if (newName.Contains("Message", StringComparison.OrdinalIgnoreCase))
@@ -81,6 +82,22 @@ internal static class TypeDefinitionExtensions
             newName = newName.Replace("Number", "Num", StringComparison.OrdinalIgnoreCase);
         if (newName.Contains("Alignment", StringComparison.OrdinalIgnoreCase))
             newName = newName.Replace("Alignment", "Algnmt", StringComparison.OrdinalIgnoreCase);
+        if (newName.Contains("Result", StringComparison.OrdinalIgnoreCase))
+            newName = newName.Replace("Result", "Rslt", StringComparison.OrdinalIgnoreCase);
+        if (newName.Contains("Global", StringComparison.OrdinalIgnoreCase))
+            newName = newName.Replace("Global", "Glb", StringComparison.OrdinalIgnoreCase);
+        if (newName.Contains("Object", StringComparison.OrdinalIgnoreCase))
+            newName = newName.Replace("Object", "Obj", StringComparison.OrdinalIgnoreCase);
+        if (newName.Contains("Describe", StringComparison.OrdinalIgnoreCase))
+            newName = newName.Replace("Describe", "Desc", StringComparison.OrdinalIgnoreCase);
+        if (newName.Contains("Contact", StringComparison.OrdinalIgnoreCase))
+            newName = newName.Replace("Contact", "Cont", StringComparison.OrdinalIgnoreCase);
+        if (newName.Contains("Blocking", StringComparison.OrdinalIgnoreCase))
+            newName = newName.Replace("Blocking", "Block", StringComparison.OrdinalIgnoreCase);
+        if (newName.Contains("Relationship", StringComparison.OrdinalIgnoreCase))
+            newName = newName.Replace("Relationship", "Rel", StringComparison.OrdinalIgnoreCase);
+        if (newName.Contains("Relation", StringComparison.OrdinalIgnoreCase))
+            newName = newName.Replace("Relation", "Rel", StringComparison.OrdinalIgnoreCase);
         if (newName.Length > 30)
             newName = newName.Substring(0, 30);
         return newName;

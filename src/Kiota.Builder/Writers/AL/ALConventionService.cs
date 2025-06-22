@@ -9,6 +9,7 @@ using Kiota.Builder.Extensions;
 using static Kiota.Builder.CodeDOM.CodeTypeBase;
 
 namespace Kiota.Builder.Writers.AL;
+
 public class ALConventionService : CommonLanguageConventionService // This is currently based on the CSharp-file, needs to be modified for AL
 {
     public string ModelCodeunitJsonBodyVariableName { get; } = "JsonBody";
@@ -131,7 +132,7 @@ public class ALConventionService : CommonLanguageConventionService // This is cu
         if (type.TypeDefinition is ITypeDefinition typeDefinition)
             return typeDefinition.GetFullName();
 
-        return type.Name switch
+        return type.Name.ToLower(CultureInfo.CurrentCulture) switch
         {
             "integer" => "Integer",
             "boolean" => "Boolean",
@@ -141,8 +142,10 @@ public class ALConventionService : CommonLanguageConventionService // This is cu
             "float" or "double" or "decimal" => "Decimal",
             "binary" or "base64" or "base64url" => "byte", // TODO-SF: this was byte[] (copied from CSharpConventionService) but AL does not support byte[] in the same way
             "date" => "Date",
+            "dateonly" => "Date",
             "time" => "Time",
-            "datetime" or "DateTimeOffset" => "DateTime",
+            "timeonly" => "Time",
+            "datetime" or "datetimeoffset" => "DateTime",
             "void" => String.Empty,
             _ => type.Name.ToFirstCharacterUpperCase()
         };
