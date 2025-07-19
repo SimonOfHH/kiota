@@ -289,11 +289,11 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             {
                 writer.WriteLine($"Clear(TargetCodeunit);");
                 writer.WriteLine($"TargetCodeunit.SetBody(JToken.AsObject(), DebugCall);");
-                writer.WriteLine($"CodeunitList.Add(TargetCodeunit);");
+                writer.WriteLine($"{codeElement.GetCustomProperty("return-variable-name")}.Add(TargetCodeunit);");
             }
             else
             {
-                writer.WriteLine($"CodeunitList.Add(SubToken.AsValue().AsText());"); // TODO-SF: Change return value name
+                writer.WriteLine($"{codeElement.GetCustomProperty("return-variable-name")}.Add(JToken.AsValue().AsText());"); // TODO-SF: Change return value name
             }
             writer.DecreaseIndent();
             if (conventions.IsCodeunitType(codeElement.ReturnType))

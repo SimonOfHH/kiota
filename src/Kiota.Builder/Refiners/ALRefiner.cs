@@ -63,8 +63,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 currentClass.StartBlock.AddImplements(new CodeType { Name = "Kiota IApiClient SOHH", IsExternal = true });
                 currentClass.AddVariable(ALVariableProvider.GetGlobalVariable("ReqConfig", new CodeType { Name = "codeunit \"Kiota ClientConfig SOHH\"", IsExternal = true }, "").ToVariable());
                 currentClass.AddVariable(new ALVariable("APIAuthorization", new CodeType { Name = "codeunit \"Kiota API Authorization SOHH\"", IsExternal = true }, "", ""));
-                currentClass.AddVariable(new ALVariable("Response_", new CodeType { Name = "codeunit System.RestClient.\"Http Response Message\"", IsExternal = true }, "", ""));
-                currentClass.AddVariable(new ALVariable("BaseUrlLbl", new CodeType { Name = "Label" }, "", baseUrl));
+                currentClass.AddVariable(new ALVariable("StoredResponse", new CodeType { Name = "codeunit System.RestClient.\"Http Response Message\"", IsExternal = true }, "", ""));
+                currentClass.AddVariable(new ALVariable("BaseUrlLbl", new CodeType { Name = "Label" }, "", baseUrl, true));
                 currentClass.AddVariable(new ALVariable("ConfigSet", new CodeType { Name = "Boolean" }, "", ""));
                 currentClass.AddVariable(new ALVariable("AuthorizationNotInitializedErr", new CodeType { Name = "Label" }, "", "Authorization is uninitialized."));
                 currentClass.AddMethod(ALVariableProvider.GetApiClientInitializerMethod(currentClass));

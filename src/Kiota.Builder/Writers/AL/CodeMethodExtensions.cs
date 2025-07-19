@@ -33,7 +33,12 @@ internal static class CodeMethodExtensions
     public static IEnumerable<CodeParameter> Variables(this CodeMethod method)
     {
         ArgumentNullException.ThrowIfNull(method);
-        return method.Parameters.Where(p1 => p1.IsLocalVariable());
+        List<CodeParameter> localVariables = // variables in AL are ordered by Type (or at least the complex types are)
+        [
+            .. method.Parameters.Where(p1 => p1.IsLocalVariable() && p1.Type.Name.StartsWith("Codeunit", StringComparison.OrdinalIgnoreCase)),
+            .. method.Parameters.Where(p1 => p1.IsLocalVariable() && !p1.Type.Name.StartsWith("Codeunit", StringComparison.OrdinalIgnoreCase)),
+        ];
+        return localVariables;
     }
     public static IEnumerable<CodeParameter> OrderedParameters(this CodeMethod method)
     {

@@ -146,7 +146,7 @@ public static class ALVariableProvider
             ReturnType = new CodeType { Name = "codeunit System.RestClient.\"Http Response Message\"", IsExternal = true },
             Kind = CodeMethodKind.Custom
         };
-        method.AddCustomProperty("sorting-value", "96");
+        method.AddCustomProperty("sorting-value", "50");
         return method;
     }
     public static CodeMethod GetSystemRestClientHttpResponseMessageSetResponseMethod(CodeClass codeClass)
@@ -159,8 +159,8 @@ public static class ALVariableProvider
             ReturnType = new CodeType { Name = "void" },
             Kind = CodeMethodKind.Custom
         };
-        method.AddParameter(GetParameterP("var response", new CodeType { Name = "codeunit System.RestClient.\"Http Response Message\"", IsExternal = true }, "1"));
-        method.AddCustomProperty("sorting-value", "97");
+        method.AddParameter(GetParameterP("var ApiResponse", new CodeType { Name = "codeunit System.RestClient.\"Http Response Message\"", IsExternal = true }, "1"));
+        method.AddCustomProperty("sorting-value", "51");
         return method;
     }
     public static IEnumerable<CodeMethod> GetDefaultModelCodeunitMethods(CodeClass codeClass)
@@ -376,20 +376,23 @@ public class ALVariable
         if ((Type.Name == "Label") && string.IsNullOrEmpty(DefaultValue))
             throw new ArgumentNullException(nameof(defaultValue), "Labels must have a default value");
     }
-    public ALVariable(string name, CodeTypeBase type, string defaultValue, string value)
+    public ALVariable(string name, CodeTypeBase type, string defaultValue, string value, bool locked = false)
     {
         Name = name;
         Type = type;
         DefaultValue = defaultValue;
         Value = value;
+        Locked = locked;
     }
-    public ALVariable(string name, CodeTypeBase type, string defaultValue, string value, string pragmas)
+    public ALVariable(string name, CodeTypeBase type, string defaultValue, string value, string pragmas, bool locked = false)
     {
         Name = name;
         Type = type;
         DefaultValue = defaultValue;
         Value = value;
         Pragmas = pragmas;
+
+        Locked = locked;
     }
 
     public CodeProperty ToCodeProperty()
@@ -401,6 +404,8 @@ public class ALVariable
             DefaultValue = DefaultValue
         };
         prop.AddCustomProperty("value", Value);
+        if (Locked)
+            prop.AddCustomProperty("locked-label", "true");
         prop.SetPragmas([Pragmas]);
         return prop;
     }
@@ -413,6 +418,8 @@ public class ALVariable
             DefaultValue = DefaultValue
         };
         param.AddCustomProperty("value", Value);
+        if (Locked)
+            param.AddCustomProperty("locked-label", "true");
         param.SetPragmas([Pragmas]);
         return param;
     }
@@ -422,7 +429,11 @@ public class ALVariable
         ArgumentNullException.ThrowIfNull(writer);
         var variableType = ALVariableProvider.ConventionService.GetTypeString(Type);
         if (variableType == "Label")
+        {
             Value = $" '{Value}'";
+            if (Locked == true)
+                Value = $"{Value}, Locked = true";
+        }
         writer.WritePragmaConditionalDisable(Pragmas, true);
         writer.WriteLine($"{Name}: {variableType}{Value};");
         writer.WritePragmaConditionalRestore(Pragmas, true);

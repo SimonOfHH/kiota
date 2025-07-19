@@ -4,6 +4,7 @@ using System.Linq;
 using Kiota.Builder.CodeDOM;
 
 namespace Kiota.Builder.Writers.AL;
+
 public static class CodeClassExtensions
 {
     public static void AddVariable(this CodeClass codeClass, ALVariable variable)
@@ -44,7 +45,12 @@ public static class CodeClassExtensions
     public static IEnumerable<CodeProperty> OrderedGlobalVariables(this CodeClass codeClass)
     {
         ArgumentNullException.ThrowIfNull(codeClass);
-        return codeClass.GlobalVariables().OrderBy(x => x.DefaultValue);
+        List<CodeProperty> globalVariables = // variables in AL are ordered by Type (or at least the complex types are)
+        [
+            .. codeClass.GlobalVariables().Where(p1 => p1.Type.Name.StartsWith("Codeunit", StringComparison.OrdinalIgnoreCase)),
+            .. codeClass.GlobalVariables().Where(p1 => !p1.Type.Name.StartsWith("Codeunit", StringComparison.OrdinalIgnoreCase)),
+        ];
+        return globalVariables;
     }
     public static IEnumerable<CodeProperty> GlobalVariables(this CodeClass codeClass)
     {

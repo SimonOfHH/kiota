@@ -140,11 +140,11 @@ public class ALConventionService : CommonLanguageConventionService // This is cu
             "int64" => "BigInteger",
             "sbyte" or "byte" => "Byte",
             "float" or "double" or "decimal" => "Decimal",
-            "binary" or "base64" or "base64url" => "byte", // TODO-SF: this was byte[] (copied from CSharpConventionService) but AL does not support byte[] in the same way
-            "date" => "Date",
-            "dateonly" => "Date",
-            "time" => "Time",
-            "timeonly" => "Time",
+            "binary" or "base64" or "base64url" => "HttpContent", // TODO-SF: this was byte[] (copied from CSharpConventionService) but AL does not support byte[] in the same way; 
+                                                                  // the only situation I found for this yet is the body of a request and HttpContent is the easiest way right now to handle
+                                                                  // might be adjusted later
+            "date" or "dateonly" => "Date",
+            "time" or "timeonly" => "Time",
             "datetime" or "datetimeoffset" => "DateTime",
             "void" => String.Empty,
             _ => type.Name.ToFirstCharacterUpperCase()

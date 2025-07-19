@@ -50,6 +50,7 @@ internal static class CodePropertyExtensions
         {
             method.Name = method.SimpleName;
             method.SetSource("from request-builder");
+            method.AddCustomProperty("sorting-value", "99");
         }
         else
             method.SetSourceFromProperty(property);
@@ -92,7 +93,10 @@ internal static class CodePropertyExtensions
             Kind = CodeMethodKind.Custom
         };
         if (property.Kind == CodePropertyKind.RequestBuilder)
+        {
             method.SetSource("from request-builder");
+            method.AddCustomProperty("sorting-value", "99");
+        }
         else
             method.SetSourceFromProperty(property);
         method.AddCustomProperty("method-type", "Setter");
@@ -115,7 +119,7 @@ internal static class CodePropertyExtensions
     public static ALVariable ToVariable(this CodeProperty property)
     {
         ArgumentNullException.ThrowIfNull(property);
-        return new ALVariable(property.Name, property.Type, property.DefaultValue, property.GetCustomProperty("value"), property.GetPragmas());
+        return new ALVariable(property.Name, property.Type, property.DefaultValue, property.GetCustomProperty("value"), property.GetPragmas(), property.GetCustomProperty("locked-label") == "true");
     }
     public static IEnumerable<ALObjectProperty> ToObjectProperties(this IEnumerable<CodeProperty> properties)
     {

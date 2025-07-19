@@ -68,6 +68,22 @@ public static class CustomPropertyExtensions
             return string.Empty;
         return GetCustomProperty(codeElement.Documentation, propertyName);
     }
+    public static int GetSortingValue(this IDocumentedElement codeElement, int defaultValue = 0)
+    {
+        ArgumentNullException.ThrowIfNull(codeElement);
+        if (codeElement.Documentation is null)
+            return defaultValue;
+        if (codeElement.Documentation.DescriptionTemplate is null)
+            return defaultValue;
+        if (!codeElement.Documentation.DescriptionTemplate.Contains("sorting-value", StringComparison.OrdinalIgnoreCase))
+            return defaultValue;
+        var sortingValue = codeElement.GetCustomProperty("sorting-value");
+        if (string.IsNullOrEmpty(sortingValue))
+            return defaultValue;
+        if (int.TryParse(sortingValue, out var value))
+            return value;
+        return defaultValue;
+    }
     private static Dictionary<string, string> GetCustomProperties(CodeDocumentation documentation)
     {
         ArgumentNullException.ThrowIfNull(documentation);
@@ -179,7 +195,7 @@ public static class CustomPropertyExtensions
             case CodeTypeCollectionKind.Complex:
                 element.SetSource("from property");
                 element.AddCustomProperty("source-type", "List");
-                element.AddCustomProperty("return-variable-name", "CodeunitList");
+                element.AddCustomProperty("return-variable-name", "ReturnList");
                 break;
         }
     }
