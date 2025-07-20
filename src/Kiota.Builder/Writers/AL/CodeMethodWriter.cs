@@ -17,7 +17,8 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var alWriter = writer as ALWriter;
         ArgumentNullException.ThrowIfNull(codeElement);
         ArgumentNullException.ThrowIfNull(alWriter);
-        if (codeElement.IsOfKind(CodeMethodKind.Constructor, CodeMethodKind.ClientConstructor, CodeMethodKind.Factory, CodeMethodKind.RawUrlConstructor, CodeMethodKind.RequestGenerator, CodeMethodKind.RawUrlBuilder)) return;
+        if (codeElement.IsOfKind(CodeMethodKind.RawUrlConstructor, CodeMethodKind.RequestGenerator)) return;
+        if (codeElement.GetCustomProperty("skip") == "true") return; // skip methods that are marked to be skipped
         if (codeElement.ParentIsSkipped()) return; // we can't handle nested classes, but also can't remove them from the model
         if (codeElement.ReturnType == null) throw new InvalidOperationException($"{nameof(codeElement.ReturnType)} should not be null");
         ArgumentNullException.ThrowIfNull(alWriter);
@@ -78,38 +79,40 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                 WriteSetBodyMethodBody(codeElement, writer);
                 break;
             case CodeMethodKind.ClientConstructor:
+                WriteConfigurationMethodBody(codeElement, writer);
                 break;
             case CodeMethodKind.RawUrlBuilder:
-                throw new InvalidOperationException("RawUrlBuilder is not supported right now.");
+                WriteSetConfigurationMethodBody(codeElement, parentClass, writer);
+                WriteSetIdentifierMethodBody(codeElement, parentClass, writer);
+                break;
             case CodeMethodKind.Constructor:
+                WriteApiClientInitializeMethodBody(codeElement, parentClass, writer);
+                break;
             case CodeMethodKind.RawUrlConstructor:
                 throw new InvalidOperationException("Constructor/RawUrlConstructor is not supported right now.");
             case CodeMethodKind.RequestBuilderWithParameters:
                 throw new InvalidOperationException("RequestBuilderWithParameters is not supported right now.");
             case CodeMethodKind.Getter:
+                WriteFromPropertyGetterMethodBody(codeElement, writer);
+                break;
             case CodeMethodKind.Setter:
-                throw new InvalidOperationException("getters and setters are automatically added on fields in dotnet");
+                WriteFromPropertySetterMethodBody(codeElement, writer);
+                break;
             case CodeMethodKind.RequestBuilderBackwardCompatibility:
-                throw new InvalidOperationException("RequestBuilderBackwardCompatibility is not supported right now.");
+                WriteFromRequestBuilderSourceMethodBody(codeElement, parentClass, writer);
+                break;
             case CodeMethodKind.ErrorMessageOverride:
                 throw new InvalidOperationException("ErrorMessageOverride is not supported as the error message is implemented by a property.");
             case CodeMethodKind.CommandBuilder:
                 throw new InvalidOperationException("CommandBuilder is not supported right now.");
             case CodeMethodKind.Factory:
-                throw new InvalidOperationException("Factory is not supported right now.");
+                WriteDefaultConfigurationMethodBody(codeElement, writer);
+                break;
             case CodeMethodKind.ComposedTypeMarker:
                 throw new InvalidOperationException("ComposedTypeMarker is not required as interface is explicitly implemented.");
             case CodeMethodKind.Custom:
-                WriteFromPropertyGetterMethodBody(codeElement, writer);
-                WriteFromPropertySetterMethodBody(codeElement, writer);
                 WriteValidateBodyMethodBody(codeElement, parentClass, writer);
-                WriteApiClientInitializeMethodBody(codeElement, parentClass, writer);
-                WriteSetIdentifierMethodBody(codeElement, parentClass, writer);
                 WriteItemIdxMethodBody(codeElement, parentClass, writer);
-                WriteSetConfigurationMethodBody(codeElement, parentClass, writer);
-                WriteFromRequestBuilderSourceMethodBody(codeElement, parentClass, writer);
-                WriteConfigurationMethodBody(codeElement, writer);
-                WriteDefaultConfigurationMethodBody(codeElement, writer);
                 WriteResponseGetterSetter(codeElement, parentClass, writer);
                 break;
             default:
@@ -165,8 +168,6 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     }
     private void WriteConfigurationMethodBody(CodeMethod codeElement, LanguageWriter writer)
     {
-        if (codeElement.Name != "Configuration")
-            return;
         if (codeElement.Parameters.Any())
         {
             writer.WriteLine($"ReqConfig := config;");
@@ -184,8 +185,6 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     }
     private void WriteDefaultConfigurationMethodBody(CodeMethod codeElement, LanguageWriter writer)
     {
-        if (codeElement.Name != "DefaultConfiguration")
-            return;
         if (codeElement.Parameters.Any())
             throw new InvalidOperationException("DefaultConfiguration method should have no parameters");
         var returnType = codeElement.ReturnType as CodeType;
@@ -198,8 +197,6 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     }
     private void WriteFromRequestBuilderSourceMethodBody(CodeMethod codeElement, CodeClass parentClass, LanguageWriter writer)
     {
-        if (codeElement.GetCustomProperty("source") != "from request-builder")
-            return;
         if (codeElement.Parameters.Any())
             throw new InvalidOperationException("FromRequestBuilderSource method should have no parameters");
         var returnType = codeElement.ReturnType as CodeType;
@@ -260,8 +257,6 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     {
         if (parentClass.Name != "ApiClient")
             return;
-        if (!codeElement.Name.Contains("Initialize", StringComparison.OrdinalIgnoreCase))
-            return;
         writer.WriteLine($"if (not NewAPIAuthorization.IsInitialized()) then");
         writer.IncreaseIndent();
         writer.WriteLine("Error(AuthorizationNotInitializedErr);");
@@ -271,8 +266,6 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
     private void WriteFromPropertyGetterMethodBody(CodeMethod codeElement, LanguageWriter writer)
     {
-        if (!codeElement.IsGetterMethod())
-            return;
         if (codeElement.GetSourceType() == "List")
         {
             writer.WriteLine($"if not {conventions.ModelCodeunitJsonBodyVariableName}.SelectToken('{codeElement.Name}', SubToken) then");
@@ -352,8 +345,6 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     }
     private void WriteFromPropertySetterMethodBody(CodeMethod codeElement, LanguageWriter writer)
     {
-        if (!codeElement.IsSetterMethod())
-            return;
         var param = codeElement.OrderedParameters().FirstOrDefault();
         if (param == null)
             throw new InvalidOperationException("Setter method should have a parameter");

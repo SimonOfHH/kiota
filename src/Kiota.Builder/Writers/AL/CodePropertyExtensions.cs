@@ -44,11 +44,12 @@ internal static class CodePropertyExtensions
             SimpleName = ReservedNamesProvider.GetSafeName(property.Name),
             Access = property.Access,
             ReturnType = property.Type,
-            Kind = CodeMethodKind.Custom
+            Kind = CodeMethodKind.Getter
         };
         if (property.Kind == CodePropertyKind.RequestBuilder)
         {
             method.Name = method.SimpleName;
+            method.Kind = CodeMethodKind.RequestBuilderBackwardCompatibility;
             method.SetSource("from request-builder");
             method.AddCustomProperty("sorting-value", "99");
         }
@@ -90,10 +91,11 @@ internal static class CodePropertyExtensions
             SimpleName = ReservedNamesProvider.GetSafeName(property.Name),
             Access = property.Access,
             ReturnType = new CodeType { Name = "void" },
-            Kind = CodeMethodKind.Custom
+            Kind = CodeMethodKind.Setter
         };
         if (property.Kind == CodePropertyKind.RequestBuilder)
         {
+            method.Kind = CodeMethodKind.RequestBuilderBackwardCompatibility;
             method.SetSource("from request-builder");
             method.AddCustomProperty("sorting-value", "99");
         }

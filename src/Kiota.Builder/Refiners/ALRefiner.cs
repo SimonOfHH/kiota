@@ -25,6 +25,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             RemoveUnusedMethods(generatedCode);
             RemoveAdditionalDataProperty(generatedCode); // we don't support additional data in AL (yet?)
             RemoveNotSupportedParameters(generatedCode);
+            MarkMethodsToSkip(generatedCode);
             cancellationToken.ThrowIfCancellationRequested();
             UpdateApiClientClass(generatedCode, _configuration);
             cancellationToken.ThrowIfCancellationRequested();
@@ -223,6 +224,17 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             currentMethod.RemoveParametersByKind(new[] { CodeParameterKind.Cancellation, CodeParameterKind.RequestConfiguration });
         }
         CrawlTree(currentElement, RemoveNotSupportedParameters);
+    }
+    protected static void MarkMethodsToSkip(CodeElement currentElement)
+    {
+        if (currentElement is CodeMethod currentMethod)
+        {
+            if (currentMethod.IsOfKind(CodeMethodKind.ClientConstructor, CodeMethodKind.RawUrlBuilder, CodeMethodKind.RawUrlConstructor, CodeMethodKind.RequestGenerator, CodeMethodKind.Constructor, CodeMethodKind.Factory))
+            {
+                currentMethod.AddCustomProperty("skip", "true");
+            }
+        }
+        CrawlTree(currentElement, MarkMethodsToSkip);
     }
     protected static void AddObjectProperties(CodeElement currentElement)
     {

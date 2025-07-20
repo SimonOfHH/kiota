@@ -277,7 +277,7 @@ public static class ALVariableProvider
             SimpleName = "Configuration",
             Access = AccessModifier.Public,
             ReturnType = new CodeType { Name = "codeunit \"Kiota ClientConfig SOHH\"", IsExternal = true },
-            Kind = CodeMethodKind.Custom
+            Kind = CodeMethodKind.ClientConstructor
         };
         method.AddCustomProperty("sorting-value", "27");
         return method;
@@ -299,7 +299,7 @@ public static class ALVariableProvider
             SimpleName = "DefaultConfiguration",
             Access = AccessModifier.Private,
             ReturnType = new CodeType { Name = "codeunit \"Kiota ClientConfig SOHH\"", IsExternal = true },
-            Kind = CodeMethodKind.Custom
+            Kind = CodeMethodKind.Factory
         };
         method.AddCustomProperty("sorting-value", "29");
         return method;
@@ -312,7 +312,7 @@ public static class ALVariableProvider
             SimpleName = "Initialize",
             Access = AccessModifier.Public,
             ReturnType = new CodeType { Name = "void" },
-            Kind = CodeMethodKind.Custom
+            Kind = CodeMethodKind.Constructor
         };
         method.AddParameter(GetParameterP("NewAPIAuthorization", new CodeType { Name = "codeunit \"Kiota API Authorization SOHH\"", IsExternal = true }, "1"));
         return method;
@@ -325,7 +325,7 @@ public static class ALVariableProvider
             SimpleName = "SetIdentifier",
             Access = AccessModifier.Public,
             ReturnType = new CodeType { Name = "void" },
-            Kind = CodeMethodKind.Custom
+            Kind = CodeMethodKind.RawUrlBuilder
         };
         if (indexer is not null)
             method.AddParameter(indexer.IndexParameter);
@@ -339,7 +339,7 @@ public static class ALVariableProvider
             SimpleName = "SetConfiguration",
             Access = AccessModifier.Public,
             ReturnType = new CodeType { Name = "void" },
-            Kind = CodeMethodKind.Custom
+            Kind = CodeMethodKind.RawUrlBuilder
         };
         method.AddParameter(GetParameterP("NewReqConfig", new CodeType { Name = "codeunit \"Kiota ClientConfig SOHH\"", IsExternal = true }, "1"));
         return method;

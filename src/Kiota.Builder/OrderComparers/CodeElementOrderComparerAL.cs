@@ -15,6 +15,7 @@ public class CodeElementOrderComparerAL : CodeElementOrderComparer
                 CodeMethodKind.Constructor => 2,
                 CodeMethodKind.RawUrlConstructor => 3,
                 CodeMethodKind.Custom => method.GetSortingValue(0),
+                CodeMethodKind.RequestBuilderBackwardCompatibility => method.GetSortingValue(0),
                 _ => 0,
             };
         return 0;

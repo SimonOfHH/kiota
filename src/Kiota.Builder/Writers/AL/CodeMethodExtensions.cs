@@ -48,21 +48,21 @@ internal static class CodeMethodExtensions
     public static bool IsPropertyMethod(this CodeMethod method)
     {
         ArgumentNullException.ThrowIfNull(method);
-        return method.Kind == CodeMethodKind.Custom && method.GetCustomProperty("source").Contains("from property", StringComparison.OrdinalIgnoreCase);
+        return method.GetCustomProperty("source").Contains("from property", StringComparison.OrdinalIgnoreCase);
     }
     public static bool IsGetterMethod(this CodeMethod method)
     {
         ArgumentNullException.ThrowIfNull(method);
         if (!method.IsPropertyMethod())
             return false;
-        return method.Kind == CodeMethodKind.Custom && method.GetCustomProperty("method-type") == "Getter";
+        return method.Kind == CodeMethodKind.Getter && method.GetCustomProperty("method-type") == "Getter";
     }
     public static bool IsSetterMethod(this CodeMethod method)
     {
         ArgumentNullException.ThrowIfNull(method);
         if (!method.IsPropertyMethod())
             return false;
-        return method.Kind == CodeMethodKind.Custom && method.GetCustomProperty("method-type") == "Setter";
+        return method.Kind == CodeMethodKind.Setter && method.GetCustomProperty("method-type") == "Setter";
     }
     public static ALVariable ToVariable(this CodeMethod method)
     {
