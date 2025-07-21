@@ -43,9 +43,6 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var parameters = string.Join("; ", code.OrderedParameters().Select(p => conventions.GetParameterSignature(p, code)).ToList());
         var methodName = code.Name.ToFirstCharacterUpperCase();
         var returnValueName = String.Empty;
-        // if (code.IsPropertyMethod() && code.GetSourceType() == "List")
-        //     returnValueName = "CodeunitList ";
-        // else if (code.GetCustomProperty("return-variable-name") is string returnVariableName)
         if (code.GetCustomProperty("return-variable-name") is string returnVariableName)
             returnValueName = $"{returnVariableName}";
 

@@ -29,7 +29,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             cancellationToken.ThrowIfCancellationRequested();
             UpdateApiClientClass(generatedCode, _configuration);
             cancellationToken.ThrowIfCancellationRequested();
-            ConvertUnionTypesToWrapper(generatedCode, // copied from CSharpRefiner, just for testing
+            ConvertUnionTypesToWrapper(generatedCode, // copied from CSharpRefiner, currently for testing
                 _configuration.UsesBackingStore,
                 static s => s,
                 true,
