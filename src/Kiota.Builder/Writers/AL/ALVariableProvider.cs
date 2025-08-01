@@ -253,16 +253,16 @@ public static class ALVariableProvider
                 if (param.Type.IsCollection)
                 {
                     param.AddCustomProperty("corresponding-array", $"{x.Name}Array");
-                    param.AddCustomProperty("foreach-variable", x.Name.GetSingularName());
+                    param.AddCustomProperty("foreach-variable", x.Name.GetSingularName(method.Parameters));
                 }
             method.AddParameter(param);
         });
         foreach (var meth in methods.Where(x => x.ReturnType.IsCollection && ConventionService.IsCodeunitType(x.ReturnType)))
         {
-            method.AddParameter(ALVariableProvider.GetLocalVariableP($"{meth.Name}Array", "JsonArray", "3"));
-            method.AddParameter(ALVariableProvider.GetLocalVariableP($"{meth.Name.GetSingularName()}", (CodeType)meth.ReturnType.CloneWithoutCollection(), "2"));
+            method.AddParameter(GetLocalVariableP($"{meth.Name}Array", "JsonArray", "3"));
+            method.AddParameter(GetLocalVariableP($"{meth.Name.GetSingularName(method.Parameters)}", (CodeType)meth.ReturnType.CloneWithoutCollection(), "2"));
         }
-        method.AddParameter(ALVariableProvider.GetLocalVariableP("TargetJson", "JsonObject", "1"));
+        method.AddParameter(GetLocalVariableP("TargetJson", "JsonObject", "1"));
         if (method.Variables().Count() > 1)
             method.SetPragmasVariables(["AA0021"]); // AA0021: Variable declarations should be ordered by type.
         method.SetPragmas(["AA0245"]); // AA0245: The name of the parameter '<name>' is identical to a field, method, or action in the same scope.
@@ -287,7 +287,7 @@ public static class ALVariableProvider
         var method = GetApiClientConfigurationMethod(codeClass);
         method.Name = $"{method.Name}-overload";   // needed as workaround, to be able to add overloads (AL doesn't support optional params)
                                                    // this is changed back in a later step        
-        method.AddParameter(GetParameterP("config", new CodeType { Name = "codeunit \"Kiota ClientConfig SOHH\"", IsExternal = true }, "1"));
+        method.AddParameter(GetParameterP("config", new CodeType { Name = "codeunit SimonOfHH.Kiota.Client.\"Kiota ClientConfig SOHH\"", IsExternal = true }, "1"));
         method.AddCustomProperty("sorting-value", "28");
         return method;
     }
@@ -314,7 +314,7 @@ public static class ALVariableProvider
             ReturnType = new CodeType { Name = "void" },
             Kind = CodeMethodKind.Constructor
         };
-        method.AddParameter(GetParameterP("NewAPIAuthorization", new CodeType { Name = "codeunit \"Kiota API Authorization SOHH\"", IsExternal = true }, "1"));
+        method.AddParameter(GetParameterP("NewAPIAuthorization", new CodeType { Name = "codeunit SimonOfHH.Kiota.Client.\"Kiota API Authorization SOHH\"", IsExternal = true }, "1"));
         return method;
     }
     public static CodeMethod GetIndexerClassSetIdentifierMethod(CodeClass codeClass, CodeIndexer? indexer)
@@ -341,7 +341,7 @@ public static class ALVariableProvider
             ReturnType = new CodeType { Name = "void" },
             Kind = CodeMethodKind.RawUrlBuilder
         };
-        method.AddParameter(GetParameterP("NewReqConfig", new CodeType { Name = "codeunit \"Kiota ClientConfig SOHH\"", IsExternal = true }, "1"));
+        method.AddParameter(GetParameterP("NewReqConfig", new CodeType { Name = "codeunit SimonOfHH.Kiota.Client.\"Kiota ClientConfig SOHH\"", IsExternal = true }, "1"));
         return method;
     }
 }

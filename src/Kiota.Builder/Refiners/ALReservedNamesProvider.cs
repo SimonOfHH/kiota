@@ -2,9 +2,11 @@
 using System.Collections.Generic;
 
 namespace Kiota.Builder.Refiners;
+
 public class ALReservedNamesProvider : IReservedNamesProvider
 {
     private readonly Lazy<HashSet<string>> _reservedNames = new(static () => new(105, StringComparer.OrdinalIgnoreCase) { // TODO-SF: modify for AL, this is incomplete
+        "area",
         "action",
         "actions",
         "any",

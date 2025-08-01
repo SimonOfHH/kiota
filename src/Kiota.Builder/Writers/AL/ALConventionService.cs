@@ -137,6 +137,7 @@ public class ALConventionService : CommonLanguageConventionService // This is cu
             "integer" => "Integer",
             "boolean" => "Boolean",
             "string" => "Text",
+            "untypednode" => "Text", // TODO-SF: not sure what to do with UntypedNode, let's assume it's a string for now
             "int64" => "BigInteger",
             "sbyte" or "byte" => "Byte",
             "float" or "double" or "decimal" => "Decimal",

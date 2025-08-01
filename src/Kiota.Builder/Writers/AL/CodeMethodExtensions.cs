@@ -15,7 +15,7 @@ internal static class CodeMethodExtensions
         ArgumentNullException.ThrowIfNull(parameter);
         return GetSingularName(parameter.Name);
     }
-    public static string GetSingularName(this string input)
+    public static string GetSingularName(this string input, IEnumerable<CodeParameter>? parameters = null)
     {
         ArgumentNullException.ThrowIfNull(input);
         var newInput = input.EndsWith('s'.ToString(), StringComparison.OrdinalIgnoreCase) ? input[..^1] : input;
@@ -23,6 +23,19 @@ internal static class CodeMethodExtensions
             newInput = newInput.Remove(newInput.Length - 1);
         if (ReservedNamesProvider.ReservedNames.Contains(newInput, StringComparer.OrdinalIgnoreCase))
             newInput += "_";
+        if (newInput.Equals(input, StringComparison.OrdinalIgnoreCase))
+            newInput += "_var";
+        if (parameters is not null)
+        {
+            var index = 1;
+#pragma warning disable CA1851 // Possible multiple enumerations of 'IEnumerable' collection
+            while (parameters.Any(p => p.Name.Equals(newInput, StringComparison.OrdinalIgnoreCase)))
+            {
+                index++;
+                newInput = $"{newInput}{index}";
+            }
+#pragma warning restore CA1851 // Possible multiple enumerations of 'IEnumerable' collection
+        }
         return newInput;
     }
     public static bool HasVariables(this CodeMethod method)
