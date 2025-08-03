@@ -319,7 +319,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                 }
                 if (conventions.IsEnumType(codeElement.ReturnType))
                 {
-                    var enumName = codeElement.ReturnType.GetShortName().ToFirstCharacterUpperCase();
+                    var enumName = codeElement.ReturnType.Name.ToFirstCharacterUpperCase();
                     writer.WriteLine($"if {conventions.ModelCodeunitJsonBodyVariableName}.SelectToken('{codeElement.Name}', SubToken) then begin"); // TODO-SF: Think about making this variable-based instead of hardcoded
                     writer.IncreaseIndent();
                     writer.WriteLine($"// Return value based on captions; needed because it's possible that the \"Names\" differ from the captions");

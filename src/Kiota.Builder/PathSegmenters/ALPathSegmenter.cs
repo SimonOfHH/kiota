@@ -5,6 +5,7 @@ using Kiota.Builder.Extensions;
 using Kiota.Builder.Writers.AL;
 
 namespace Kiota.Builder.PathSegmenters;
+
 public class ALPathSegmenter : CommonPathSegmenter
 {
     public ALPathSegmenter(string rootPath, string clientNamespaceName) : base(rootPath, clientNamespaceName) { }
@@ -26,8 +27,6 @@ public class ALPathSegmenter : CommonPathSegmenter
         if (currentElement != null)
         {
             var originalName = currentElement.Name;
-            currentElement.Name = shortName.GetShortName();
-            currentElement.Name = currentElement.Name.Replace("_", string.Empty, StringComparison.OrdinalIgnoreCase);
             shortName = GetLastFileNameSegment(currentElement).ToFirstCharacterUpperCase().ShortenFileName() + nameAppendix;
             currentElement.Name = originalName;
             return shortName;

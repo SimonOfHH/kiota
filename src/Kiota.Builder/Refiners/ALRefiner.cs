@@ -1,8 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
-using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Kiota.Builder.CodeDOM;
@@ -22,22 +20,24 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         {
             cancellationToken.ThrowIfCancellationRequested();
             ModifyNamespaces(generatedCode);
+            ConvertUnionTypesToWrapper(generatedCode, // copied from CSharpRefiner, slightly modified
+                _configuration.UsesBackingStore,
+                static s => s,
+                true,
+                "",
+                ""
+            );
             RemoveUnusedMethods(generatedCode);
             RemoveAdditionalDataProperty(generatedCode); // we don't support additional data in AL (yet?)
             RemoveNotSupportedParameters(generatedCode);
             MarkMethodsToSkip(generatedCode);
+            ModifyClassNames(generatedCode);
+            ModifyEnumNames(generatedCode);
             cancellationToken.ThrowIfCancellationRequested();
             UpdateApiClientClass(generatedCode, _configuration);
             cancellationToken.ThrowIfCancellationRequested();
-            ConvertUnionTypesToWrapper(generatedCode, // copied from CSharpRefiner, currently for testing
-                _configuration.UsesBackingStore,
-                static s => s,
-                true,
-                "SerializationNamespaceName",
-                "IComposedTypeWrapper"
-            );
             MovePropertiesToMethods(generatedCode);
-            ModifyMethodName1(generatedCode);
+            ModifyGetterSetterMethodName(generatedCode);
             cancellationToken.ThrowIfCancellationRequested();
             UpdateModelClasses(generatedCode);
             UpdateRequestBuilderClasses(generatedCode, _configuration);
@@ -46,7 +46,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             AddObjectProperties(generatedCode);
             cancellationToken.ThrowIfCancellationRequested();
             AddAppJsonAsCodeFunction(generatedCode, _configuration);
-            ModifyMethodName2(generatedCode);
+            ModifyOverloadMethodNames(generatedCode);
             UpdateMethodParameters(generatedCode);
         }, cancellationToken);
     }
@@ -62,8 +62,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 currentClass.AddUsing(new CodeUsing { Name = "SimonOfHH.Kiota.Client" });
                 currentClass.AddUsing(new CodeUsing { Name = "SimonOfHH.Kiota.Definitions" });
                 currentClass.StartBlock.AddImplements(new CodeType { Name = "Kiota IApiClient SOHH", IsExternal = true });
-                currentClass.AddVariable(ALVariableProvider.GetGlobalVariable("ReqConfig", new CodeType { Name = "codeunit \"Kiota ClientConfig SOHH\"", IsExternal = true }, "").ToVariable());
-                currentClass.AddVariable(new ALVariable("APIAuthorization", new CodeType { Name = "codeunit \"Kiota API Authorization SOHH\"", IsExternal = true }, "", ""));
+                currentClass.AddVariable(ALVariableProvider.GetGlobalVariable("ReqConfig", new CodeType { Name = "codeunit SimonOfHH.Kiota.Client.\"Kiota ClientConfig SOHH\"", IsExternal = true }, "").ToVariable());
+                currentClass.AddVariable(new ALVariable("APIAuthorization", new CodeType { Name = "codeunit SimonOfHH.Kiota.Client.\"Kiota API Authorization SOHH\"", IsExternal = true }, "", ""));
                 currentClass.AddVariable(new ALVariable("StoredResponse", new CodeType { Name = "codeunit System.RestClient.\"Http Response Message\"", IsExternal = true }, "", ""));
                 currentClass.AddVariable(new ALVariable("BaseUrlLbl", new CodeType { Name = "Label" }, "", baseUrl, true));
                 currentClass.AddVariable(new ALVariable("ConfigSet", new CodeType { Name = "Boolean" }, "", ""));
@@ -82,19 +82,119 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     {
         if (currentElement is CodeNamespace currentNamespace)
         {
-            if (currentNamespace.Name.StartsWith('_'.ToString(), StringComparison.CurrentCulture))
-            {
-                // we don't support namespaces starting with an underscore in AL
-                currentNamespace.Name = currentNamespace.Name.Substring(1);
-            }
+            // we don't support namespaces starting with an underscore in AL
             if (currentNamespace.Name.Contains('_'.ToString(), StringComparison.CurrentCulture))
             {
-                // we don't support underscores at the beginning of namespaces in AL
-                if (currentNamespace.Name.StartsWith('_'.ToString(), StringComparison.OrdinalIgnoreCase))
-                    currentNamespace.Name = currentNamespace.Name.Substring(1);
+                var splitParts = currentNamespace.Name.Split('.', StringSplitOptions.RemoveEmptyEntries);
+                for (var i = 0; i < splitParts.Length; i++)
+                    if (splitParts[i].StartsWith('_'.ToString(), StringComparison.CurrentCulture))
+                        splitParts[i] = splitParts[i].Insert(0, "u");
+                currentNamespace.Name = string.Join('.', splitParts);
             }
         }
         CrawlTree(currentElement, ModifyNamespaces);
+    }
+    /// <summary>
+    // In AL object names have some limits; they need to be unique even across different namespaces (as long as they are in the same app module)
+    // and they need to be shorter than 30 characters. That's why we need to modify the class names here to comply with this
+    /// </summary>
+    protected static void ModifyClassNames(CodeElement currentElement)
+    {
+        if (currentElement is CodeClass currentClass)
+        {
+            var occurences = ALConventionService.CountClassNameOccurences(currentClass, currentClass.Name);
+            if ((occurences <= 1) && (currentClass.Name.Length <= 30))
+                return; // no need to modify the class name
+            var newName = currentClass.Name;
+            if (newName.Length < 30)
+                newName = AppendNumberToClassName(currentClass, newName, occurences);
+            if (CanReturnWithNewNameSet(currentClass, newName))
+                return; // we can return here, since the name is unique now
+            while (((newName.Length > 30) && ALConventionService.CanAbbreviate(newName)) || (ALConventionService.CanAbbreviate(newName) && (occurences > 0)))
+            {
+                newName = ALConventionService.AbbreviateName(newName);
+                occurences = ALConventionService.CountClassNameOccurences(currentClass, newName);
+            }
+            if (newName.Length > 30)
+                newName = newName.Substring(0, 30);
+            if (CanReturnWithNewNameSet(currentClass, newName))
+                return; // we can return here, since the name is unique now
+            var namespacePrefix = GetNamespacePrefixForClass(currentClass, newName);
+            newName = $"{newName}{namespacePrefix.ToFirstCharacterUpperCase()}"; // we append the last part of the namespace to the class name
+            if (newName.Length > 30)
+                newName = newName.Substring(0, 30);
+            if (CanReturnWithNewNameSet(currentClass, newName))
+                return; // we can return here, since the name is unique now
+            // if we still have more than one occurence, we cut away another character and just append a number
+            newName = AppendNumberToClassName(currentClass, newName, occurences);
+            SetNewName(currentClass, newName);
+        }
+        CrawlTree(currentElement, ModifyClassNames);
+    }
+    private static bool CanReturnWithNewNameSet(CodeClass currentClass, string currentName)
+    {
+        int occurences = ALConventionService.CountClassNameOccurences(currentClass, currentName);
+        if (occurences > 0)
+            return false;
+        SetNewName(currentClass, currentName);
+        return true;
+    }
+    private static void SetNewName(CodeClass currentClass, string currentName)
+    {
+        currentClass.AddToDocumentation($"This class was renamed from {currentClass.Name} to {currentName} to comply with AL naming conventions.");
+        currentClass.Name = currentName;
+    }
+    private static string AppendNumberToClassName(CodeClass currentClass, string currentName, int occurences)
+    {
+        var number = 1;
+        while (occurences > 0)
+        {
+            var numberLength = number.ToString(CultureInfo.InvariantCulture).Length;
+            if (currentName.Length >= 30)
+                currentName = currentName.Substring(0, currentName.Length - numberLength);
+            currentName = currentName + number;
+            occurences = ALConventionService.CountClassNameOccurences(currentClass, currentName);
+            number++;
+        }
+        return currentName;
+    }
+    private static String GetNamespacePrefixForClass(CodeClass currentClass, string currentName)
+    {
+        ArgumentNullException.ThrowIfNull(currentClass);
+        ArgumentNullException.ThrowIfNull(currentName);
+        var parentNamespace = GetNamespaceForClassForPrefix(currentClass);
+        var namespaceParts = parentNamespace.Name.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        var namespacePrefix = namespaceParts.Last();
+        if ((currentName.Length + namespacePrefix.Length) > 30)
+            namespacePrefix = ALConventionService.AbbreviateName(namespacePrefix);
+        return namespacePrefix;
+    }
+    private static CodeNamespace GetNamespaceForClassForPrefix(CodeClass currentClass)
+    {
+        ArgumentNullException.ThrowIfNull(currentClass);
+        var classNamespace = currentClass.GetImmediateParentOfType<CodeNamespace>();
+        if (classNamespace is null)
+            throw new InvalidOperationException($"The provided code class {currentClass.Name} does not have a parent namespace.");
+        var parentNamespace = classNamespace.Parent?.GetImmediateParentOfType<CodeNamespace>();
+        if (parentNamespace is null)
+            parentNamespace = classNamespace; // if there is no parent namespace, we use the current namespace
+        return parentNamespace;
+    }
+    protected static void ModifyEnumNames(CodeElement currentElement)
+    {
+        if (currentElement is CodeEnum currentEnum)
+        {
+            var occurences = ALConventionService.CountEnumNameOccurences(currentEnum, currentEnum.Name);
+            if (occurences <= 1)
+                return; // no need to modify the class name
+            var classNamespace = currentEnum.GetImmediateParentOfType<CodeNamespace>();
+            if (classNamespace is null)
+                throw new InvalidOperationException($"The provided enum {currentEnum.Name} does not have a parent namespace.");
+            var namespaceParts = classNamespace.Name.Split('.', StringSplitOptions.RemoveEmptyEntries);
+            var newName = $"{namespaceParts.Last().ToFirstCharacterUpperCase()}{currentEnum.Name}";
+            currentEnum.Name = newName;
+        }
+        CrawlTree(currentElement, ModifyEnumNames);
     }
     /// <summary>
     /// This method is used to remove unused methods from the current element.
@@ -155,7 +255,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             foreach (var parameter in currentMethod.Parameters)
             {
                 if (ReservedNamesProvider.ReservedNames.Contains(parameter.Name, StringComparer.OrdinalIgnoreCase))
-                    parameter.Name = $"_{parameter.Name}";
+                    parameter.Name = $"{parameter.Name}_";
             }
         }
         CrawlTree(currentElement, UpdateMethodParameters);
@@ -163,14 +263,14 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
     // Since we can't add methods with the same name to the DOM, in a previous step we added a "-overload" suffix to the method name.
     // This method removes the suffix from the method name.
-    protected static void ModifyMethodName2(CodeElement currentElement)
+    protected static void ModifyOverloadMethodNames(CodeElement currentElement)
     {
         if (currentElement is CodeMethod currentMethod)
         {
             if (currentMethod.Name.Contains("-overload", StringComparison.CurrentCulture))
                 currentMethod.Name = currentMethod.Name.Replace("-overload", "", StringComparison.CurrentCulture);
         }
-        CrawlTree(currentElement, ModifyMethodName2);
+        CrawlTree(currentElement, ModifyOverloadMethodNames);
     }
     protected static void RemoveAdditionalDataProperty(CodeElement currentElement)
     {
@@ -206,7 +306,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         }
         CrawlTree(currentElement, MovePropertiesToMethods);
     }
-    protected static void ModifyMethodName1(CodeElement currentElement)
+    protected static void ModifyGetterSetterMethodName(CodeElement currentElement)
     {
         if (currentElement is CodeMethod currentMethod)
         {
@@ -215,7 +315,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             if (currentMethod.IsSetterMethod())
                 currentMethod.Name = currentMethod.Name.Replace("Set-", String.Empty, StringComparison.CurrentCulture);
         }
-        CrawlTree(currentElement, ModifyMethodName1);
+        CrawlTree(currentElement, ModifyGetterSetterMethodName);
     }
     protected static void RemoveNotSupportedParameters(CodeElement currentElement)
     {
@@ -309,7 +409,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             currentClass.AddUsing(new CodeUsing { Name = "SimonOfHH.Kiota.Client" });
             if (currentClass.Name != "ApiClient")
             {
-                currentClass.AddVariable(ALVariableProvider.GetGlobalVariable("ReqConfig", new CodeType { Name = "codeunit \"Kiota ClientConfig SOHH\"", IsExternal = true }, "").ToVariable());
+                currentClass.AddVariable(ALVariableProvider.GetGlobalVariable("ReqConfig", new CodeType { Name = "codeunit SimonOfHH.Kiota.Client.\"Kiota ClientConfig SOHH\"", IsExternal = true }, "").ToVariable());
                 currentClass.AddMethod(ALVariableProvider.GetSetConfigurationMethod(currentClass));
             }
             if (IsIndexerClass(currentClass, out CodeIndexer? indexer))

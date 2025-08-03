@@ -49,12 +49,7 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         bool hasDescription = conventions.WriteLongDescription(parentClass, alWriter);
         conventions.WriteDeprecationAttribute(parentClass, alWriter);
         parentClass.SetCustomProperties(customProperties); // restore custom properties
-
-        if (codeElement.GetShortName() != codeElement.Name)
-        {
-            writer.WriteLine($"// {codeElement.Name} is shortened to {codeElement.GetShortName()} for AL compatibility. Might have implications for the code generation.");
-        }
-        alWriter.WriteLine($"codeunit {alWriter.ObjectIdProvider.GetNextCodeunitId()} {codeElement.GetShortName().ToFirstCharacterUpperCase()} {derivation}");
+        alWriter.WriteLine($"codeunit {alWriter.ObjectIdProvider.GetNextCodeunitId()} {codeElement.Name.ToFirstCharacterUpperCase()} {derivation}");
         alWriter.StartBlock();
         alWriter.WriteObjectProperties(parentClass.ObjectProperties().ToObjectProperties());
         alWriter.WriteVariablesDeclaration(parentClass.OrderedGlobalVariables(), parentClass);

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
 using System.Linq.Expressions;
@@ -171,5 +172,178 @@ public class ALConventionService : CommonLanguageConventionService // This is cu
         var deprecationMessage = GetDeprecationInformation(element);
         if (!string.IsNullOrEmpty(deprecationMessage))
             writer.WriteLine(deprecationMessage);
+    }
+    protected static CodeNamespace GetRootNamespaceFromClass(CodeElement codeClass)
+    {
+        ArgumentNullException.ThrowIfNull(codeClass);
+        var currentNamespace = codeClass.GetImmediateParentOfType<CodeNamespace>();
+        if (currentNamespace is null)
+            throw new InvalidOperationException($"The provided code class {codeClass.Name} does not have a parent namespace.");
+        var root = currentNamespace.GetRootNamespace();
+        if (root is null)
+            throw new InvalidOperationException($"The provided code class {codeClass.Name} does not have a root namespace.");
+        if (String.IsNullOrEmpty(root.Name))
+        {
+            var firstActualNamespace = root.GetChildElements(true).FirstOrDefault();
+            if (firstActualNamespace is not null && firstActualNamespace is CodeNamespace firstNamespace)
+            {
+                return firstNamespace;
+            }
+        }
+        return root;
+    }
+    internal static int CountClassNameOccurences(CodeClass currentElement, string className)
+    {
+        var root = GetRootNamespaceFromClass(currentElement);
+        if (root is null)
+            throw new InvalidOperationException($"The provided code class {currentElement.Name} does not have a root namespace.");
+        var children = root.GetChildElements(true);
+        var count = CountClassNameInNamespace(root, className);
+        return count;
+    }
+    internal static int CountClassNameInNamespace(CodeNamespace currentNamespace, string className)
+    {
+        var count = 0;
+        ArgumentNullException.ThrowIfNull(currentNamespace);
+        foreach (var nspaces in currentNamespace.Namespaces)
+        {
+            count += CountClassNameInNamespace(nspaces, className);
+        }
+        if (currentNamespace.Classes is null)
+            return count;
+        count += currentNamespace.Classes.Count(x => x.Name.Equals(className, StringComparison.OrdinalIgnoreCase));
+        return count;
+    }
+    internal static int CountEnumNameOccurences(CodeEnum currentElement, string enumName)
+    {
+        var root = GetRootNamespaceFromClass(currentElement);
+        if (root is null)
+            throw new InvalidOperationException($"The provided code enum {currentElement.Name} does not have a root namespace.");
+        var children = root.GetChildElements(true);
+        var count = CountEnumNameInNamespace(root, enumName);
+        return count;
+    }
+    internal static int CountEnumNameInNamespace(CodeNamespace currentNamespace, string enumName)
+    {
+        var count = 0;
+        ArgumentNullException.ThrowIfNull(currentNamespace);
+        foreach (var nspaces in currentNamespace.Namespaces)
+        {
+            count += CountEnumNameInNamespace(nspaces, enumName);
+        }
+        if (currentNamespace.Enums is null)
+            return count;
+        count += currentNamespace.Enums.Count(x => x.Name.Equals(enumName, StringComparison.OrdinalIgnoreCase));
+        return count;
+    }
+    public static bool CanAbbreviate(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        var abbreviationDictionary = AbbreviationDictionary();
+        return abbreviationDictionary.Keys.Any(k => name.Contains(k, StringComparison.OrdinalIgnoreCase));
+    }
+    public static string AbbreviateName(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        var abbreviationDictionary = AbbreviationDictionary();
+        foreach (var kvp in abbreviationDictionary)
+        {
+            if (name.Contains(kvp.Key, StringComparison.OrdinalIgnoreCase))
+            {
+                name = name.Replace(kvp.Key, kvp.Value, StringComparison.OrdinalIgnoreCase);
+                if (name.Length <= 30) break; // stop if the name is already short enough, to only make one change at a time
+            }
+        }
+        return name;
+    }
+    public static ReadOnlyDictionary<string, string> AbbreviationDictionary()
+    {
+        var dict = new Dictionary<string, string>
+        {
+            { "Transaction", "Txn"},
+            { "Avatar", "Ava"},
+            { "Action", "Act"},
+            { "Alignment", "Algnmt" },
+            { "Button", "Btn"},
+            { "Builder", "Bldr" },
+            { "Blocking", "Block" },
+            { "Category", "Cat"},
+            { "Categories", "Cats"},
+            { "Capture", "Cpt"},
+            { "Children", "Chld" },
+            { "Channel", "Chnl" },
+            { "Contact", "Cont" },
+            { "Configuration", "Cfg" },
+            { "Config", "Cfg" },
+            { "Collection", "Coll" },
+            { "Classification", "Class" },
+            { "Customer", "Cust" },
+            { "Custom", "Cust" },
+            { "Currency", "Curr"},
+            { "Dictionary", "Dict" },
+            { "Discount", "Disc" },
+            { "Data", "Dt" },
+            { "Describe", "Desc" },
+            { "Delivery", "Dlv" },
+            { "Definition", "Def" },
+            { "Description", "Desc" },
+            { "Details", "Dtl" },
+            { "Dependent", "Dep" },
+            { "Dependency", "Dep" },
+            { "Document", "Doc" },
+            { "Download", "Dwld" },
+            { "Entity", "Ent" },
+            { "Error", "Err" },
+            { "Exception", "Ex" },
+            { "Event", "Evt" },
+            { "Extended", "Ext" },
+            { "Extension", "Ext" },
+            { "Field", "Fld" },
+            { "Folder", "Fld" },
+            { "Global", "Glb" },
+            { "History", "Hist" },
+            { "Integration", "Intg" },
+            { "Keyword", "Key"},
+            { "Language", "Lang" },
+            { "Machine", "Mch"},
+            { "Media", "Med"},
+            { "Message", "Msg" },
+            { "Method", "Meth"},
+            { "Microsoft", "Ms" },
+            { "Navigation", "Nav"},
+            { "Number", "Num" },
+            { "Notification", "Notf" },
+            { "Override", "Ovrd" },
+            { "Object", "Obj" },
+            { "Order", "Odr" },
+            { "Original", "Orig" },
+            { "Parameters", "Params" },
+            { "Payment", "Pmt" },
+            { "Product", "Prod" },
+            { "Property", "Prop" },
+            { "Promotion", "Prmt" },
+            { "Position", "Pos" },
+            { "Query", "Qry" },
+            { "Referenced", "Ref" },
+            { "Reference", "Ref" },
+            { "Refund", "Rfd" },
+            { "Relationship", "Rel" },
+            { "Relation", "Rel" },
+            { "Regulation", "Reg" },
+            { "Recovery", "Rcvry"},
+            { "Request", "Req" },
+            { "Response", "Rsp" },
+            { "Result", "Rslt" },
+            { "Sales", "Sls"},
+            { "Section", "Sect" },
+            { "Service", "Svc" },
+            { "Sequence", "Seq" },
+            { "Stream", "Strm" },
+            { "Shipping", "Shp"},
+            { "User", "Usr" },
+            { "Wishlist", "WList"},
+            { "_", ""}
+        };
+        return new ReadOnlyDictionary<string, string>(dict);
     }
 }

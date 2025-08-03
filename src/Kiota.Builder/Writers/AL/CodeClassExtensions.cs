@@ -85,4 +85,12 @@ public static class CodeClassExtensions
             currentClass.StartBlock.Inherits = null;
         }
     }
+    public static void AddToDocumentation(this CodeClass codeClass, string text)
+    {
+        ArgumentNullException.ThrowIfNull(codeClass);
+        if (codeClass.Documentation == null)
+            codeClass.Documentation = new CodeDocumentation();
+        codeClass.Documentation.DescriptionTemplate += $"{(!String.IsNullOrEmpty(codeClass.Documentation.DescriptionTemplate) ?
+                                                                (codeClass.Documentation.DescriptionTemplate.EndsWith('.'.ToString(), StringComparison.OrdinalIgnoreCase) ? string.Empty : ".") : string.Empty)} {text}";
+    }
 }
