@@ -106,6 +106,15 @@ public class ALConventionService : CommonLanguageConventionService // This is cu
         }
         return false;
     }
+    public bool IsTextType(CodeTypeBase code)
+    {
+        if (code is CodeType currentType)
+        {
+            var typeName = TranslateType(currentType);
+            return typeName.Equals("Text", StringComparison.OrdinalIgnoreCase);
+        }
+        return false;
+    }
     public string GetTypeString(CodeTypeBase code, bool includeCollectionInformation)
     {
         if (code is CodeComposedTypeBase)

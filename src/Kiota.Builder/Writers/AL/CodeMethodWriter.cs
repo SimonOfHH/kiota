@@ -283,7 +283,15 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             }
             else
             {
-                writer.WriteLine($"{codeElement.GetCustomProperty("return-variable-name")}.Add(JToken.AsValue().AsText());"); // TODO-SF: Change return value name
+                if (conventions.IsTextType(codeElement.ReturnType))
+                    writer.WriteLine($"{codeElement.GetCustomProperty("return-variable-name")}.Add(JToken.AsValue().AsText());");
+                else
+                {
+                    writer.WriteLine($"if Evaluate(evluationVariable, JToken.AsValue().AsText()) then");
+                    writer.IncreaseIndent();
+                    writer.WriteLine($"{codeElement.GetCustomProperty("return-variable-name")}.Add(evluationVariable);");
+                    writer.DecreaseIndent();
+                }
             }
             writer.DecreaseIndent();
             if (conventions.IsCodeunitType(codeElement.ReturnType))
@@ -326,10 +334,10 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                     writer.WriteLine($"Ordinals := Enum::{enumName}.Ordinals();");
                     writer.WriteLine($"foreach Ordinal in Ordinals do begin");
                     writer.IncreaseIndent();
-                    writer.WriteLine($"value := Enum::{enumName}.FromInteger(Ordinal);");
-                    writer.WriteLine($"if (Format(value) = SubToken.AsValue().AsText()) then");
+                    writer.WriteLine($"enumValue := Enum::{enumName}.FromInteger(Ordinal);");
+                    writer.WriteLine($"if (Format(enumValue) = SubToken.AsValue().AsText()) then");
                     writer.IncreaseIndent();
-                    writer.WriteLine($"exit(value);");
+                    writer.WriteLine($"exit(enumValue);");
                     writer.DecreaseIndent();
                     writer.DecreaseIndent();
                     writer.WriteLine($"end;");
@@ -346,50 +354,28 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         if (param == null)
             throw new InvalidOperationException("Setter method should have a parameter");
         var targetName = param.Name;
-        if (codeElement.GetSourceType() == "List")
+        if (param.Type.CollectionKind == CodeTypeBase.CodeTypeCollectionKind.Complex)
         {
             writer.WriteLine($"foreach v in {param.Name} do");
             writer.IncreaseIndent();
             if (conventions.IsCodeunitType(param.Type))
                 writer.WriteLine($"JSONHelper.AddToArrayIfNotEmpty(JArray, v);");
+            else if (conventions.IsEnumType(param.Type))
+                writer.WriteLine($"JArray.Add(Format(v));");
             else
                 writer.WriteLine($"JArray.Add(v);");
             writer.DecreaseIndent();
             targetName = "JArray";
         }
-        if (conventions.IsPrimitiveType(param.Type) || (targetName != param.Name))
-        {
-            writer.WriteLine($"if {conventions.ModelCodeunitJsonBodyVariableName}.SelectToken('{codeElement.Name}', SubToken) then");
-            writer.IncreaseIndent();
-            writer.WriteLine($"{conventions.ModelCodeunitJsonBodyVariableName}.Replace('{codeElement.Name}', {targetName})");
-            writer.DecreaseIndent();
-            writer.WriteLine("else");
-            writer.IncreaseIndent();
-            writer.WriteLine($"{conventions.ModelCodeunitJsonBodyVariableName}.Add('{codeElement.Name}', {targetName});");
-            writer.DecreaseIndent();
-        }
-        else if (conventions.IsEnumType(param.Type))
-        {
-            writer.WriteLine($"if {conventions.ModelCodeunitJsonBodyVariableName}.SelectToken('{codeElement.Name}', SubToken) then");
-            writer.IncreaseIndent();
-            writer.WriteLine($"{conventions.ModelCodeunitJsonBodyVariableName}.Replace('{codeElement.Name}', Format({targetName}))");
-            writer.DecreaseIndent();
-            writer.WriteLine("else");
-            writer.IncreaseIndent();
-            writer.WriteLine($"{conventions.ModelCodeunitJsonBodyVariableName}.Add('{codeElement.Name}', Format({targetName}));");
-            writer.DecreaseIndent();
-        }
-        else
-        {
-            writer.WriteLine($"if {conventions.ModelCodeunitJsonBodyVariableName}.SelectToken('{codeElement.Name}', SubToken) then");
-            writer.IncreaseIndent();
-            writer.WriteLine($"{conventions.ModelCodeunitJsonBodyVariableName}.Replace('{codeElement.Name}', {targetName}.ToJson())");
-            writer.DecreaseIndent();
-            writer.WriteLine("else");
-            writer.IncreaseIndent();
-            writer.WriteLine($"{conventions.ModelCodeunitJsonBodyVariableName}.Add('{codeElement.Name}', {targetName}.ToJson());");
-            writer.DecreaseIndent();
-        }
+        bool simpleAssignment = conventions.IsPrimitiveType(param.Type) || (targetName != param.Name);
+        writer.WriteLine($"if {conventions.ModelCodeunitJsonBodyVariableName}.SelectToken('{codeElement.Name}', SubToken) then");
+        writer.IncreaseIndent();
+        writer.WriteLine($"{conventions.ModelCodeunitJsonBodyVariableName}.Replace('{codeElement.Name}', {(simpleAssignment ? targetName : conventions.IsEnumType(param.Type) ? $"Format({targetName})" : $"{targetName}.ToJson()")})");
+        writer.DecreaseIndent();
+        writer.WriteLine("else");
+        writer.IncreaseIndent();
+        writer.WriteLine($"{conventions.ModelCodeunitJsonBodyVariableName}.Add('{codeElement.Name}', {(simpleAssignment ? targetName : conventions.IsEnumType(param.Type) ? $"Format({targetName})" : $"{targetName}.ToJson()")});");
+        writer.DecreaseIndent();
     }
     private void WriteValidateBodyMethodBody(CodeMethod codeElement, CodeClass parentClass, LanguageWriter writer)
     {

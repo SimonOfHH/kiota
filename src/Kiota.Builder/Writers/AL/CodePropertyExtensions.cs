@@ -56,11 +56,11 @@ internal static class CodePropertyExtensions
         else
             method.SetSourceFromProperty(property);
         method.AddCustomProperty("method-type", "Getter");
-        if (ConventionService.IsEnumType(property.Type))
+        if (ConventionService.IsEnumType(property.Type) && (property.Type.CollectionKind == CodeTypeCollectionKind.None))
         {
             method.AddParameter(ALVariableProvider.GetLocalVariableP("Ordinal", "Integer", "2"));
             method.AddParameter(ALVariableProvider.GetLocalVariableP("Ordinals", "List of [Integer]", "3"));
-            method.AddParameter(ALVariableProvider.GetLocalVariableP("value", property.Type, "1"));
+            method.AddParameter(ALVariableProvider.GetLocalVariableP("enumValue", property.Type, "1"));
         }
         switch (property.Type.CollectionKind)
         {
@@ -143,6 +143,9 @@ internal static class CodePropertyExtensions
         };
         if (!ConventionService.IsCodeunitType(propertyType))
             parameters.RemoveAt(parameters.IndexOf(parameters.First(x => x.Name == "TargetCodeunit")));
+        if (!ConventionService.IsCodeunitType(propertyType) && !ConventionService.IsTextType(propertyType))
+            parameters.Add(ALVariableProvider.GetLocalVariableP("evluationVariable", propertyType.CloneWithoutCollection(), "1"));
+
         return [.. parameters];
     }
     private static CodeParameter[] DefaultSetterComplexCollectionParameters(CodeTypeBase propertyType)
