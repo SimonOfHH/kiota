@@ -29,7 +29,11 @@ internal static class CodePropertyExtensions
         {
             Name = ReservedNamesProvider.GetSafeName(property.Name),
             Type = property.Type,
-            DefaultValue = property.DefaultValue
+            DefaultValue = property.DefaultValue,
+            // Set the correct parameter kind for query parameters
+            Kind = property.Kind == CodePropertyKind.QueryParameter ? 
+                   CodeParameterKind.QueryParameter : CodeParameterKind.Custom,
+            SerializationName = property.SerializationName
         };
         if (!string.IsNullOrEmpty(name))
             parameter.Name = name;

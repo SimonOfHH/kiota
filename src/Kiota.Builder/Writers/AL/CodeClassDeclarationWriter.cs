@@ -17,6 +17,10 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         ArgumentNullException.ThrowIfNull(alWriter);
         if (codeElement.ParentIsSkipped()) return;
         if (codeElement.Parent is not CodeClass parentClass) throw new InvalidOperationException($"The provided code element {codeElement.Name} doesn't have a parent of type {nameof(CodeClass)}");
+        
+        // Skip parameter codeunits - they are handled by CodeParameterCodeunitWriter
+        if (parentClass.GetCustomProperty("parameter-codeunit") == "true") return;
+        
         if (parentClass.Parent is not CodeNamespace)
         {
             // seems to be a nested class, we don't support that in AL

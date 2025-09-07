@@ -25,6 +25,7 @@ public class ALWriter : LanguageWriter
         AddOrReplaceCodeElementWriter(new CodeFunctionWriter(conventionService));
         AddOrReplaceCodeElementWriter(new CodeIndexerWriter(conventionService));
         AddOrReplaceCodeElementWriter(new CodeMethodWriter(conventionService));
+        AddOrReplaceCodeElementWriter(new CodeParameterCodeunitWriter(conventionService));
         AddOrReplaceCodeElementWriter(new CodePropertyWriter(conventionService));
         AddOrReplaceCodeElementWriter(new CodeTypeWriter(conventionService));
     }

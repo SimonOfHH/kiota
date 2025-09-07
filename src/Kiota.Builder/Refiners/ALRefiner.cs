@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Threading;
@@ -414,15 +415,98 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     var requestConf = codeClass.InnerClasses.FirstOrDefault(c => c.Kind == CodeClassKind.QueryParameters && c.Name == $"{codeClass.Name}{method.Name}QueryParameters");
                     if (requestConf is not null)
                     {
+                        // Extract query parameters before adding them to the method
+                        var queryParameters = new List<CodeParameter>();
                         foreach (var prop in requestConf.Properties)
                         {
-                            method.AddParameter(prop.ToCodeParameter());
+                            queryParameters.Add(prop.ToCodeParameter());
+                        }
+                        
+                        // Check if we should use parameter codeunit approach
+                        if (ShouldUseParameterCodeunit(queryParameters))
+                        {
+                            // Create parameter codeunit
+                            var parentNamespace = codeClass.GetImmediateParentOfType<CodeNamespace>();
+                            if (parentNamespace != null)
+                            {
+                                var parameterCodeunit = CreateParameterCodeunit(codeClass.Name, method.Name, queryParameters.ToArray(), parentNamespace);
+                                parentNamespace.AddClass(parameterCodeunit);
+                                
+                                // Add parameter codeunit parameter to method
+                                var parameterCodeunitParam = new CodeParameter
+                                {
+                                    Name = "Parameters",
+                                    Kind = CodeParameterKind.Custom,
+                                    Type = new CodeType
+                                    {
+                                        Name = $"Codeunit \"{parameterCodeunit.Name}\"",
+                                        TypeDefinition = parameterCodeunit
+                                    }
+                                };
+                                parameterCodeunitParam.AddCustomProperty("parameter-codeunit", "true");
+                                method.AddParameter(parameterCodeunitParam);
+                                
+                                // Mark method to use parameter codeunit approach
+                                method.AddCustomProperty("use-parameter-codeunit", "true");
+                            }
+                        }
+                        else
+                        {
+                            // Use legacy approach - add individual parameters
+                            foreach (var param in queryParameters)
+                            {
+                                method.AddParameter(param);
+                            }
                         }
                     }
                 }
             }
         }
         CrawlTree(currentElement, UpdateRequestExecutorMethods);
+    }
+
+    
+    private static bool ShouldUseParameterCodeunit(List<CodeParameter> queryParameters)
+    {
+        // Use parameter codeunit approach if there are query parameters
+        // This allows for proper handling of optional parameters with valid zero values
+        return queryParameters.Count > 0;
+    }
+    
+    private static CodeClass CreateParameterCodeunit(string className, string methodName, CodeParameter[] queryParameters, CodeNamespace parentNamespace)
+    {
+        var parameterCodeunitName = $"{className}{methodName}Parameters";
+        var parameterCodeunit = new CodeClass
+        {
+            Name = parameterCodeunitName,
+            Kind = CodeClassKind.Custom,
+            Parent = parentNamespace
+        };
+
+        // Mark as parameter codeunit
+        parameterCodeunit.AddCustomProperty("parameter-codeunit", "true");
+
+        // Store parameter information for the writer
+        var conventionService = new ALConventionService();
+        var paramInfos = queryParameters.Select(p => 
+        {
+            var typeString = conventionService.GetTypeString(p.Type, null);
+            return $"{p.Name.ToFirstCharacterUpperCase()}:{typeString}";
+        });
+        
+        parameterCodeunit.AddCustomProperty("query-parameters", string.Join(",", paramInfos));
+
+        // Add usings from parent class
+        var parentClass = parentNamespace.Classes.FirstOrDefault(c => c.Name == className);
+        if (parentClass != null)
+        {
+            foreach (var using_ in parentClass.Usings)
+            {
+                parameterCodeunit.AddUsing(using_);
+            }
+        }
+
+        return parameterCodeunit;
     }
     protected static void UpdateRequestBuilderClasses(CodeElement currentElement, GenerationConfiguration configuration)
     {
