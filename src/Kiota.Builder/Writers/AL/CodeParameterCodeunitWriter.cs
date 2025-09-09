@@ -55,82 +55,12 @@ public class CodeParameterCodeunitWriter : BaseElementWriter<ClassDeclaration, A
 
     private void WriteParameterVariables(CodeClass codeElement, ALWriter writer)
     {
-        // Get query parameters from the stored method info
-        var queryParametersJson = codeElement.GetCustomProperty("query-parameters");
-        if (string.IsNullOrEmpty(queryParametersJson)) 
-        {
-            // Write a comment to help debug if no parameters found
-            writer.WriteLine("// No query parameters found");
-            return;
-        }
-
-        // Parse the parameter string containing parameter information
-        // Format: "param1:Type1,param2:Type2,..."
-        var parameters = queryParametersJson.Split(',');
-        
-        writer.WriteLine("var");
-        writer.IncreaseIndent();
-
-        foreach (var paramInfo in parameters)
-        {
-            var parts = paramInfo.Split(':');
-            if (parts.Length != 2) continue;
-            
-            var paramName = parts[0].Trim();
-            var paramType = parts[1].Trim();
-            
-            writer.WriteLine($"{paramName}: {paramType};");
-            writer.WriteLine($"Has{paramName}: Boolean;");
-        }
-
-        writer.DecreaseIndent();
-        writer.WriteLine();
+        ALParameterCodeunitHelper.WriteParameterVariables(codeElement, writer);
     }
 
     private void WriteParameterMethods(CodeClass codeElement, ALWriter writer)
     {
-        // Get query parameters from the stored method info
-        var queryParametersJson = codeElement.GetCustomProperty("query-parameters");
-        if (string.IsNullOrEmpty(queryParametersJson)) return;
-
-        var parameters = queryParametersJson.Split(',');
-
-        foreach (var paramInfo in parameters)
-        {
-            var parts = paramInfo.Split(':');
-            if (parts.Length != 2) continue;
-            
-            var paramName = parts[0].Trim();
-            var paramType = parts[1].Trim();
-            
-            // Write setter method
-            writer.WriteLine($"procedure Set{paramName}(Value: {paramType})");
-            writer.WriteLine("begin");
-            writer.IncreaseIndent();
-            writer.WriteLine($"{paramName} := Value;");
-            writer.WriteLine($"Has{paramName} := true;");
-            writer.DecreaseIndent();
-            writer.WriteLine("end;");
-            writer.WriteLine();
-
-            // Write getter method (internal)
-            writer.WriteLine($"internal procedure Get{paramName}() ReturnValue: {paramType}");
-            writer.WriteLine("begin");
-            writer.IncreaseIndent();
-            writer.WriteLine($"exit({paramName});");
-            writer.DecreaseIndent();
-            writer.WriteLine("end;");
-            writer.WriteLine();
-
-            // Write "IsSet" method (internal)
-            writer.WriteLine($"internal procedure Is{paramName}Set(): Boolean");
-            writer.WriteLine("begin");
-            writer.IncreaseIndent();
-            writer.WriteLine($"exit(Has{paramName});");
-            writer.DecreaseIndent();
-            writer.WriteLine("end;");
-            writer.WriteLine();
-        }
+        ALParameterCodeunitHelper.WriteParameterMethods(codeElement, writer);
     }
 
     public static CodeClass CreateParameterCodeunit(string className, string methodName, CodeParameter[] queryParameters, CodeNamespace parentNamespace)

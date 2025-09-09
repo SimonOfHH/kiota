@@ -407,6 +407,10 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
     private void WriteFromPropertyGetterMethodBody(CodeMethod codeElement, LanguageWriter writer)
     {
+        // Note: AL language allows omitting begin/end blocks for single statements, 
+        // which creates intentionally inconsistent block structure throughout this method.
+        // This is correct AL syntax and follows AL language conventions.
+        
         if (codeElement.GetSourceType() == "List")
         {
             writer.WriteLine($"if not {conventions.ModelCodeunitJsonBodyVariableName}.SelectToken('{codeElement.Name}', SubToken) then");

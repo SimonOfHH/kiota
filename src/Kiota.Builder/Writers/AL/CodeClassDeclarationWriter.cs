@@ -39,7 +39,7 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
             codeElement.Usings
                     .Where(x => (x.Declaration?.IsExternal ?? true) || !x.Declaration.Name.Equals(codeElement.Name, StringComparison.OrdinalIgnoreCase)) // needed for circular requests patterns like message folder
                     .Select(static x => x.Declaration?.IsExternal ?? false ?
-                                    $"using {x.Declaration.Name.NormalizeNameSpaceName(".")};" :
+                                    $"using {x.Declaration.Name.NormalizeNameSpaceName(".")};":
                                     $"using {x.Name.NormalizeNameSpaceName(".")};")
                     .Distinct(StringComparer.Ordinal)
                     .OrderBy(static x => x, StringComparer.Ordinal)
@@ -47,7 +47,6 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
                     .ForEach(x => alWriter.WriteLine(x));
             alWriter.WriteLine();
         }
-        var conventions = new ALConventionService();
         var derivedTypes = (codeElement.Inherits is null ? Enumerable.Empty<string?>() : new string?[] { conventions.GetTypeString(codeElement.Inherits, parentClass) })
                                         .Union(codeElement.Implements.Select(static x => $"\"{x.Name}\""))
                                         .OfType<string>()
@@ -80,7 +79,7 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         codeElement.Usings
             .Where(x => (x.Declaration?.IsExternal ?? true) || !x.Declaration.Name.Equals(codeElement.Name, StringComparison.OrdinalIgnoreCase))
             .Select(static x => x.Declaration?.IsExternal ?? false ?
-                            $"using {x.Declaration.Name.NormalizeNameSpaceName(".")};" :
+                            $"using {x.Declaration.Name.NormalizeNameSpaceName(".")};":
                             $"using {x.Name.NormalizeNameSpaceName(".")};")
             .Distinct(StringComparer.Ordinal)
             .OrderBy(static x => x, StringComparer.Ordinal)
@@ -101,8 +100,8 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         alWriter.WriteLine($"codeunit {alWriter.ObjectIdProvider.GetNextCodeunitId()} \"{codeunitName}\"");
         alWriter.StartBlock();
 
-        WriteParameterVariables(parentClass, alWriter);
-        WriteParameterMethods(parentClass, alWriter);
+        ALParameterCodeunitHelper.WriteParameterVariables(parentClass, alWriter);
+        ALParameterCodeunitHelper.WriteParameterMethods(parentClass, alWriter);
 
         // Note: Removed alWriter.CloseBlock() to match regular codeunit pattern
         // The codeunit closing is handled by the framework, not here
@@ -110,81 +109,11 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
     
     private void WriteParameterVariables(CodeClass codeElement, ALWriter writer)
     {
-        // Get query parameters from the stored method info
-        var queryParametersJson = codeElement.GetCustomProperty("query-parameters");
-        if (string.IsNullOrEmpty(queryParametersJson)) 
-        {
-            // Write a comment to help debug if no parameters found
-            writer.WriteLine("// No query parameters found");
-            return;
-        }
-
-        // Parse the parameter string containing parameter information
-        // Format: "param1:Type1,param2:Type2,..."
-        var parameters = queryParametersJson.Split(',');
-        
-        writer.WriteLine("var");
-        writer.IncreaseIndent();
-
-        foreach (var paramInfo in parameters)
-        {
-            var parts = paramInfo.Split(':');
-            if (parts.Length != 2) continue;
-            
-            var paramName = parts[0].Trim();
-            var paramType = parts[1].Trim();
-            
-            writer.WriteLine($"{paramName}: {paramType};");
-            writer.WriteLine($"Has{paramName}: Boolean;");
-        }
-
-        writer.DecreaseIndent();
-        writer.WriteLine();
+        ALParameterCodeunitHelper.WriteParameterVariables(codeElement, writer);
     }
 
     private void WriteParameterMethods(CodeClass codeElement, ALWriter writer)
     {
-        // Get query parameters from the stored method info
-        var queryParametersJson = codeElement.GetCustomProperty("query-parameters");
-        if (string.IsNullOrEmpty(queryParametersJson)) return;
-
-        var parameters = queryParametersJson.Split(',');
-
-        foreach (var paramInfo in parameters)
-        {
-            var parts = paramInfo.Split(':');
-            if (parts.Length != 2) continue;
-            
-            var paramName = parts[0].Trim();
-            var paramType = parts[1].Trim();
-            
-            // Write setter method
-            writer.WriteLine($"procedure Set{paramName}(Value: {paramType})");
-            writer.WriteLine("begin");
-            writer.IncreaseIndent();
-            writer.WriteLine($"{paramName} := Value;");
-            writer.WriteLine($"Has{paramName} := true;");
-            writer.DecreaseIndent();
-            writer.WriteLine("end;");
-            writer.WriteLine();
-
-            // Write getter method (internal)
-            writer.WriteLine($"internal procedure Get{paramName}() ReturnValue: {paramType}");
-            writer.WriteLine("begin");
-            writer.IncreaseIndent();
-            writer.WriteLine($"exit({paramName});");
-            writer.DecreaseIndent();
-            writer.WriteLine("end;");
-            writer.WriteLine();
-
-            // Write "IsSet" method (internal)
-            writer.WriteLine($"internal procedure Is{paramName}Set(): Boolean");
-            writer.WriteLine("begin");
-            writer.IncreaseIndent();
-            writer.WriteLine($"exit(Has{paramName});");
-            writer.DecreaseIndent();
-            writer.WriteLine("end;");
-            writer.WriteLine();
-        }
+        ALParameterCodeunitHelper.WriteParameterMethods(codeElement, writer);
     }
 }
