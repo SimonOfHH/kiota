@@ -91,7 +91,9 @@ public abstract class LanguageWriter
     {
         WriteLine(symbol);
         if (increaseIndent)
+        {
             IncreaseIndent();
+        }
     }
     internal void CloseBlock(string symbol = "}", bool decreaseIndent = true)
     {

@@ -150,19 +150,22 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
         writer.WriteLine("RequestHandler.SetClientConfig(ReqConfig);");
 
-        var queryStringParameters = codeElement.Parameters.Where(static x => x.IsOfKind(CodeParameterKind.QueryParameter) && !x.IsOfKind(CodeParameterKind.RequestConfiguration)).OrderBy(static x => x.Name, StringComparer.OrdinalIgnoreCase).ToArray();
-        
         // Check if this method should use parameter codeunit approach
         var useParameterCodeunit = codeElement.GetCustomProperty("use-parameter-codeunit") == "true";
         var parameterCodeunitParam = codeElement.Parameters.FirstOrDefault(p => p.GetCustomProperty("parameter-codeunit") == "true");
         
         if (useParameterCodeunit && parameterCodeunitParam != null)
         {
-            WriteParameterCodeunitQueryHandling(codeElement, writer, parameterCodeunitParam, queryStringParameters);
+            WriteParameterCodeunitQueryHandling(codeElement, writer, parameterCodeunitParam);
         }
-        else if (queryStringParameters.Length != 0)
+        else
         {
-            WriteLegacyQueryParameterHandling(codeElement, writer, queryStringParameters);
+            // Legacy approach - handle individual query parameters
+            var queryStringParameters = codeElement.Parameters.Where(static x => x.IsOfKind(CodeParameterKind.QueryParameter) && !x.IsOfKind(CodeParameterKind.RequestConfiguration)).OrderBy(static x => x.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+            if (queryStringParameters.Length != 0)
+            {
+                WriteLegacyQueryParameterHandling(codeElement, writer, queryStringParameters);
+            }
         }
         
         var parameter = codeElement.Parameters.FirstOrDefault(x => x.Name.Contains("body", StringComparison.OrdinalIgnoreCase));
@@ -181,29 +184,38 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         WriteResponseCreation(codeElement, writer);
     }
 
-    private static void WriteParameterCodeunitQueryHandling(CodeMethod codeElement, LanguageWriter writer, CodeParameter parameterCodeunitParam, CodeParameter[] queryStringParameters)
+    private static void WriteParameterCodeunitQueryHandling(CodeMethod codeElement, LanguageWriter writer, CodeParameter parameterCodeunitParam)
     {
-        if (queryStringParameters.Length == 0) return;
+        // Get the parameter codeunit CodeClass to extract parameter information
+        var parameterCodeunitType = parameterCodeunitParam.Type as CodeType;
+        var parameterCodeunitClass = parameterCodeunitType?.TypeDefinition as CodeClass;
+        if (parameterCodeunitClass == null) return;
+
+        var queryParametersJson = parameterCodeunitClass.GetCustomProperty("query-parameters");
+        if (string.IsNullOrEmpty(queryParametersJson)) return;
 
         writer.WriteLine("// Set query parameters using parameter codeunit");
         
-        // Add variable declarations needed for collection handling
-        bool hasCollections = queryStringParameters.Any(p => p.Type.IsCollection);
-        if (hasCollections)
-        {
-            writer.WriteLine("JoinedValues: Text;");
-            writer.WriteLine("Item: Variant;");
-        }
+        // Parse the parameter string containing parameter information
+        // Format: "param1:Type1,param2:Type2,..."
+        var parameters = queryParametersJson.Split(',');
         
-        foreach (var queryParam in queryStringParameters)
+        foreach (var paramInfo in parameters)
         {
-            var paramName = queryParam.Name.ToFirstCharacterUpperCase();
-            var queryParameterName = !string.IsNullOrEmpty(queryParam.SerializationName) ? queryParam.SerializationName : queryParam.Name;
+            var parts = paramInfo.Split(':');
+            if (parts.Length != 2) continue;
+            
+            var paramName = parts[0].Trim();
+            var paramType = parts[1].Trim();
+            
+            // For now, assume the query parameter name matches the parameter name (lowercased)
+            // In the future, this could be enhanced to use SerializationName from the original parameters
+            var queryParameterName = paramName.ToFirstCharacterLowerCase();
             
             writer.WriteLine($"if {parameterCodeunitParam.Name}.Is{paramName}Set() then begin");
             writer.IncreaseIndent();
             
-            if (queryParam.Type.IsCollection)
+            if (paramType.Contains("List of", StringComparison.OrdinalIgnoreCase))
             {
                 // For collections - create local variable to join with commas
                 writer.WriteLine("JoinedValues := '';");
@@ -269,15 +281,17 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var returnType = codeElement.ReturnType;
         if (returnType != null && !returnType.Name.Equals("void", StringComparison.OrdinalIgnoreCase))
         {
-            // For methods that return data, handle the response
-            writer.WriteLine("if ReqConfig.Client().Response().GetIsSuccessStatusCode() then");
-            writer.IncreaseIndent();
             var returnVariableName = codeElement.GetCustomProperty("return-variable-name");
             if (!string.IsNullOrEmpty(returnVariableName))
             {
+                // Method has a Target parameter - set the response on it
+                writer.WriteLine("if ReqConfig.Client().Response().GetIsSuccessStatusCode() then");
+                writer.IncreaseIndent();
                 writer.WriteLine($"{returnVariableName}.SetBody(ReqConfig.Client().Response().GetContent().AsJson().AsObject());");
+                writer.DecreaseIndent();
             }
-            writer.DecreaseIndent();
+            // For methods that return HttpContent directly (like DELETE, POST), don't add any response handling
+            // The caller will handle the response as needed
         }
     }
 
@@ -403,7 +417,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             if (conventions.IsCodeunitType(codeElement.ReturnType))
                 writer.WriteLine($"foreach JToken in JArray do begin");
             else
-                writer.WriteLine($"foreach JToken in JArray do ");
+                writer.WriteLine($"foreach JToken in JArray do begin");
             writer.IncreaseIndent();
             if (conventions.IsCodeunitType(codeElement.ReturnType))
             {
@@ -432,6 +446,12 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                     };
                     writer.WriteLine($"{codeElement.GetCustomProperty("return-variable-name")}.Add(JToken.AsValue().{parseMethod}());");
                 }
+                else if (elementType != null && conventions.IsEnumType(elementType))
+                {
+                    // Handle enum conversion using Evaluate - much simpler approach
+                    writer.WriteLine($"Evaluate(value, JToken.AsValue().AsText());");
+                    writer.WriteLine($"{codeElement.GetCustomProperty("return-variable-name")}.Add(value);");
+                }
                 else
                 {
                     // Fallback to text parsing for unknown types
@@ -439,8 +459,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                 }
             }
             writer.DecreaseIndent();
-            if (conventions.IsCodeunitType(codeElement.ReturnType))
-                writer.WriteLine($"end;");
+            writer.WriteLine($"end;");
         }
         else if (codeElement.Documentation.DocumentationLabel.Contains("(Array)", StringComparison.OrdinalIgnoreCase))
         {

@@ -448,6 +448,14 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                                 
                                 // Mark method to use parameter codeunit approach
                                 method.AddCustomProperty("use-parameter-codeunit", "true");
+                                
+                                // Add required local variables for collection handling if needed
+                                bool hasCollections = queryParameters.Any(p => p.Type.IsCollection);
+                                if (hasCollections)
+                                {
+                                    method.AddParameter(ALVariableProvider.GetLocalVariableP("JoinedValues", new CodeType { Name = "Text" }, ""));
+                                    method.AddParameter(ALVariableProvider.GetLocalVariableP("Item", new CodeType { Name = "Variant" }, ""));
+                                }
                             }
                         }
                         else
@@ -476,6 +484,13 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     private static CodeClass CreateParameterCodeunit(string className, string methodName, CodeParameter[] queryParameters, CodeNamespace parentNamespace)
     {
         var parameterCodeunitName = $"{className}{methodName}Parameters";
+        
+        // Apply AL name abbreviation for 30-character limit
+        if (parameterCodeunitName.Length > 30 && ALConventionService.CanAbbreviate(parameterCodeunitName))
+        {
+            parameterCodeunitName = ALConventionService.AbbreviateName(parameterCodeunitName);
+        }
+        
         var parameterCodeunit = new CodeClass
         {
             Name = parameterCodeunitName,

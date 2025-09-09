@@ -263,6 +263,29 @@ public class ALConventionService : CommonLanguageConventionService // This is cu
                 if (name.Length <= 30) break; // stop if the name is already short enough, to only make one change at a time
             }
         }
+        
+        // If still too long after abbreviation, truncate intelligently
+        if (name.Length > 30)
+        {
+            // Try to preserve the end part (often contains "Params", "Bldr", etc.)
+            // and truncate from the beginning, keeping important parts
+            if (name.EndsWith("Params", StringComparison.OrdinalIgnoreCase))
+            {
+                var prefixLength = 30 - 6; // 6 for "Params"
+                name = string.Concat(name.AsSpan(0, Math.Min(prefixLength, name.Length - 6)), "Params");
+            }
+            else if (name.EndsWith("Bldr", StringComparison.OrdinalIgnoreCase))
+            {
+                var prefixLength = 30 - 4; // 4 for "Bldr" 
+                name = string.Concat(name.AsSpan(0, Math.Min(prefixLength, name.Length - 4)), "Bldr");
+            }
+            else
+            {
+                // Generic truncation
+                name = name[..30];
+            }
+        }
+        
         return name;
     }
     public static ReadOnlyDictionary<string, string> AbbreviationDictionary()
@@ -279,6 +302,10 @@ public class ALConventionService : CommonLanguageConventionService // This is cu
             { "Category", "Cat"},
             { "Categories", "Cats"},
             { "Capture", "Cpt"},
+            { "Certificates", "Certs"},
+            { "Certificate", "Cert"},
+            { "Connections", "Conns"},
+            { "Connection", "Conn"},
             { "Children", "Chld" },
             { "Channel", "Chnl" },
             { "Contact", "Cont" },
