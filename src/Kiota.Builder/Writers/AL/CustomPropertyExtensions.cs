@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using Kiota.Builder.CodeDOM;
 using static Kiota.Builder.CodeDOM.CodeTypeBase;
 
@@ -121,6 +122,21 @@ public static class CustomPropertyExtensions
                 customProperties.Add(property.Key, property.Value);
         }
         return customProperties;
+    }
+    public static void SetObjectId(this IDocumentedElement element, int objectId)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        element.AddCustomProperty("object-id", objectId.ToString(CultureInfo.InvariantCulture));
+    }
+    public static int GetObjectId(this IDocumentedElement element, int defaultValue = 0)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        var objectId = element.GetCustomProperty("object-id");
+        if (string.IsNullOrEmpty(objectId))
+            return defaultValue;
+        if (int.TryParse(objectId, out var value))
+            return value;
+        return defaultValue;
     }
     public static string GetSource(this IDocumentedElement element)
     {

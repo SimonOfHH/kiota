@@ -34,9 +34,15 @@ public class CodeEnumWriter : BaseElementWriter<CodeEnum, ALConventionService>
             alWriter.WriteLine($"namespace {codeNamespace.Name};");
             alWriter.WriteLine();
         }
+        var pragmas = codeElement.GetPragmas();
+        var customProperties = codeElement.GetCustomProperties(); // save custom properties
+        codeElement.RemoveCustomProperties(); // remove custom properties
         bool hasDescription = conventions.WriteShortDescription(codeElement, alWriter);
         conventions.WriteDeprecationAttribute(codeElement, alWriter);
-        alWriter.WriteLine($"{conventions.GetAccessModifier(codeElement.Access)}enum {alWriter.ObjectIdProvider.GetNextEnumId()} {codeElement.Name.ToFirstCharacterUpperCase()}");
+        codeElement.SetCustomProperties(customProperties); // restore custom properties
+        alWriter.WritePragmaConditionalDisable(pragmas);
+        alWriter.WriteLine($"{conventions.GetAccessModifier(codeElement.Access)}enum {codeElement.GetObjectId()} {codeElement.Name.ToFirstCharacterUpperCase()}");
+        alWriter.WritePragmaConditionalRestore(pragmas);
         alWriter.StartBlock();
         alWriter.WriteObjectProperties(codeElement.ObjectProperties().ToObjectProperties());
         var idx = 0;

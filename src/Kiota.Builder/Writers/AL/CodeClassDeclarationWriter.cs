@@ -49,7 +49,9 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         bool hasDescription = conventions.WriteLongDescription(parentClass, alWriter);
         conventions.WriteDeprecationAttribute(parentClass, alWriter);
         parentClass.SetCustomProperties(customProperties); // restore custom properties
-        alWriter.WriteLine($"codeunit {alWriter.ObjectIdProvider.GetNextCodeunitId()} {codeElement.Name.ToFirstCharacterUpperCase()} {derivation}");
+        alWriter.WritePragmaConditionalDisable(parentClass.GetPragmas());
+        alWriter.WriteLine($"codeunit {parentClass.GetObjectId()} {codeElement.Name.ToFirstCharacterUpperCase()} {derivation}");
+        alWriter.WritePragmaConditionalRestore(parentClass.GetPragmas());
         alWriter.StartBlock();
         alWriter.WriteObjectProperties(parentClass.ObjectProperties().ToObjectProperties());
         alWriter.WriteVariablesDeclaration(parentClass.OrderedGlobalVariables(), parentClass);

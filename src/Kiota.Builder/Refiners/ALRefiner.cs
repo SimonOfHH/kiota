@@ -18,6 +18,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     {
         return Task.Run(() =>
         {
+            var objectIdProvider = InitializeObjectIdProvider(_configuration);
             cancellationToken.ThrowIfCancellationRequested();
             ModifyNamespaces(generatedCode);
             ConvertUnionTypesToWrapper(generatedCode, // copied from CSharpRefiner, slightly modified
@@ -31,7 +32,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             RemoveAdditionalDataProperty(generatedCode); // we don't support additional data in AL (yet?)
             RemoveNotSupportedParameters(generatedCode);
             MarkMethodsToSkip(generatedCode);
-            ModifyClassNames(generatedCode);
+            SetObjectIdsOnClassesAndEnums(generatedCode, objectIdProvider);
+            ModifyClassNames(generatedCode, _configuration);
             ModifyEnumNames(generatedCode);
             cancellationToken.ThrowIfCancellationRequested();
             UpdateApiClientClass(generatedCode, _configuration);
@@ -49,6 +51,14 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             ModifyOverloadMethodNames(generatedCode);
             UpdateMethodParameters(generatedCode);
         }, cancellationToken);
+    }
+    protected static ALObjectIdProvider InitializeObjectIdProvider(GenerationConfiguration configuration)
+    {
+        var startRange = ALConfigurationHelper.GetObjectIdRangeStart(configuration);
+        var objectIdProvider = new ALObjectIdProvider();
+        if (startRange > 0)
+            objectIdProvider.StartRange = startRange;
+        return objectIdProvider;
     }
     protected static void UpdateApiClientClass(CodeElement currentElement, GenerationConfiguration configuration)
     {
@@ -94,68 +104,85 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         }
         CrawlTree(currentElement, ModifyNamespaces);
     }
+    protected static void SetObjectIdsOnClassesAndEnums(CodeElement currentElement, ALObjectIdProvider objectIdProvider)
+    {
+        ArgumentNullException.ThrowIfNull(objectIdProvider);
+        if (currentElement is CodeClass currentClass)
+        {
+            currentClass.SetObjectId(objectIdProvider.GetNextCodeunitId());
+        }
+        if (currentElement is CodeEnum currentEnum)
+        {
+            currentEnum.SetObjectId(objectIdProvider.GetNextEnumId());
+        }
+        CrawlTree(currentElement, childElement => SetObjectIdsOnClassesAndEnums(childElement, objectIdProvider));
+    }
     /// <summary>
     // In AL object names have some limits; they need to be unique even across different namespaces (as long as they are in the same app module)
     // and they need to be shorter than 30 characters. That's why we need to modify the class names here to comply with this
     /// </summary>
-    protected static void ModifyClassNames(CodeElement currentElement)
+    protected static void ModifyClassNames(CodeElement currentElement, GenerationConfiguration configuration)
     {
+        int maxLength = 30 - ALConfigurationHelper.GetPrefixAndSuffixLength(configuration);
         if (currentElement is CodeClass currentClass)
         {
             var occurences = ALConventionService.CountClassNameOccurences(currentClass, currentClass.Name);
-            if ((occurences <= 1) && (currentClass.Name.Length <= 30))
+            if ((occurences <= 1) && (currentClass.Name.Length <= maxLength))
                 return; // no need to modify the class name
             var newName = currentClass.Name;
-            if (newName.Length < 30)
-                newName = AppendNumberToClassName(currentClass, newName, occurences);
-            if (CanReturnWithNewNameSet(currentClass, newName))
+            currentClass.AddCustomProperty("original-name", currentClass.Name);
+            if (newName.Length < maxLength)
+                newName = AppendNumberToClassName(currentClass, newName, occurences, maxLength);
+            if (CanReturnWithNewNameSet(currentClass, newName, configuration))
                 return; // we can return here, since the name is unique now
-            while (((newName.Length > 30) && ALConventionService.CanAbbreviate(newName)) || (ALConventionService.CanAbbreviate(newName) && (occurences > 0)))
+            while (((newName.Length > maxLength) && ALConventionService.CanAbbreviate(newName)) || (ALConventionService.CanAbbreviate(newName) && (occurences > 0)))
             {
                 newName = ALConventionService.AbbreviateName(newName);
                 occurences = ALConventionService.CountClassNameOccurences(currentClass, newName);
             }
-            if (newName.Length > 30)
-                newName = newName.Substring(0, 30);
-            if (CanReturnWithNewNameSet(currentClass, newName))
+            if (newName.Length > maxLength)
+                newName = newName.Substring(0, maxLength);
+            if (CanReturnWithNewNameSet(currentClass, newName, configuration))
                 return; // we can return here, since the name is unique now
             var namespacePrefix = GetNamespacePrefixForClass(currentClass, newName);
             newName = $"{newName}{namespacePrefix.ToFirstCharacterUpperCase()}"; // we append the last part of the namespace to the class name
-            if (newName.Length > 30)
-                newName = newName.Substring(0, 30);
-            if (CanReturnWithNewNameSet(currentClass, newName))
+            if (newName.Length > maxLength)
+                newName = newName.Substring(0, maxLength);
+            if (CanReturnWithNewNameSet(currentClass, newName, configuration))
                 return; // we can return here, since the name is unique now
             // if we still have more than one occurence, we cut away another character and just append a number
-            newName = AppendNumberToClassName(currentClass, newName, occurences);
-            SetNewName(currentClass, newName);
+            newName = AppendNumberToClassName(currentClass, newName, occurences, maxLength);
+            SetNewName(currentClass, newName, configuration);
         }
-        CrawlTree(currentElement, ModifyClassNames);
+        CrawlTree(currentElement, childElement => ModifyClassNames(childElement, configuration));
     }
-    private static bool CanReturnWithNewNameSet(CodeClass currentClass, string currentName)
+    private static bool CanReturnWithNewNameSet(CodeClass currentClass, string currentName, GenerationConfiguration configuration)
     {
         int occurences = ALConventionService.CountClassNameOccurences(currentClass, currentName);
         if (occurences > 0)
             return false;
-        SetNewName(currentClass, currentName);
+        SetNewName(currentClass, currentName, configuration);
         return true;
     }
-    private static void SetNewName(CodeClass currentClass, string currentName)
+    private static void SetNewName(CodeClass currentClass, string currentName, GenerationConfiguration configuration)
     {
+        currentName = $"{ALConfigurationHelper.GetObjectPrefix(configuration)}{currentName}{ALConfigurationHelper.GetObjectSuffix(configuration)}";
+        currentClass.SetPragmas(new System.Collections.ObjectModel.Collection<string> { "AA0215" });
         currentClass.AddToDocumentation($"This class was renamed from {currentClass.Name} to {currentName} to comply with AL naming conventions.");
         currentClass.Name = currentName;
     }
-    private static string AppendNumberToClassName(CodeClass currentClass, string currentName, int occurences)
+    private static string AppendNumberToClassName(CodeClass currentClass, string currentName, int occurences, int maxLength)
     {
-        var number = 1;
+        var number = 0;
         while (occurences > 0)
         {
-            var numberLength = number.ToString(CultureInfo.InvariantCulture).Length;
-            if (currentName.Length >= 30)
-                currentName = currentName.Substring(0, currentName.Length - numberLength);
-            currentName = currentName + number;
-            occurences = ALConventionService.CountClassNameOccurences(currentClass, currentName);
             number++;
+            var numberLength = number.ToString(CultureInfo.InvariantCulture).Length;
+            if (currentName.Length >= maxLength)
+                currentName = currentName.Substring(0, currentName.Length - numberLength);
+            occurences = ALConventionService.CountClassNameOccurences(currentClass, currentName + number);
         }
+        currentName = currentName + number;
         return currentName;
     }
     private static String GetNamespacePrefixForClass(CodeClass currentClass, string currentName)
@@ -234,11 +261,12 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 },
             });
             function.AddUsing(new CodeUsing { Name = $"Name={configuration.ClientNamespaceName}" });
-            function.AddUsing(new CodeUsing { Name = $"Publisher=SimonOfHH" }); // TODO-SF: Check if something can be provided via configuration
-            function.AddUsing(new CodeUsing { Name = $"Brief=Auto-generated API Extension" });
-            function.AddUsing(new CodeUsing { Name = $"Description=Auto-generated API Extension. Generated with Kiota" });
-            function.AddUsing(new CodeUsing { Name = $"Version=0.0.0.1" });
-            function.AddUsing(new CodeUsing { Name = $"HighestObjectID={childTypeCount.Where(x => (x.Key == "CodeClass") || (x.Key == "CodeEnum") || (x.Key == "ClassDeclaration")).ToDictionary().Values.Max()}" });
+            function.AddUsing(new CodeUsing { Name = $"Publisher={ALConfigurationHelper.GetAppPublisherName(configuration)}" });
+            function.AddUsing(new CodeUsing { Name = $"Brief={ALConfigurationHelper.GetAppBrief(configuration)}" });
+            function.AddUsing(new CodeUsing { Name = $"Description={ALConfigurationHelper.GetAppDescription(configuration)}" });
+            function.AddUsing(new CodeUsing { Name = $"Version={ALConfigurationHelper.GetAppVersion(configuration)}" });
+            function.AddUsing(new CodeUsing { Name = $"IDRangeStart={ALConfigurationHelper.GetObjectIdRangeStart(configuration)}" });
+            function.AddUsing(new CodeUsing { Name = $"IDRangeEnd={ALConfigurationHelper.GetObjectIdRangeEnd(configuration)}" });
             currentNamespace.AddFunction(function);
         }
         CrawlTree(currentElement, childElement => AddAppJsonAsCodeFunction(childElement, configuration));

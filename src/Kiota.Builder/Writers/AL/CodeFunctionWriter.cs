@@ -23,8 +23,9 @@ public class CodeFunctionWriter(ALConventionService conventionService) : BaseEle
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentNullException.ThrowIfNull(alWriter);
         var method = codeElement.OriginalLocalMethod;
-        var startRange = alWriter.ObjectIdProvider.StartRange;
-        var idRange = new AppJsonIdRange(startRange, startRange + int.Parse(GetPropertyValueFromUsing(codeElement, "HighestObjectID"), System.Globalization.CultureInfo.InvariantCulture)); // TODO-SF: move to custom property
+        var startRange = int.Parse(GetPropertyValueFromUsing(codeElement, "IDRangeStart"), System.Globalization.CultureInfo.InvariantCulture);
+        var endRange = startRange + int.Parse(GetPropertyValueFromUsing(codeElement, "IDRangeEnd"), System.Globalization.CultureInfo.InvariantCulture);
+        var idRange = new AppJsonIdRange(startRange, endRange);
         var template = new AppJsonTemplate(codeElement, idRange,
                                     GetPropertyValueFromUsing(codeElement, "Name"),
                                     GetPropertyValueFromUsing(codeElement, "Publisher"),

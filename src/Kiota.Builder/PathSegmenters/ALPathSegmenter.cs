@@ -27,11 +27,23 @@ public class ALPathSegmenter : CommonPathSegmenter
         if (currentElement != null)
         {
             var originalName = currentElement.Name;
+            currentElement.Name = GetOriginalName(currentElement); // Reset to unshortened name
             shortName = GetLastFileNameSegment(currentElement).ToFirstCharacterUpperCase().ShortenFileName() + nameAppendix;
             currentElement.Name = originalName;
             return shortName;
         }
         return string.Empty;
+    }
+    private string GetOriginalName(CodeElement codeElement)
+    {
+        var originalName = string.Empty;
+        if (codeElement is CodeClass currentClas)
+            originalName = currentClas.GetCustomProperty("original-name");
+        if (codeElement is CodeEnum currentEnum)
+            originalName = currentEnum.GetCustomProperty("original-name");
+        if (string.IsNullOrEmpty(originalName))
+            originalName = codeElement.Name;
+        return originalName ?? codeElement.Name;
     }
     public override string NormalizePath(string fullPath)
     {

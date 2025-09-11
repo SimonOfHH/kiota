@@ -4,6 +4,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 
 namespace Kiota.Builder.Writers.AL;
+
 public class ALObjectIdProvider
 {
     private int? _startRange;
@@ -21,6 +22,7 @@ public class ALObjectIdProvider
                 _startRange = 50000;
             return (int)_startRange;
         }
+        set => _startRange = value;
     }
     public int HighestObjectCounter
     {

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Kiota.Builder.CodeDOM;
+using Kiota.Builder.SearchProviders.GitHub.Authentication;
 
 namespace Kiota.Builder.Writers.AL;
 
@@ -90,7 +91,20 @@ public static class CodeClassExtensions
         ArgumentNullException.ThrowIfNull(codeClass);
         if (codeClass.Documentation == null)
             codeClass.Documentation = new CodeDocumentation();
-        codeClass.Documentation.DescriptionTemplate += $"{(!String.IsNullOrEmpty(codeClass.Documentation.DescriptionTemplate) ?
-                                                                (codeClass.Documentation.DescriptionTemplate.EndsWith('.'.ToString(), StringComparison.OrdinalIgnoreCase) ? string.Empty : ".") : string.Empty)} {text}";
+        if (String.IsNullOrEmpty(text))
+            return;
+        if (String.IsNullOrEmpty(codeClass.Documentation.DescriptionTemplate))
+        {
+            codeClass.Documentation.DescriptionTemplate = text;
+            return;
+        }
+        if (codeClass.Documentation.DescriptionTemplate.Contains(text, StringComparison.OrdinalIgnoreCase))
+            return;
+        var properties = codeClass.GetCustomProperties();
+        codeClass.RemoveCustomProperties();
+        if (!codeClass.Documentation.DescriptionTemplate.EndsWith('.'.ToString(), StringComparison.OrdinalIgnoreCase))
+            codeClass.Documentation.DescriptionTemplate += ". ";
+        codeClass.Documentation.DescriptionTemplate += text;
+        codeClass.SetCustomProperties(properties); // restore custom properties
     }
 }
