@@ -17,6 +17,14 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         ArgumentNullException.ThrowIfNull(alWriter);
         if (codeElement.ParentIsSkipped()) return;
         if (codeElement.Parent is not CodeClass parentClass) throw new InvalidOperationException($"The provided code element {codeElement.Name} doesn't have a parent of type {nameof(CodeClass)}");
+        
+        // Check if this is a parameter codeunit and handle it specially
+        if (parentClass.GetCustomProperty("parameter-codeunit") == "true")
+        {
+            WriteParameterCodeunit(codeElement, alWriter, parentClass);
+            return;
+        }
+        
         if (parentClass.Parent is not CodeNamespace)
         {
             // seems to be a nested class, we don't support that in AL
@@ -31,7 +39,7 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
             codeElement.Usings
                     .Where(x => (x.Declaration?.IsExternal ?? true) || !x.Declaration.Name.Equals(codeElement.Name, StringComparison.OrdinalIgnoreCase)) // needed for circular requests patterns like message folder
                     .Select(static x => x.Declaration?.IsExternal ?? false ?
-                                    $"using {x.Declaration.Name.NormalizeNameSpaceName(".")};" :
+                                    $"using {x.Declaration.Name.NormalizeNameSpaceName(".")};":
                                     $"using {x.Name.NormalizeNameSpaceName(".")};")
                     .Distinct(StringComparer.Ordinal)
                     .OrderBy(static x => x, StringComparer.Ordinal)
@@ -55,5 +63,59 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         alWriter.StartBlock();
         alWriter.WriteObjectProperties(parentClass.ObjectProperties().ToObjectProperties());
         alWriter.WriteVariablesDeclaration(parentClass.OrderedGlobalVariables(), parentClass);
+    }
+    
+    private void WriteParameterCodeunit(ClassDeclaration codeElement, ALWriter alWriter, CodeClass parentClass)
+    {
+        var parentNamespace = parentClass.GetImmediateParentOfType<CodeNamespace>();
+        if (parentNamespace == null) return;
+
+        // Write codeunit declaration for parameter codeunit
+        alWriter.WriteLine(AutoGenerationHeader);
+        alWriter.WriteLine($"namespace {parentNamespace.Name};");
+        alWriter.WriteLine();
+
+        // Write usings if any
+        codeElement.Usings
+            .Where(x => (x.Declaration?.IsExternal ?? true) || !x.Declaration.Name.Equals(codeElement.Name, StringComparison.OrdinalIgnoreCase))
+            .Select(static x => x.Declaration?.IsExternal ?? false ?
+                            $"using {x.Declaration.Name.NormalizeNameSpaceName(".")};":
+                            $"using {x.Name.NormalizeNameSpaceName(".")};")
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static x => x, StringComparer.Ordinal)
+            .ToList()
+            .ForEach(x => alWriter.WriteLine(x));
+
+        if (codeElement.Usings.Any())
+            alWriter.WriteLine();
+
+        // Apply AL name abbreviation for 30-character limit
+        var codeunitName = codeElement.Name;
+        if (codeunitName.Length > 30 && ALConventionService.CanAbbreviate(codeunitName))
+        {
+            codeunitName = ALConventionService.AbbreviateName(codeunitName);
+        }
+
+        // Write codeunit header using the new Object ID approach
+        alWriter.WritePragmaConditionalDisable(parentClass.GetPragmas());
+        alWriter.WriteLine($"codeunit {parentClass.GetObjectId()} \"{codeunitName}\"");
+        alWriter.WritePragmaConditionalRestore(parentClass.GetPragmas());
+        alWriter.StartBlock();
+
+        ALParameterCodeunitHelper.WriteParameterVariables(parentClass, alWriter);
+        ALParameterCodeunitHelper.WriteParameterMethods(parentClass, alWriter);
+
+        // Note: Removed alWriter.CloseBlock() to match regular codeunit pattern
+        // The codeunit closing is handled by the framework, not here
+    }
+    
+    private void WriteParameterVariables(CodeClass codeElement, ALWriter writer)
+    {
+        ALParameterCodeunitHelper.WriteParameterVariables(codeElement, writer);
+    }
+
+    private void WriteParameterMethods(CodeClass codeElement, ALWriter writer)
+    {
+        ALParameterCodeunitHelper.WriteParameterMethods(codeElement, writer);
     }
 }

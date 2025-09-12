@@ -29,7 +29,11 @@ internal static class CodePropertyExtensions
         {
             Name = ReservedNamesProvider.GetSafeName(property.Name),
             Type = property.Type,
-            DefaultValue = property.DefaultValue
+            DefaultValue = property.DefaultValue,
+            // Set the correct parameter kind for query parameters
+            Kind = property.Kind == CodePropertyKind.QueryParameter ? 
+                   CodeParameterKind.QueryParameter : CodeParameterKind.Custom,
+            SerializationName = property.SerializationName
         };
         if (!string.IsNullOrEmpty(name))
             parameter.Name = name;
@@ -56,12 +60,16 @@ internal static class CodePropertyExtensions
         else
             method.SetSourceFromProperty(property);
         method.AddCustomProperty("method-type", "Getter");
-        if (ConventionService.IsEnumType(property.Type) && (property.Type.CollectionKind == CodeTypeCollectionKind.None))
+        
+        // Handle enum variables for single enums only (not collections - they're handled in the switch below)
+        if (ConventionService.IsEnumType(property.Type) && property.Type.CollectionKind == CodeTypeCollectionKind.None)
         {
-            method.AddParameter(ALVariableProvider.GetLocalVariableP("Ordinal", "Integer", "2"));
-            method.AddParameter(ALVariableProvider.GetLocalVariableP("Ordinals", "List of [Integer]", "3"));
-            method.AddParameter(ALVariableProvider.GetLocalVariableP("enumValue", property.Type, "1"));
+            // For single enums - need variables for the ordinal-based conversion approach
+            method.AddParameter(ALVariableProvider.GetLocalVariableP("value", property.Type, "1"));
+            method.AddParameter(ALVariableProvider.GetLocalVariableP("Ordinals", "List of [Integer]", "2"));
+            method.AddParameter(ALVariableProvider.GetLocalVariableP("Ordinal", "Integer", "3"));
         }
+        
         switch (property.Type.CollectionKind)
         {
             case CodeTypeCollectionKind.None:
@@ -74,11 +82,30 @@ internal static class CodePropertyExtensions
             case CodeTypeCollectionKind.Array:
                 throw new InvalidOperationException("Array properties are not (yet?) supported");
             case CodeTypeCollectionKind.Complex:
-                if (property.Kind == CodePropertyKind.Custom)
-                    method.AddParameter(DefaultGetterComplexCollectionParameters(property.Type));
+                if (ConventionService.IsEnumType(property.Type.CloneWithoutCollection()))
+                {
+                    // For enum collections - use single enum element type for the 'value' variable
+                    var elementType = property.Type.CloneWithoutCollection();
+                    var elementTypeString = ConventionService.GetTypeString(elementType, includeCollectionInformation: false);
+                    
+                    method.AddParameter(ALVariableProvider.GetLocalVariableP("value", elementTypeString, "1")); // Single enum for Evaluate()
+                    method.AddParameter(ALVariableProvider.GetLocalVariableP("JArray", "JsonArray", "2"));
+                    method.AddParameter(ALVariableProvider.GetLocalVariableP("JToken", "JsonToken", "3"));
+                }
+                else if (ConventionService.IsCodeunitType(property.Type))
+                {
+                    // For codeunit collections
+                    method.AddParameter(ALVariableProvider.GetLocalVariableP("TargetCodeunit", property.Type.CloneWithoutCollection(), "1"));
+                    method.AddParameter(ALVariableProvider.GetLocalVariableP("JArray", "JsonArray", "2"));
+                    method.AddParameter(ALVariableProvider.GetLocalVariableP("JToken", "JsonToken", "3"));
+                }
+                else
+                {
+                    // For other collections (Text, Integer, etc.) - still need JSON parsing variables
+                    method.AddParameter(ALVariableProvider.GetLocalVariableP("JArray", "JsonArray", "1"));
+                    method.AddParameter(ALVariableProvider.GetLocalVariableP("JToken", "JsonToken", "2"));
+                }
                 break;
-            default:
-                throw new InvalidOperationException("Unknown collection kind");
         }
         return method;
     }
