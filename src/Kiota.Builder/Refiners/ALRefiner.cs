@@ -44,7 +44,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             cancellationToken.ThrowIfCancellationRequested();
             UpdateModelClasses(generatedCode);
             UpdateRequestBuilderClasses(generatedCode, _configuration);
-            UpdateRequestExecutorMethods(generatedCode);
+            UpdateRequestExecutorMethods(generatedCode, objectIdProvider);
             cancellationToken.ThrowIfCancellationRequested();
             AddObjectProperties(generatedCode);
             cancellationToken.ThrowIfCancellationRequested();
@@ -55,6 +55,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     }
     protected static ALObjectIdProvider InitializeObjectIdProvider(GenerationConfiguration configuration)
     {
+        ArgumentNullException.ThrowIfNull(configuration);
         var startRange = ALConfigurationHelper.GetObjectIdRangeStart(configuration);
         var objectIdProvider = new ALObjectIdProvider();
         if (startRange > 0)
@@ -396,7 +397,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         }
         CrawlTree(currentElement, UpdateModelClasses);
     }
-    protected static void UpdateRequestExecutorMethods(CodeElement currentElement)
+    protected static void UpdateRequestExecutorMethods(CodeElement currentElement, ALObjectIdProvider? objectIdProvider = null)
     {
         if (currentElement is CodeMethod method)
         {
@@ -430,6 +431,13 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                             if (parentNamespace != null)
                             {
                                 var parameterCodeunit = CreateParameterCodeunit(codeClass.Name, method.Name, queryParameters.ToArray(), parentNamespace);
+                                
+                                // Assign Object ID to parameter codeunit if provider is available
+                                if (objectIdProvider != null)
+                                {
+                                    parameterCodeunit.SetObjectId(objectIdProvider.GetNextCodeunitId());
+                                }
+                                
                                 parentNamespace.AddClass(parameterCodeunit);
                                 
                                 // Add parameter codeunit parameter to method
@@ -470,7 +478,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 }
             }
         }
-        CrawlTree(currentElement, UpdateRequestExecutorMethods);
+        CrawlTree(currentElement, child => UpdateRequestExecutorMethods(child, objectIdProvider));
     }
 
     

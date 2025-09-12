@@ -43,8 +43,10 @@ public class CodeParameterCodeunitWriter : BaseElementWriter<ClassDeclaration, A
         if (codeElement.Usings.Any())
             alWriter.WriteLine();
 
-        // Write codeunit header
-        alWriter.WriteLine($"codeunit {alWriter.ObjectIdProvider.GetNextCodeunitId()} \"{codeElement.Name}\"");
+        // Write codeunit header using the new Object ID approach
+        alWriter.WritePragmaConditionalDisable(parentClass.GetPragmas());
+        alWriter.WriteLine($"codeunit {parentClass.GetObjectId()} \"{codeElement.Name}\"");
+        alWriter.WritePragmaConditionalRestore(parentClass.GetPragmas());
         alWriter.StartBlock();
 
         WriteParameterVariables(parentClass, alWriter);

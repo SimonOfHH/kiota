@@ -96,8 +96,10 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
             codeunitName = ALConventionService.AbbreviateName(codeunitName);
         }
 
-        // Write codeunit header
-        alWriter.WriteLine($"codeunit {alWriter.ObjectIdProvider.GetNextCodeunitId()} \"{codeunitName}\"");
+        // Write codeunit header using the new Object ID approach
+        alWriter.WritePragmaConditionalDisable(parentClass.GetPragmas());
+        alWriter.WriteLine($"codeunit {parentClass.GetObjectId()} \"{codeunitName}\"");
+        alWriter.WritePragmaConditionalRestore(parentClass.GetPragmas());
         alWriter.StartBlock();
 
         ALParameterCodeunitHelper.WriteParameterVariables(parentClass, alWriter);
