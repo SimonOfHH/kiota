@@ -53,6 +53,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             UpdateMethodParameters(generatedCode);
         }, cancellationToken);
     }
+
     protected static ALObjectIdProvider InitializeObjectIdProvider(GenerationConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
@@ -408,7 +409,14 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     var conventionService = new ALConventionService();
                     if (conventionService.IsCodeunitType(method.ReturnType.GetTypeFromBase()))
                         method.AddCustomProperty("return-variable-name", "Target");
-                    method.AddParameter(ALVariableProvider.GetLocalVariableP("RequestHandler", new CodeType { Name = "codeunit \"Kiota RequestHandler SoHH\"", IsExternal = true }, ""));
+                    method.AddParameter(ALVariableProvider.GetLocalVariableP("RequestHandler", new CodeType { Name = "codeunit \"Kiota RequestHandler 4PDC\"", IsExternal = true }, "1"));
+                    if (method.ReturnType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None)
+                    {
+                        method.AddParameter(ALVariableProvider.GetLocalVariableP("TargetType", method.ReturnType.GetTypeFromBase().CloneWithoutCollection(), "2"));
+                        method.AddParameter(ALVariableProvider.GetLocalVariableP("SubToken", "JsonToken", "3"));
+                        method.AddParameter(ALVariableProvider.GetLocalVariableP("ResponseAsArray", "JsonArray", "4"));
+                        method.AddParameter(ALVariableProvider.GetLocalVariableP("i", "Integer", "5"));
+                    }
                 }
                 var codeClass = (CodeClass?)method.Parent;
                 if (codeClass is not null)

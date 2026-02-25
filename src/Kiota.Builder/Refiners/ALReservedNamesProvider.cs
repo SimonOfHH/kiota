@@ -139,6 +139,7 @@ public class ALReservedNamesProvider : IReservedNamesProvider
         "textencoding",
         "then",
         "time",
+        "to",
         "transactionmodel",
         "transactiontype",
         "trigger",

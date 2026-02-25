@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
@@ -263,7 +263,7 @@ public class ALConventionService : CommonLanguageConventionService // This is cu
                 if (name.Length <= 30) break; // stop if the name is already short enough, to only make one change at a time
             }
         }
-        
+
         // If still too long after abbreviation, truncate intelligently
         if (name.Length > 30)
         {
@@ -285,7 +285,7 @@ public class ALConventionService : CommonLanguageConventionService // This is cu
                 name = name[..30];
             }
         }
-        
+
         return name;
     }
     public static ReadOnlyDictionary<string, string> AbbreviationDictionary()
@@ -393,7 +393,7 @@ internal static class ALParameterCodeunitHelper
     {
         // Get query parameters from the stored method info
         var queryParametersJson = codeElement.GetCustomProperty("query-parameters");
-        if (string.IsNullOrEmpty(queryParametersJson)) 
+        if (string.IsNullOrEmpty(queryParametersJson))
         {
             // Write a comment to help debug if no parameters found
             writer.WriteLine("// No query parameters found");
@@ -402,22 +402,23 @@ internal static class ALParameterCodeunitHelper
 
         // Parse the parameter string containing parameter information
         // Format: "param1:Type1,param2:Type2,..."
-        var parameters = queryParametersJson.Split(',');
-        
+        // var parameters = queryParametersJson.Split(',');
+
         writer.WriteLine("var");
         writer.IncreaseIndent();
+        writer.WriteLine($"QueryParameters: Dictionary of [Text, Text];");
 
-        foreach (var paramInfo in parameters)
-        {
-            var parts = paramInfo.Split(':');
-            if (parts.Length != 2) continue;
-            
-            var paramName = parts[0].Trim();
-            var paramType = parts[1].Trim();
-            
-            writer.WriteLine($"{paramName}: {paramType};");
-            writer.WriteLine($"Has{paramName}: Boolean;");
-        }
+        // foreach (var paramInfo in parameters)
+        // {
+        //     var parts = paramInfo.Split(':');
+        //     if (parts.Length != 2) continue;
+
+        //     var paramName = parts[0].Trim();
+        //     var paramType = parts[1].Trim();
+
+        //     writer.WriteLine($"{paramName}: {paramType};");
+        //     writer.WriteLine($"Has{paramName}: Boolean;");
+        // }
 
         writer.DecreaseIndent();
         writer.WriteLine();
@@ -425,47 +426,92 @@ internal static class ALParameterCodeunitHelper
 
     public static void WriteParameterMethods(CodeClass codeElement, ALWriter writer)
     {
+        List<Tuple<string, string, string, string>> parameterList = new();
         // Get query parameters from the stored method info
         var queryParametersJson = codeElement.GetCustomProperty("query-parameters");
         if (string.IsNullOrEmpty(queryParametersJson)) return;
 
         var parameters = queryParametersJson.Split(',');
-
+        writer.WriteLine($"procedure SetQueryParameter(QueryKey : Text; QueryValue: Text)");
+        writer.WriteLine("begin");
+        writer.IncreaseIndent();
+        writer.WriteLine("// Add or update the query parameter");
+        writer.WriteLine("if QueryParameters.ContainsKey(QueryKey) then");
+        writer.IncreaseIndent();
+        writer.WriteLine("QueryParameters.Remove(QueryKey);");
+        writer.DecreaseIndent();
+        writer.WriteLine("QueryParameters.Add(QueryKey, QueryValue);");
+        writer.DecreaseIndent();
+        writer.WriteLine("end;");
+        writer.WriteLine();
         foreach (var paramInfo in parameters)
         {
             var parts = paramInfo.Split(':');
             if (parts.Length != 2) continue;
-            
+
             var paramName = parts[0].Trim();
             var paramType = parts[1].Trim();
-            
+
             // Write setter method
             writer.WriteLine($"procedure Set{paramName}(Value: {paramType})");
             writer.WriteLine("begin");
             writer.IncreaseIndent();
-            writer.WriteLine($"{paramName} := Value;");
-            writer.WriteLine($"Has{paramName} := true;");
+            if (paramType.Equals("Text", StringComparison.OrdinalIgnoreCase))
+                writer.WriteLine($"this.SetQueryParameter('{paramName.ToFirstCharacterLowerCase()}', Value);");
+            else
+                writer.WriteLine($"this.SetQueryParameter('{paramName.ToFirstCharacterLowerCase()}', Format(Value));");
+            // writer.WriteLine($"{paramName} := Value;");
+            // writer.WriteLine($"Has{paramName} := true;");
             writer.DecreaseIndent();
             writer.WriteLine("end;");
             writer.WriteLine();
 
             // Write getter method (internal)
-            writer.WriteLine($"internal procedure Get{paramName}() ReturnValue: {paramType}");
-            writer.WriteLine("begin");
-            writer.IncreaseIndent();
-            writer.WriteLine($"exit({paramName});");
-            writer.DecreaseIndent();
-            writer.WriteLine("end;");
-            writer.WriteLine();
+            // writer.WriteLine($"internal procedure Get{paramName}() ReturnValue: {paramType}");
+            // writer.WriteLine("begin");
+            // writer.IncreaseIndent();
+            // writer.WriteLine($"exit({paramName});");
+            // writer.DecreaseIndent();
+            // writer.WriteLine("end;");
+            // writer.WriteLine();
 
-            // Write "IsSet" method (internal)
-            writer.WriteLine($"internal procedure Is{paramName}Set(): Boolean");
+            // // Write "IsSet" method (internal)
+            // writer.WriteLine($"internal procedure Is{paramName}Set(): Boolean");
+            // writer.WriteLine("begin");
+            // writer.IncreaseIndent();
+            // writer.WriteLine($"exit(Has{paramName});");
+            // writer.DecreaseIndent();
+            // writer.WriteLine("end;");
+            // writer.WriteLine();
+
+            parameterList.Add(new Tuple<string, string, string, string>($"Is{paramName}Set", paramName.ToFirstCharacterLowerCase(), $"Get{paramName}", paramType));
+        }
+
+        if (parameterList.Count > 0)
+        {
+            // Write a method to get all parameters as a dictionary
+            writer.WriteLine("procedure GetQueryParameters(): Dictionary of [Text, Text]");
+            // writer.WriteLine("var");
+            // writer.IncreaseIndent();
+            // writer.WriteLine("QueryParameters: Dictionary of [Text, Text];");
+            // writer.DecreaseIndent();
             writer.WriteLine("begin");
             writer.IncreaseIndent();
-            writer.WriteLine($"exit(Has{paramName});");
+
+            // foreach (var (isSetMethod, paramName, getMethod, paramType) in parameterList)
+            // {
+            //     writer.WriteLine($"if {isSetMethod}() then");
+            //     writer.IncreaseIndent();
+            //     if (paramType.Equals("Text", StringComparison.OrdinalIgnoreCase))
+            //         writer.WriteLine($"QueryParameters.Add('{paramName}', {getMethod}());");
+            //     else
+            //         writer.WriteLine($"QueryParameters.Add('{paramName}', Format({getMethod}()));");
+            //     writer.DecreaseIndent();
+            // }
+
+            writer.WriteLine("exit(QueryParameters);");
             writer.DecreaseIndent();
             writer.WriteLine("end;");
-            writer.WriteLine();
         }
     }
 }

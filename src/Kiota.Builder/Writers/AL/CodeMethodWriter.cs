@@ -22,16 +22,21 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         if (codeElement.ParentIsSkipped()) return; // we can't handle nested classes, but also can't remove them from the model
         if (codeElement.ReturnType == null) throw new InvalidOperationException($"{nameof(codeElement.ReturnType)} should not be null");
         ArgumentNullException.ThrowIfNull(alWriter);
-        if (codeElement.Parent is not CodeClass parentClass) throw new InvalidOperationException("the parent of a method should be a class");
+        if ((codeElement.Parent is not CodeClass) && (codeElement.Parent is not CodeInterface))
+            throw new InvalidOperationException("the parent of a method should be a class or an interface");
         if (codeElement.Name.StartsWith("AAA", StringComparison.CurrentCulture) && !String.IsNullOrEmpty(codeElement.SimpleName)) // this is because of the workaround in ALRefiner to sort the methods
             codeElement.Name = codeElement.SimpleName;
         var returnType = conventions.GetTypeString(codeElement.ReturnType, codeElement);
         //WriteMethodDocumentation(codeElement, writer); // TODO-SF: Implement documentation 
         WriteMethodPrototype(codeElement, alWriter, returnType);
+        if (codeElement.Parent is CodeInterface)
+            return;
+        var parentClass = codeElement.Parent as CodeClass;
         alWriter.WriteVariablesDeclaration(codeElement.Variables(), codeElement);
         alWriter.WriteLine("begin");
         alWriter.IncreaseIndent();
-        HandleMethodKind(codeElement, alWriter, parentClass);
+        if (parentClass != null)
+            HandleMethodKind(codeElement, alWriter, parentClass);
         alWriter.CloseBlock("end;");
     }
 
@@ -40,22 +45,22 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         if (code.HasPragmas())
             writer.WritePragmaConditionalDisable(code.GetPragmas());
         var completeReturnType = returnType;
-        
+
         // Check if using parameter codeunit approach
         var useParameterCodeunit = code.GetCustomProperty("use-parameter-codeunit") == "true";
         string parameters;
-        
+
         if (useParameterCodeunit)
         {
             // When using parameter codeunit, filter out individual query parameters
             // but keep the parameter codeunit parameter (which is already added by ALRefiner)
             var filteredParameters = code.OrderedParameters()
-                .Where(p => !p.IsOfKind(CodeParameterKind.QueryParameter) || 
+                .Where(p => !p.IsOfKind(CodeParameterKind.QueryParameter) ||
                            p.IsOfKind(CodeParameterKind.RequestConfiguration) ||
                            p.GetCustomProperty("parameter-codeunit") == "true")
                 .Select(p => conventions.GetParameterSignature(p, code))
                 .ToList();
-            
+
             parameters = string.Join("; ", filteredParameters);
         }
         else
@@ -63,10 +68,10 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             // Use legacy approach with all parameters
             parameters = string.Join("; ", code.OrderedParameters().Select(p => conventions.GetParameterSignature(p, code)).ToList());
         }
-        
+
         // Use the natural method name from the operation ID
         var methodName = code.Name.ToFirstCharacterUpperCase();
-        
+
         var returnValueName = String.Empty;
         if (code.GetCustomProperty("return-variable-name") is string returnVariableName)
             returnValueName = $"{returnVariableName}";
@@ -153,7 +158,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         // Check if this method should use parameter codeunit approach
         var useParameterCodeunit = codeElement.GetCustomProperty("use-parameter-codeunit") == "true";
         var parameterCodeunitParam = codeElement.Parameters.FirstOrDefault(p => p.GetCustomProperty("parameter-codeunit") == "true");
-        
+
         if (useParameterCodeunit && parameterCodeunitParam != null)
         {
             WriteParameterCodeunitQueryHandling(codeElement, writer, parameterCodeunitParam);
@@ -167,7 +172,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                 WriteLegacyQueryParameterHandling(codeElement, writer, queryStringParameters);
             }
         }
-        
+
         var parameter = codeElement.Parameters.FirstOrDefault(x => x.Name.Contains("body", StringComparison.OrdinalIgnoreCase));
         if (parameter is not null)
             if (parameter.Type.IsCollection)
@@ -195,26 +200,29 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         if (string.IsNullOrEmpty(queryParametersJson)) return;
 
         writer.WriteLine("// Set query parameters using parameter codeunit");
-        
+        writer.WriteLine($"RequestHandler.AddQueryParameter(Parameters.GetQueryParameters());");
+        // TODO: Handle lists in parameter codeunit properly
+        return;
+        /*
         // Parse the parameter string containing parameter information
         // Format: "param1:Type1,param2:Type2,..."
         var parameters = queryParametersJson.Split(',');
-        
+
         foreach (var paramInfo in parameters)
         {
             var parts = paramInfo.Split(':');
             if (parts.Length != 2) continue;
-            
+
             var paramName = parts[0].Trim();
             var paramType = parts[1].Trim();
-            
+
             // For now, assume the query parameter name matches the parameter name (lowercased)
             // In the future, this could be enhanced to use SerializationName from the original parameters
             var queryParameterName = paramName.ToFirstCharacterLowerCase();
-            
+
             writer.WriteLine($"if {parameterCodeunitParam.Name}.Is{paramName}Set() then begin");
             writer.IncreaseIndent();
-            
+
             if (paramType.Contains("List of", StringComparison.OrdinalIgnoreCase))
             {
                 // For collections - create local variable to join with commas
@@ -235,23 +243,23 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                 // For scalar parameters
                 writer.WriteLine($"RequestHandler.AddQueryParameter('{queryParameterName}', {parameterCodeunitParam.Name}.Get{paramName}());");
             }
-            
+
             writer.DecreaseIndent();
             writer.WriteLine("end;");
-        }
+        }*/
     }
 
     private static void WriteLegacyQueryParameterHandling(CodeMethod codeElement, LanguageWriter writer, CodeParameter[] queryStringParameters)
     {
         writer.WriteLine("// Set query parameters");
-        
+
         foreach (var queryParam in queryStringParameters)
         {
             var paramName = queryParam.Name.ToFirstCharacterLowerCase();
-            
+
             // Use the parameter name as the query parameter name - prioritize SerializationName if available
             var queryParameterName = !string.IsNullOrEmpty(queryParam.SerializationName) ? queryParam.SerializationName : queryParam.Name;
-            
+
             // Handle different parameter types
             if (queryParam.Type.IsCollection)
             {
@@ -285,10 +293,29 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             if (!string.IsNullOrEmpty(returnVariableName))
             {
                 // Method has a Target parameter - set the response on it
-                writer.WriteLine("if ReqConfig.Client().Response().GetIsSuccessStatusCode() then");
-                writer.IncreaseIndent();
-                writer.WriteLine($"{returnVariableName}.SetBody(ReqConfig.Client().Response().GetContent().AsJson().AsObject());");
-                writer.DecreaseIndent();
+                if (returnType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None)
+                {
+                    writer.WriteLine("if ReqConfig.Client().Response().GetIsSuccessStatusCode() then begin");
+                    writer.IncreaseIndent();
+                    writer.WriteLine($"ResponseAsArray := ReqConfig.Client().Response().GetContent().AsJson().AsArray();");
+                    writer.WriteLine($"for i := 0 to ResponseAsArray.Count() - 1 do begin");
+                    writer.IncreaseIndent();
+                    writer.WriteLine($"ResponseAsArray.Get(i, SubToken);");
+                    writer.WriteLine($"Clear(TargetType);");
+                    writer.WriteLine($"TargetType.SetBody(SubToken.AsObject());");
+                    writer.WriteLine($"Target.Add(TargetType);");
+                    writer.DecreaseIndent();
+                    writer.WriteLine($"end;");
+                    writer.DecreaseIndent();
+                    writer.WriteLine("end;");
+                }
+                else
+                {
+                    writer.WriteLine("if ReqConfig.Client().Response().GetIsSuccessStatusCode() then");
+                    writer.IncreaseIndent();
+                    writer.WriteLine($"{returnVariableName}.SetBody(ReqConfig.Client().Response().GetContent().AsJson().AsObject());");
+                    writer.DecreaseIndent();
+                }
             }
             // For methods that return HttpContent directly (like DELETE, POST), don't add any response handling
             // The caller will handle the response as needed
@@ -410,7 +437,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         // Note: AL language allows omitting begin/end blocks for single statements, 
         // which creates intentionally inconsistent block structure throughout this method.
         // This is correct AL syntax and follows AL language conventions.
-        
+
         if (codeElement.GetSourceType() == "List")
         {
             writer.WriteLine($"if not {conventions.ModelCodeunitJsonBodyVariableName}.SelectToken('{codeElement.Name}', SubToken) then");
@@ -440,11 +467,11 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                     var parseMethod = typeString switch
                     {
                         "BigInteger" => "AsBigInteger",
-                        "Integer" => "AsInteger", 
+                        "Integer" => "AsInteger",
                         "Boolean" => "AsBoolean",
                         "Decimal" => "AsDecimal",
                         "Date" => "AsDate",
-                        "DateTime" => "AsDateTime", 
+                        "DateTime" => "AsDateTime",
                         "Time" => "AsTime",
                         _ => "AsText" // Fallback to text for other types
                     };

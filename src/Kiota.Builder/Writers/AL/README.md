@@ -21,7 +21,7 @@ The [`ALRefiner`](src/Kiota.Builder/Refiners/ALRefiner.cs) class customizes the 
 The writers in this directory handle the generation of AL-specific code elements:
 
 - **[`ALWriter`](src/Kiota.Builder/Writers/AL/ALWriter.cs)**: Manages the overall writing process for AL code, including path segmentation and conventions.
-- **`CodeClassWriter`**: Handles the generation of AL classes.
+- **[`CodeClassWriter`](src/Kiota.Builder/Writers/AL/CodeClassWriter.cs)**: Handles the generation of AL classes.
 - **[`CodeMethodWriter`](src/Kiota.Builder/Writers/AL/CodeMethodWriter.cs)**: Writes methods, including custom handling for AL-specific conventions.
 - **[`CodePropertyWriter`](src/Kiota.Builder/Writers/AL/CodePropertyWriter.cs)**: Converts properties into methods for AL compatibility.
 - **[`CodeIndexerWriter`](src/Kiota.Builder/Writers/AL/CodeIndexerWriter.cs)**: Supports indexer generation in AL.
