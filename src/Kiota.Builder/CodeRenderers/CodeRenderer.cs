@@ -106,6 +106,7 @@ public class CodeRenderer
             GenerationLanguage.TypeScript => new TypeScriptCodeRenderer(config),
             GenerationLanguage.Python => new CodeRenderer(config, new CodeElementOrderComparerPython()),
             GenerationLanguage.Go => new CodeRenderer(config, new CodeElementOrderComparerWithExternalMethods()),
+            GenerationLanguage.AL => new CodeRenderer(config, new CodeElementOrderComparerAL()),
             _ => new CodeRenderer(config),
         };
     }

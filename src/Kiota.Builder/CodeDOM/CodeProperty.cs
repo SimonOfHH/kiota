@@ -144,6 +144,8 @@ public class CodeProperty : CodeTerminalWithKind<CodePropertyKind>, IDocumentedE
             Deprecation = Deprecation,
             IsPrimaryErrorMessage = IsPrimaryErrorMessage,
         };
+        foreach (var kvp in CustomData)
+            property.CustomData[kvp.Key] = kvp.Value;
         return property;
     }
 }

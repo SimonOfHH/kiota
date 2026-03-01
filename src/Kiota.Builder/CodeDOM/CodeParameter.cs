@@ -100,7 +100,7 @@ public class CodeParameter : CodeTerminalWithKind<CodeParameterKind>, ICloneable
 
     public object Clone()
     {
-        return new CodeParameter
+        var parameter = new CodeParameter
         {
             Optional = Optional,
             Kind = Kind,
@@ -113,5 +113,8 @@ public class CodeParameter : CodeTerminalWithKind<CodeParameterKind>, ICloneable
             Deprecation = Deprecation,
             PossibleValues = PossibleValues.ToList()
         };
+        foreach (var kvp in CustomData)
+            parameter.CustomData[kvp.Key] = kvp.Value;
+        return parameter;
     }
 }

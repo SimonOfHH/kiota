@@ -312,6 +312,8 @@ public class CodeMethod : CodeTerminalWithKind<CodeMethodKind>, ICloneable, IDoc
         };
         if (Parameters?.Any() ?? false)
             method.AddParameter(Parameters.Select(x => (CodeParameter)x.Clone()).ToArray());
+        foreach (var kvp in CustomData)
+            method.CustomData[kvp.Key] = kvp.Value;
         return method;
     }
 
