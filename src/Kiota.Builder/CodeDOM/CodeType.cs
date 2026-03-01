@@ -30,7 +30,7 @@ public class CodeType : CodeTypeBase, ICloneable
 
     public override object Clone()
     {
-        return new CodeType
+        var clone = new CodeType
         {
             TypeDefinition = TypeDefinition, // not cloning the type definition as it's a code element that lives in the tree and we don't want to fork the tree
             IsExternal = IsExternal,
@@ -39,6 +39,9 @@ public class CodeType : CodeTypeBase, ICloneable
             // shouldn't modify x.GenericTypeParameterValues or z.GenericTypeParameterValues
             genericTypeParameterValues = [.. genericTypeParameterValues],
         }.BaseClone<CodeType>(this, TypeDefinition is null || IsExternal);
+        foreach (var kvp in CustomData)
+            clone.CustomData[kvp.Key] = kvp.Value;
+        return clone;
     }
     public IEnumerable<CodeType> GenericTypeParameterValues
     {

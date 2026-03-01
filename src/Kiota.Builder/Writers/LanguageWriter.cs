@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using Kiota.Builder.CodeDOM;
 using Kiota.Builder.PathSegmenters;
+using Kiota.Builder.Writers.AL;
 using Kiota.Builder.Writers.CSharp;
 using Kiota.Builder.Writers.Dart;
 using Kiota.Builder.Writers.Go;
@@ -191,6 +192,7 @@ public abstract class LanguageWriter
             GenerationLanguage.Go => new GoWriter(outputPath, clientNamespaceName, excludeBackwardCompatible),
             GenerationLanguage.Dart => new DartWriter(outputPath, clientNamespaceName),
             GenerationLanguage.HTTP => new HttpWriter(outputPath, clientNamespaceName),
+            GenerationLanguage.AL => new ALWriter(outputPath, clientNamespaceName),
             _ => throw new InvalidEnumArgumentException($"{language} language currently not supported."),
         };
     }

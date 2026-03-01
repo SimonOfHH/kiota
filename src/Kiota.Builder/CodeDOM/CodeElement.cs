@@ -52,4 +52,9 @@ public abstract class CodeElement : ICodeElement
         if (immediateOnly || Parent == null) return false;
         return Parent.IsChildOf(codeElement, immediateOnly);
     }
+    /// <summary>
+    /// Language-specific metadata storage for code generation extensions.
+    /// Keys and values are opaque strings; interpretation is language-specific.
+    /// </summary>
+    public Dictionary<string, string> CustomData { get; } = new(StringComparer.OrdinalIgnoreCase);
 }
