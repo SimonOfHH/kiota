@@ -14,6 +14,8 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     {
         ArgumentNullException.ThrowIfNull(codeElement);
         ArgumentNullException.ThrowIfNull(writer);
+        if (codeElement.ParentIsSkipped())
+            return;
 
         // Skip logic
         if (codeElement.CustomData.TryGetValue("skip", out var skip) &&
@@ -71,8 +73,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             writer.IncreaseIndent();
 
             var varPragmas = string.Empty;
-            if (method.Parent is CodeClass pc)
-                pc.CustomData.TryGetValue("pragmas-variables", out varPragmas);
+            method.CustomData.TryGetValue("pragmas-variables", out varPragmas);
 
             if (!string.IsNullOrEmpty(varPragmas))
                 writer.WriteLine($"#pragma warning disable {varPragmas}");
@@ -108,7 +109,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     {
         if (method.ReturnType is null) return string.Empty;
 
-        var typeName = conventions.GetTypeString(method.ReturnType, method);
+        var typeName = conventions.GetTypeString(method.ReturnType, method, false);
 
         // Handle collections
         if (method.ReturnType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None)
@@ -565,7 +566,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var setters = parentClass.Methods
             .Where(m => m.IsSetterMethod())
             .ToList();
-
+        // first all getters
         foreach (var getter in getters)
         {
             var propertyName = getter.SimpleName ?? getter.Name;
@@ -577,6 +578,19 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             if (hasSetter)
             {
                 writer.WriteLine($"{lowerName} := {propertyName}();");
+            }
+        }
+        // then all setters to trigger validation
+        foreach (var getter in getters)
+        {
+            var propertyName = getter.SimpleName ?? getter.Name;
+            var lowerName = propertyName.ToFirstCharacterLowerCase();
+
+            var hasSetter = setters.Any(s =>
+                (s.SimpleName ?? s.Name).Equals(propertyName, StringComparison.OrdinalIgnoreCase));
+
+            if (hasSetter)
+            {
                 writer.WriteLine($"{propertyName}({lowerName});");
             }
         }

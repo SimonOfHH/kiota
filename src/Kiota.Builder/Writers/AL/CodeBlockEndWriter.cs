@@ -8,6 +8,9 @@ public class CodeBlockEndWriter : ICodeElementWriter<BlockEnd>
     public void WriteCodeElement(BlockEnd codeElement, LanguageWriter writer)
     {
         ArgumentNullException.ThrowIfNull(writer);
+
+        if (codeElement.ParentIsSkipped())
+            return;
         if (codeElement?.Parent is CodeFunction func &&
             func.Name.Equals("AppJson", StringComparison.OrdinalIgnoreCase))
         {

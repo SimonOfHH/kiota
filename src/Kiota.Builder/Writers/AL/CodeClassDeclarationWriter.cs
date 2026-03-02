@@ -18,6 +18,13 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
 
         if (codeElement.Parent is not CodeClass parentClass)
             return;
+        if (parentClass.ParentIsSkipped()) // seems to be a nested class, we don't support that in AL
+            return;
+        if (parentClass.Parent is not CodeNamespace) // seems to be a nested class, we don't support that in AL
+        {
+            parentClass.CustomData["skip"] = "true";
+            return;
+        }
 
         // Check if this is a parameter codeunit
         if (parentClass.CustomData.TryGetValue("parameter-codeunit", out var paramCu) &&

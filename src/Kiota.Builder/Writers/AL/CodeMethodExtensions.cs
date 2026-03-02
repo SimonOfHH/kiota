@@ -52,10 +52,8 @@ public static class CodeMethodExtensions
             .ToList();
 
         // Codeunit types first
-        var codeunitVars = variables.Where(v =>
-            v.Type?.Name?.StartsWith("Codeunit", StringComparison.OrdinalIgnoreCase) ?? false);
-        var otherVars = variables.Where(v =>
-            !(v.Type?.Name?.StartsWith("Codeunit", StringComparison.OrdinalIgnoreCase) ?? false));
+        var codeunitVars = variables.Where(v => v.Type.IsCodeunitType());
+        var otherVars = variables.Where(v => !v.Type.IsCodeunitType());
 
         return codeunitVars.Concat(otherVars);
     }
