@@ -49,8 +49,10 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
         // Return type
         var returnType = GetReturnTypeString(method);
+
+        var returnVarName = method.CustomData.TryGetValue("return-variable-name", out var returnVar) ? returnVar : null;
         var returnClause = !string.IsNullOrEmpty(returnType) && !returnType.Equals("void", StringComparison.OrdinalIgnoreCase)
-            ? $": {returnType}" : string.Empty;
+            ? $" {returnVarName}: {returnType}" : string.Empty;
 
         // Pragma for method
         method.CustomData.TryGetValue("pragmas", out var pragmas);
@@ -184,7 +186,18 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var bodyParam = method.Parameters.FirstOrDefault(p =>
             p.Kind == CodeParameterKind.RequestBody);
         if (bodyParam is not null)
-            writer.WriteLine($"RequestHandler.SetBody({bodyParam.Name});");
+        {
+            if (bodyParam.Type.IsCollection && bodyParam.Type.IsModelCodeunitType())
+            {
+                writer.WriteLine($"foreach BodyElement in {bodyParam.Name} do");
+                writer.IncreaseIndent();
+                writer.WriteLine($"BodyObjects.Add(BodyElement);");
+                writer.DecreaseIndent();
+                writer.WriteLine($"RequestHandler.SetBody(BodyObjects);");
+            }
+            else
+                writer.WriteLine($"RequestHandler.SetBody({bodyParam.Name});");
+        }
 
         // HTTP method
         var httpMethod = method.HttpMethod?.ToString()?.ToUpperInvariant() ?? "GET";
@@ -225,11 +238,15 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                 // Primitive return
                 var alType = conventions.GetTypeString(method.ReturnType, method);
                 var asMethod = GetAsMethodForType(alType);
-                writer.WriteLine($"exit(ReqConfig.Client().Response().GetContent().AsJson().AsValue().{asMethod}());");
+                if (alType == "HttpContent")
+                    writer.WriteLine($"exit(ReqConfig.Client().Response().GetContent().GetHttpContent());");
+                else
+                    writer.WriteLine($"exit(ReqConfig.Client().Response().GetContent().AsJson().AsValue().{asMethod}());");
             }
 
             writer.DecreaseIndent();
-            writer.WriteLine("end;");
+            if (isCollection)
+                writer.WriteLine("end;");
 
             if (isCollection || isCodeunit)
             {
@@ -343,6 +360,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             writer.WriteLine($"ReturnList.Add(JToken.AsValue().{asMethod}());");
             writer.DecreaseIndent();
         }
+        writer.WriteLine("exit(ReturnList);");
     }
 
     private void WriteSetterBody(CodeMethod method, LanguageWriter writer)

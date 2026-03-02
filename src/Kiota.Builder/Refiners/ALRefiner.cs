@@ -619,7 +619,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 responseSetter.CustomData["source"] = "response-setter";
                 var responseParam = new CodeParameter
                 {
-                    Name = "ApiResponse",
+                    Name = "var ApiResponse", // 'var' to pass it by reference in AL
                     Kind = CodeParameterKind.Custom,
                     Type = new CodeType { Name = "Codeunit System.RestClient.\"Http Response Message\"", IsExternal = true },
                 };
@@ -717,6 +717,21 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     ReturnType = new CodeType { Name = "void", IsExternal = true },
                     Parent = codeClass,
                 };
+                // Add local variables; we need to add variables for each property in the class to validate presence of required properties; the properties were previously added as getter- and setter-methods, so we can find them by looking for getter methods with source "from property"
+                var gettersHelper = codeClass.Methods.Where(m => m.IsGetterMethod() && m.CustomData.TryGetValue("source", out var source) && source.Equals("from property", StringComparison.Ordinal)).ToList();
+                foreach (var getter in gettersHelper)
+                {
+                    var propName = getter.SimpleName ?? getter.Name;
+                    var varName = $"{propName}";
+                    var localVar = new CodeParameter
+                    {
+                        Name = varName,
+                        Kind = CodeParameterKind.Custom,
+                        Type = (CodeTypeBase)getter.ReturnType.Clone(),
+                    };
+                    localVar.CustomData["local-variable"] = "true";
+                    validateBody.AddParameter(localVar);
+                }
                 validateBody.CustomData["sorting-value"] = "102";
                 validateBody.CustomData["source"] = "validate-body";
                 codeClass.AddMethod(validateBody);
@@ -852,12 +867,10 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 {
                     var indexerMethod = indexerMethods[0];
                     var indexerParamType = indexerMethod.Parameters.FirstOrDefault()?.Type;
+                    var indexerTypeAsClass = ((Kiota.Builder.CodeDOM.CodeType)indexerMethod.ReturnType).TypeDefinition as CodeClass;
 
                     if (indexerParamType is not null)
                     {
-                        // Add Identifier global variable
-                        AddGlobalVariable(codeClass, "Identifier", indexerParamType.Name, "2");
-
                         // Add SetIdentifier method
                         var setId = new CodeMethod
                         {
@@ -876,13 +889,17 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                             Type = (CodeTypeBase)indexerParamType.Clone(),
                         };
                         setId.AddParameter(idParam);
-                        codeClass.AddMethod(setId);
+                        indexerTypeAsClass?.AddMethod(setId);
+                        // Add Identifier global variable
+                        if (indexerTypeAsClass != null)
+                            AddGlobalVariable(indexerTypeAsClass, "Identifier", indexerParamType.Name, "2");
 
                         // Update the indexer method to be Item_Idx
                         indexerMethod.Name = "Item_Idx";
                         indexerMethod.Kind = CodeMethodKind.Custom;
                         indexerMethod.CustomData["source"] = "from indexer";
                         indexerMethod.CustomData["sorting-value"] = "4";
+                        indexerMethod.CustomData["return-variable-name"] = "Rqst";
                     }
                 }
             }
@@ -908,6 +925,43 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 reqHandlerParam.CustomData["local-variable"] = "true";
                 method.AddParameter(reqHandlerParam);
 
+                // if the method has a body, that is a collection type of model-codeunits, we need to add 2 additional local variables
+                // BodyElement: Codeunit <model-codeunit>
+                // BodyObjects: List of [Interface SimonOfHH.Kiota.Definitions."Kiota IModelClass"]
+                if (parentClass.Name.Equals("createWithListRequestBuilder", StringComparison.OrdinalIgnoreCase))
+                    Console.WriteLine("Debugging request executor method: " + method.Name);
+                if (method.Parameters.Any(p => p.Kind == CodeParameterKind.RequestBody))
+                {
+                    var bodyParam = method.Parameters.First(p => p.Kind == CodeParameterKind.RequestBody);
+                    if (bodyParam.Type is CodeType bodyType && bodyType.TypeDefinition is CodeClass bodyClass && bodyClass.IsOfKind(CodeClassKind.Model))
+                    {
+                        var bodyElementType = new CodeType
+                        {
+                            Name = bodyClass.Name,
+                            TypeDefinition = bodyClass,
+                            IsExternal = false,
+                        };
+                        var bodyElementParam = new CodeParameter
+                        {
+                            Name = "BodyElement",
+                            Kind = CodeParameterKind.Custom,
+                            Type = bodyElementType,
+                        };
+                        bodyElementParam.CustomData["local-variable"] = "true";
+                        method.AddParameter(bodyElementParam);
+
+                        var bodyObjectsParam = new CodeParameter
+                        {
+                            Name = "BodyObjects",
+                            Kind = CodeParameterKind.Custom,
+                            Type = new CodeType { Name = $"List of [Interface \"Kiota IModelClass\"]", IsExternal = true },
+                        };
+                        bodyObjectsParam.CustomData["local-variable"] = "true";
+                        method.AddParameter(bodyObjectsParam);
+
+                        AddUsing(parentClass, alConfig.DefinitionsNamespace);
+                    }
+                }
                 // Handle return type
                 var returnType = method.ReturnType;
                 if (returnType is CodeType ct)
@@ -960,14 +1014,6 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     {
                         // Single codeunit return
                         method.CustomData["return-variable-name"] = "Target";
-                        var targetParam = new CodeParameter
-                        {
-                            Name = "Target",
-                            Kind = CodeParameterKind.Custom,
-                            Type = (CodeTypeBase)returnType.Clone(),
-                        };
-                        targetParam.CustomData["local-variable"] = "true";
-                        method.AddParameter(targetParam);
                     }
                 }
 
