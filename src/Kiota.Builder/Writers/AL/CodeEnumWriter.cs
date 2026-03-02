@@ -98,7 +98,5 @@ public class CodeEnumWriter : BaseElementWriter<CodeEnum, ALConventionService>
             writer.WriteLine($"Caption = '{wireName}', Locked = true;");
             writer.CloseBlock();
         }
-
-        writer.CloseBlock();
     }
 }
