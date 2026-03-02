@@ -11,6 +11,8 @@ public class CodePropertyWriter : BaseElementWriter<CodeProperty, ALConventionSe
     {
         ArgumentNullException.ThrowIfNull(codeElement);
         ArgumentNullException.ThrowIfNull(writer);
+        if (codeElement.ParentIsSkipped())
+            return;
 
         // Global variables are written by CodeClassDeclarationWriter
         if (codeElement.CustomData.ContainsKey("global-variable"))

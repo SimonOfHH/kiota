@@ -16,6 +16,8 @@ public class CodeEnumWriter : BaseElementWriter<CodeEnum, ALConventionService>
     {
         ArgumentNullException.ThrowIfNull(codeElement);
         ArgumentNullException.ThrowIfNull(writer);
+        if (codeElement.ParentIsSkipped())
+            return;
 
         // Auto-generation header
         writer.WriteLine(AutoGenerationHeader);

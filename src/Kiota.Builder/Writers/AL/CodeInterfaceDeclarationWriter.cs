@@ -14,6 +14,8 @@ public class CodeInterfaceDeclarationWriter : BaseElementWriter<InterfaceDeclara
     {
         ArgumentNullException.ThrowIfNull(codeElement);
         ArgumentNullException.ThrowIfNull(writer);
+        if (codeElement.ParentIsSkipped())
+            return;
 
         if (codeElement.Parent is not CodeInterface parentInterface)
             return;

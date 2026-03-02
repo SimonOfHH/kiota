@@ -35,21 +35,20 @@ public static class CodeTypeBaseExtensions
         clone.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.None;
         return clone;
     }
-
+    public static bool IsCodeunitType(this CodeTypeBase codeTypeBase)
+    {
+        if (codeTypeBase is CodeType codeType && codeType.TypeDefinition is CodeClass codeClass)
+        {
+            return true; // CodeClass basically translates to a Codeunit in AL
+        }
+        return false;
+    }
     public static bool IsModelCodeunitType(this CodeTypeBase codeTypeBase)
     {
         if (codeTypeBase is CodeType codeType && codeType.TypeDefinition is CodeClass codeClass)
         {
-            try
-            {
-                if (codeClass.Parent is CodeNamespace ns && ns.Name.EndsWith("models", StringComparison.OrdinalIgnoreCase))
-                    return true;
-                return false;
-            }
-            catch (InvalidOperationException)
-            {
-                return false;
-            }
+            if (codeClass.Kind == CodeClassKind.Model)
+                return true;
         }
         return false;
     }
