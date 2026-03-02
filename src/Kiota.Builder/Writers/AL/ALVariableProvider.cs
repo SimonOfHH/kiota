@@ -50,7 +50,7 @@ public class ALVariable
         if (Type is not null && Type.Name.Equals("Label", StringComparison.OrdinalIgnoreCase))
         {
             var lockedStr = Locked ? ", Locked = true" : string.Empty;
-            writer.WriteLine($"{Name}: Label '{Value}'{lockedStr};");
+            writer.WriteLine($"{Name}: Label '{(string.IsNullOrEmpty(Value) ? DefaultValue : Value)}'{lockedStr};");
         }
         else if (Type is not null)
         {

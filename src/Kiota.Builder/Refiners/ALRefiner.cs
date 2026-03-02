@@ -286,14 +286,14 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     {
         var method = new CodeMethod
         {
-            Name = $"Get-{property.Name}",
+            Name = $"Get-{property.Name.ToFirstCharacterUpperCase()}",
             Kind = CodeMethodKind.Getter,
             ReturnType = (CodeTypeBase)property.Type.Clone(),
             Access = AccessModifier.Public,
             Documentation = (CodeDocumentation)property.Documentation.Clone(),
             Parent = property.Parent,
         };
-        method.SimpleName = property.Name;
+        method.SimpleName = property.Name.ToFirstCharacterUpperCase();
         method.CustomData["method-type"] = "Getter";
         method.CustomData["source"] = "from property";
         if (!string.IsNullOrEmpty(property.SerializationName))
@@ -306,6 +306,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             method.Kind = CodeMethodKind.RequestBuilderBackwardCompatibility;
             method.CustomData["source"] = "from request-builder";
             method.CustomData["sorting-value"] = "99";
+            method.CustomData["return-variable-name"] = "Rqst";
             return method;
         }
 
@@ -420,14 +421,14 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     {
         var method = new CodeMethod
         {
-            Name = $"Set-{property.Name}",
+            Name = $"Set-{property.Name.ToFirstCharacterUpperCase()}",
             Kind = CodeMethodKind.Setter,
             ReturnType = new CodeType { Name = "void", IsExternal = true },
             Access = AccessModifier.Public,
             Documentation = (CodeDocumentation)property.Documentation.Clone(),
             Parent = property.Parent,
         };
-        method.SimpleName = property.Name;
+        method.SimpleName = property.Name.ToFirstCharacterUpperCase();
         method.CustomData["method-type"] = "Setter";
         method.CustomData["source"] = "from property";
         if (!string.IsNullOrEmpty(property.SerializationName))
@@ -518,8 +519,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 }
 
                 // Add global variables as properties
-                AddGlobalVariable(codeClass, "ReqConfig", $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"", "1", "AA0137");
-                AddGlobalVariable(codeClass, "APIAuthorization", $"Codeunit {alConfig.ClientNamespace}.\"Kiota API Authorization\"", "1", "AA0137");
+                AddGlobalVariable(codeClass, "ReqConfig", $"Codeunit \"Kiota ClientConfig\"", "1", "AA0137");
+                AddGlobalVariable(codeClass, "APIAuthorization", $"Codeunit \"Kiota API Authorization\"", "1", "AA0137");
                 AddGlobalVariable(codeClass, "StoredResponse", "Codeunit System.RestClient.\"Http Response Message\"", "1", "AA0137");
                 AddLabel(codeClass, "BaseUrlLbl", baseUrl, true, "1");
                 AddGlobalVariable(codeClass, "ConfigSet", "Boolean", "4");
@@ -540,7 +541,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 {
                     Name = "NewAPIAuthorization",
                     Kind = CodeParameterKind.Custom,
-                    Type = new CodeType { Name = $"Codeunit {alConfig.ClientNamespace}.\"Kiota API Authorization\"", IsExternal = true },
+                    Type = new CodeType { Name = $"Codeunit \"Kiota API Authorization\"", IsExternal = true },
                 };
                 initMethod.AddParameter(authParam);
                 codeClass.AddMethod(initMethod);
@@ -551,7 +552,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     Name = "Configuration",
                     Kind = CodeMethodKind.ClientConstructor,
                     Access = AccessModifier.Public,
-                    ReturnType = new CodeType { Name = $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"", IsExternal = true },
+                    ReturnType = new CodeType { Name = $"Codeunit \"Kiota ClientConfig\"", IsExternal = true },
                     Parent = codeClass,
                 };
                 configGetter.CustomData["skip"] = "false";
@@ -574,7 +575,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 {
                     Name = "config",
                     Kind = CodeParameterKind.Custom,
-                    Type = new CodeType { Name = $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"", IsExternal = true },
+                    Type = new CodeType { Name = $"Codeunit \"Kiota ClientConfig\"", IsExternal = true },
                 };
                 configSetter.AddParameter(configParam);
                 codeClass.AddMethod(configSetter);
@@ -585,7 +586,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     Name = "DefaultConfiguration",
                     Kind = CodeMethodKind.Factory,
                     Access = AccessModifier.Private,
-                    ReturnType = new CodeType { Name = $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"", IsExternal = true },
+                    ReturnType = new CodeType { Name = $"Codeunit \"Kiota ClientConfig\"", IsExternal = true },
                     Parent = codeClass,
                 };
                 defaultConfig.CustomData["skip"] = "false";
@@ -625,6 +626,12 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 };
                 responseSetter.AddParameter(responseParam);
                 codeClass.AddMethod(responseSetter);
+
+                foreach (var property in codeClass.Properties.Where(p => p.IsOfKind(CodePropertyKind.RequestBuilder)))
+                {
+                    codeClass.RemoveChildElement(property);
+                    codeClass.AddMethod(ToGetterCodeMethod(property, alConfig));
+                }
             }
         });
     }
@@ -655,7 +662,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 AddUsing(codeClass, alConfig.DefinitionsNamespace);
 
                 // Add global variables
-                AddGlobalVariable(codeClass, "JSONHelper", $"Codeunit {alConfig.UtilitiesNamespace}.\"JSON Helper\"", "2", "AA0137");
+                AddGlobalVariable(codeClass, "JSONHelper", $"Codeunit \"JSON Helper\"", "2", "AA0137");
                 AddGlobalVariable(codeClass, "DebugCall", "Boolean", "4");
                 AddGlobalVariable(codeClass, "JsonBody", "JsonObject", "3");
                 AddGlobalVariable(codeClass, "SubToken", "JsonToken", "3");
@@ -717,11 +724,12 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     ReturnType = new CodeType { Name = "void", IsExternal = true },
                     Parent = codeClass,
                 };
+                validateBody.CustomData["pragmas-variables"] = "AA0202";
                 // Add local variables; we need to add variables for each property in the class to validate presence of required properties; the properties were previously added as getter- and setter-methods, so we can find them by looking for getter methods with source "from property"
                 var gettersHelper = codeClass.Methods.Where(m => m.IsGetterMethod() && m.CustomData.TryGetValue("source", out var source) && source.Equals("from property", StringComparison.Ordinal)).ToList();
                 foreach (var getter in gettersHelper)
                 {
-                    var propName = getter.SimpleName ?? getter.Name;
+                    var propName = getter.SimpleName.ToFirstCharacterLowerCase() ?? getter.Name.ToFirstCharacterLowerCase();
                     var varName = $"{propName}";
                     var localVar = new CodeParameter
                     {
@@ -776,7 +784,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     foreach (var getter in getters)
                     {
                         var paramType = (CodeTypeBase)getter.ReturnType.Clone();
-                        var paramName = getter.SimpleName ?? getter.Name;
+                        var paramName = getter.SimpleName.ToFirstCharacterLowerCase() ?? getter.Name.ToFirstCharacterLowerCase();
                         var param = new CodeParameter
                         {
                             Name = paramName,
@@ -928,12 +936,10 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 // if the method has a body, that is a collection type of model-codeunits, we need to add 2 additional local variables
                 // BodyElement: Codeunit <model-codeunit>
                 // BodyObjects: List of [Interface SimonOfHH.Kiota.Definitions."Kiota IModelClass"]
-                if (parentClass.Name.Equals("createWithListRequestBuilder", StringComparison.OrdinalIgnoreCase))
-                    Console.WriteLine("Debugging request executor method: " + method.Name);
                 if (method.Parameters.Any(p => p.Kind == CodeParameterKind.RequestBody))
                 {
                     var bodyParam = method.Parameters.First(p => p.Kind == CodeParameterKind.RequestBody);
-                    if (bodyParam.Type is CodeType bodyType && bodyType.TypeDefinition is CodeClass bodyClass && bodyClass.IsOfKind(CodeClassKind.Model))
+                    if (bodyParam.Type.IsCollection && bodyParam.Type is CodeType bodyType && bodyType.TypeDefinition is CodeClass bodyClass && bodyClass.IsOfKind(CodeClassKind.Model))
                     {
                         var bodyElementType = new CodeType
                         {

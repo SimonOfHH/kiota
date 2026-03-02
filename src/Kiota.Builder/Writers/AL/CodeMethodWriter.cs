@@ -248,12 +248,6 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             writer.DecreaseIndent();
             if (isCollection)
                 writer.WriteLine("end;");
-
-            if (isCollection || isCodeunit)
-            {
-                if (method.CustomData.TryGetValue("return-variable-name", out var returnVarName))
-                    writer.WriteLine($"exit({returnVarName});");
-            }
         }
     }
 
@@ -624,6 +618,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             // Setter
             var paramName = method.Parameters.First().Name;
             writer.WriteLine($"ReqConfig := {paramName};");
+            writer.WriteLine("ReqConfig.Client(this);");
             writer.WriteLine("ConfigSet := true;");
         }
     }
@@ -674,7 +669,6 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
         // Request builder methods return a codeunit that has SetConfiguration
         writer.WriteLine($"{varName}.SetConfiguration({configSource});");
-        writer.WriteLine($"exit({varName});");
     }
 
     private void WriteItemIdxBody(CodeMethod method, LanguageWriter writer)
@@ -684,7 +678,6 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
         writer.WriteLine("Rqst.SetConfiguration(ReqConfig);");
         writer.WriteLine($"Rqst.SetIdentifier({param.Name});");
-        writer.WriteLine("exit(Rqst);");
     }
 
     #region Helpers
