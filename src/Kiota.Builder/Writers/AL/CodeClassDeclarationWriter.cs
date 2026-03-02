@@ -148,7 +148,7 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
             var isLockedLabel = p.CustomData.TryGetValue("locked-label", out var locked) &&
                                 locked.Equals("true", StringComparison.OrdinalIgnoreCase);
 
-            return new ALVariable(p.Name, p.Type, varValue, isLockedLabel ? "Locked = true" : string.Empty, pragmas ?? string.Empty);
+            return new ALVariable(p.Name, p.Type, varValue, string.Empty, pragmas ?? string.Empty, isLockedLabel);
         }).ToList();
 
         // Order: Codeunit types first, then others, alphabetically within groups
