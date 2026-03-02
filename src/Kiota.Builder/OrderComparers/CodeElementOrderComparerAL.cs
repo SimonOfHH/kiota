@@ -16,7 +16,11 @@ public class CodeElementOrderComparerAL : CodeElementOrderComparer
                 CodeMethodKind.ClientConstructor => 1,
                 CodeMethodKind.Constructor => 2,
                 CodeMethodKind.RawUrlConstructor => 3,
+                CodeMethodKind.Deserializer => 4,
+                CodeMethodKind.Serializer => 50,
                 CodeMethodKind.Custom => GetSortingValue(method, 0),
+                CodeMethodKind.Getter => 10,
+                CodeMethodKind.Setter => 10,
                 CodeMethodKind.RequestBuilderBackwardCompatibility => GetSortingValue(method, 0),
                 _ => 0,
             };
