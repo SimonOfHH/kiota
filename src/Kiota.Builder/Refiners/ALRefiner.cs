@@ -62,7 +62,6 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             AddAppJsonAsCodeFunction(generatedCode, alConfig, _configuration);
             ModifyOverloadMethodNames(generatedCode);
             UpdateMethodParameters(generatedCode);
-            AssignPragmas(generatedCode);
 
         }, cancellationToken);
     }
@@ -740,7 +739,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     localVar.CustomData["local-variable"] = "true";
                     validateBody.AddParameter(localVar);
                 }
-                validateBody.CustomData["sorting-value"] = "102";
+                validateBody.CustomData["sorting-value"] = "6";
                 validateBody.CustomData["source"] = "validate-body";
                 codeClass.AddMethod(validateBody);
 
@@ -770,6 +769,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     };
                     toJson2.SimpleName = "ToJson";
                     toJson2.CustomData["sorting-value"] = "104";
+                    toJson2.CustomData["pragmas"] = "AA0245";
 
                     // Add TargetJson local var
                     var targetJsonParam = new CodeParameter
@@ -870,6 +870,16 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 var indexerMethods = codeClass.Methods
                     .Where(m => m.Kind == CodeMethodKind.IndexerBackwardCompatibility && m.OriginalIndexer is not null)
                     .ToList();
+
+                foreach (var property in codeClass.Properties.Where(p => p.IsOfKind(CodePropertyKind.RequestBuilder)))
+                {
+                    var propertyTypeNamespace = ((CodeType)property.Type).TypeDefinition?.GetImmediateParentOfType<CodeNamespace>();
+                    ArgumentNullException.ThrowIfNull(propertyTypeNamespace);
+                    if (!codeClass.Usings.Any(x => x.Name.Equals(propertyTypeNamespace.Name, StringComparison.OrdinalIgnoreCase)))
+                        codeClass.AddUsing(new CodeUsing { Name = propertyTypeNamespace.Name });
+                    codeClass.RemoveChildElement(property);
+                    codeClass.AddMethod(ToGetterCodeMethod(property, alConfig));
+                }
 
                 if (indexerMethods.Count != 0)
                 {
@@ -1024,14 +1034,13 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 }
 
                 // Handle query parameters → parameter codeunit
-                var queryParamsClass = parentClass.InnerClasses
-                    .FirstOrDefault(c => c.Name.EndsWith("QueryParameters", StringComparison.OrdinalIgnoreCase));
+                var queryParamsClass = parentClass.InnerClasses.FirstOrDefault(c => c.IsOfKind(CodeClassKind.QueryParameters));
 
                 if (queryParamsClass is not null)
                 {
                     var queryParams = queryParamsClass.Properties
                         .Where(p => p.Kind == CodePropertyKind.QueryParameter)
-                        .Select(p => $"{p.Name}:{(p.Type is CodeType pct ? pct.Name : "Text")}")
+                        .Select(p => $"{p.Name}:{conventionService.GetTypeString(p.Type, p)}")
                         .ToList();
 
                     if (queryParams.Count > 0)
@@ -1180,26 +1189,6 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             if (element is CodeParameter param && reservedNames.ReservedNames.Contains(param.Name))
             {
                 param.Name += "_";
-            }
-        });
-    }
-
-    private static void AssignPragmas(CodeElement generatedCode)
-    {
-        DeepCrawlTree(generatedCode, element =>
-        {
-            if (element is CodeClass codeClass)
-            {
-                // Check if class has global variables
-                var hasGlobals = codeClass.Properties.Any(p =>
-                    p.CustomData.ContainsKey("global-variable") ||
-                    p.Kind == CodePropertyKind.Custom);
-
-                if (hasGlobals || codeClass.IsOfKind(CodeClassKind.Model) ||
-                    codeClass.CustomData.ContainsKey("client-class"))
-                {
-                    codeClass.CustomData["pragmas-variables"] = "AA0021,AA0202";
-                }
             }
         });
     }

@@ -11,8 +11,17 @@ public class ALAppManifestWriter : BaseElementWriter<CodeFunction, ALConventionS
     private static readonly JsonSerializerOptions s_jsonOptions = new()
     {
         WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNamingPolicy = new AppJsonNamingPolicy(),
     };
+
+    /// <summary>
+    /// CamelCase for all properties except "EULA" which the AL compiler requires uppercase.
+    /// </summary>
+    private sealed class AppJsonNamingPolicy : JsonNamingPolicy
+    {
+        public override string ConvertName(string name) =>
+            string.Equals(name, "EULA", StringComparison.Ordinal) ? name : CamelCase.ConvertName(name);
+    }
 
     public ALAppManifestWriter(ALConventionService conventionService) : base(conventionService) { }
 
