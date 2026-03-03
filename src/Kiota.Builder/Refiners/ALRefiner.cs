@@ -1299,6 +1299,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     #region Step 7: Interface Generation
     private static void AddCodeInterfacesForInheritedTypes(CodeElement generatedCode, ALConfiguration alConfig)
     {
+        if (!alConfig.GenerateInterfaces)
+            return;
         // For model classes with DiscriminatorInformation, create interfaces
         DeepCrawlTree(generatedCode, element =>
         {
