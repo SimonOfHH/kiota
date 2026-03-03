@@ -37,6 +37,9 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
     private void WriteMethodPrototype(CodeMethod method, LanguageWriter writer)
     {
+        WriteMethodDocumentation(method, writer);
+
+        // Access modifier
         var access = method.Access == AccessModifier.Private ? "local " :
                      method.Access == AccessModifier.Protected ? "internal " : string.Empty;
 
@@ -793,6 +796,60 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             return "/" + segments[^1];
 
         return template;
+    }
+
+    /// <summary>
+    /// Writes AL XML documentation comments above a procedure declaration.
+    /// Emits summary, param, and returns tags following the AL triple-slash convention.
+    /// </summary>
+    private void WriteMethodDocumentation(CodeMethod method, LanguageWriter writer)
+    {
+        var documentation = method.Documentation;
+        if (documentation is null) return;
+
+        var hasDescription = documentation.DescriptionAvailable;
+        var hasExternalDocs = documentation.ExternalDocumentationAvailable;
+        var hasReturnType = method.ReturnType is not null
+                           && !"void".Equals(method.ReturnType.Name, StringComparison.OrdinalIgnoreCase)
+                           && method.Kind is not (CodeMethodKind.Constructor or CodeMethodKind.ClientConstructor);
+        var paramsWithDocs = method.Parameters
+            .Where(static p => p.Documentation.DescriptionAvailable)
+            .OrderBy(static p => p.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        // Nothing to write?
+        if (!hasDescription && !hasExternalDocs && !hasReturnType && paramsWithDocs.Count == 0)
+            return;
+
+        var prefix = conventions.DocCommentPrefix;
+
+        // <summary> block
+        if (hasDescription || hasExternalDocs)
+        {
+            writer.WriteLine($"{prefix}<summary>");
+            if (hasDescription)
+            {
+                var description = documentation.GetDescription(type => conventions.GetTypeString(type, method));
+                writer.WriteLine($"{prefix}{description}");
+            }
+            if (hasExternalDocs)
+                writer.WriteLine($"{prefix}{documentation.DocumentationLabel} - {documentation.DocumentationLink}");
+            writer.WriteLine($"{prefix}</summary>");
+        }
+
+        // <param> tags
+        foreach (var param in paramsWithDocs)
+        {
+            var paramDescription = param.Documentation.GetDescription(type => conventions.GetTypeString(type, param));
+            writer.WriteLine($"{prefix}<param name=\"{param.Name}\">{paramDescription}</param>");
+        }
+
+        // <returns> tag
+        if (hasReturnType && method.ReturnType is not null)
+        {
+            var returnTypeName = conventions.GetTypeString(method.ReturnType, method);
+            writer.WriteLine($"{prefix}<returns>A {returnTypeName}</returns>");
+        }
     }
 
     #endregion
