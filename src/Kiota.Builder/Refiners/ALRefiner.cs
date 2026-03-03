@@ -32,6 +32,9 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 static s => "ById", static s => "ById", GenerationLanguage.AL);
             RemoveCancellationParameter(generatedCode);
 
+            // Step 1.5: Flatten inherited properties (AL has no inheritance)
+            FlattenInheritedProperties(generatedCode);
+
             // Step 2: AL-specific method removal/recreation
             RemoveUnusedMethods(generatedCode);
             RemoveAdditionalDataProperty(generatedCode);
@@ -51,6 +54,9 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             UpdateApiClientClass(generatedCode, alConfig, conventionService, _configuration);
             UpdateModelClasses(generatedCode, alConfig, conventionService);
             UpdateRequestBuilderClasses(generatedCode, alConfig, conventionService);
+
+            // Step 5.5: Value-wrapper convenience overloads
+            AddValueWrapperConvenienceOverloads(generatedCode);
 
             // Step 6: Request executor enhancement
             UpdateRequestExecutorMethods(generatedCode, alConfig, conventionService, objectIdProvider);
@@ -77,6 +83,88 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     s.StartsWith('_') ? "u" + s.TrimStart('_') : s));
             }
         });
+    }
+    #endregion
+
+    #region Step 1.5: Flatten Inherited Properties
+    /// <summary>
+    /// AL does not support class inheritance. For every model class that has a base type
+    /// (StartBlock.Inherits), copy all properties from the full ancestor chain into the
+    /// derived class, then remove the inheritance link.
+    /// </summary>
+    private static void FlattenInheritedProperties(CodeElement generatedCode)
+    {
+        // Collect all model classes that have an inheritance relationship
+        var classesWithInheritance = new List<CodeClass>();
+        DeepCrawlTree(generatedCode, element =>
+        {
+            if (element is CodeClass c && c.IsOfKind(CodeClassKind.Model) && c.StartBlock.Inherits is not null)
+            {
+                classesWithInheritance.Add(c);
+            }
+        });
+
+        foreach (var derivedClass in classesWithInheritance)
+        {
+            // Walk up the full inheritance chain and collect all ancestor properties
+            var ancestorProperties = GetAllAncestorProperties(derivedClass);
+            var existingPropertyNames = new HashSet<string>(
+                derivedClass.Properties.Select(p => p.Name),
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var ancestorProp in ancestorProperties)
+            {
+                // Skip if the derived class already defines a property with the same name
+                if (existingPropertyNames.Contains(ancestorProp.Name))
+                    continue;
+
+                // Clone the property so we don't share object references across classes
+                var clonedProp = new CodeProperty
+                {
+                    Name = ancestorProp.Name,
+                    Kind = ancestorProp.Kind,
+                    Type = (CodeTypeBase)ancestorProp.Type.Clone(),
+                    Access = ancestorProp.Access,
+                    DefaultValue = ancestorProp.DefaultValue,
+                    SerializationName = ancestorProp.SerializationName,
+                    Documentation = (CodeDocumentation)ancestorProp.Documentation.Clone(),
+                };
+
+                // Carry over any custom data (e.g., "global-variable", "locked")
+                foreach (var kvp in ancestorProp.CustomData)
+                    clonedProp.CustomData[kvp.Key] = kvp.Value;
+
+                // Mark it so we know it was inherited (useful for debugging / future logic)
+                clonedProp.CustomData["inherited-from"] = ancestorProp.Parent?.Name ?? "unknown";
+
+                derivedClass.AddProperty(clonedProp);
+                existingPropertyNames.Add(clonedProp.Name);
+            }
+
+            // Remove the inheritance link — AL codeunits don't extend other codeunits
+            derivedClass.StartBlock.Inherits = null;
+        }
+    }
+
+    /// <summary>
+    /// Walks up the inheritance chain and returns all properties from all ancestors,
+    /// ordered from the most-base class down to the immediate parent.
+    /// </summary>
+    private static List<CodeProperty> GetAllAncestorProperties(CodeClass derivedClass)
+    {
+        var result = new List<CodeProperty>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var current = derivedClass.StartBlock.Inherits?.TypeDefinition as CodeClass;
+
+        while (current is not null && !visited.Contains(current.Name))
+        {
+            visited.Add(current.Name); // guard against circular references
+            // Insert at the beginning so base-most properties come first
+            result.InsertRange(0, current.Properties);
+            current = current.StartBlock.Inherits?.TypeDefinition as CodeClass;
+        }
+
+        return result;
     }
     #endregion
 
@@ -922,6 +1010,129 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 }
             }
         });
+    }
+    #endregion
+
+    #region Step 5.5: Value-wrapper convenience overloads
+    /// <summary>
+    /// Detects model classes that are "value wrappers" (single primitive property named "value")
+    /// and adds convenience getter/setter overloads to parent classes that reference them.
+    /// The getter overload has a "_Value" suffix; the setter overload takes the primitive type directly.
+    /// </summary>
+    private static void AddValueWrapperConvenienceOverloads(CodeElement generatedCode)
+    {
+        // Phase 1: Collect all value-wrapper classes
+        var wrapperClasses = new HashSet<CodeClass>();
+        DeepCrawlTree(generatedCode, element =>
+        {
+            if (element is CodeClass c && IsValueWrapperClass(c))
+                wrapperClasses.Add(c);
+        });
+
+        if (wrapperClasses.Count == 0) return;
+
+        // Phase 2: For each model class, find getters/setters that return a wrapper and add convenience overloads
+        DeepCrawlTree(generatedCode, element =>
+        {
+            if (element is not CodeClass parentClass || !parentClass.IsOfKind(CodeClassKind.Model))
+                return;
+
+            var methodsToAdd = new List<CodeMethod>();
+
+            foreach (var getter in parentClass.Methods.Where(m => m.IsGetterMethod()).ToList())
+            {
+                if (getter.ReturnType is not CodeType ct || ct.TypeDefinition is not CodeClass wrapperClass)
+                    continue;
+                if (!wrapperClasses.Contains(wrapperClass))
+                    continue;
+
+                // Find the inner "value" getter to determine the primitive type
+                var innerGetter = wrapperClass.Methods.FirstOrDefault(m => m.IsGetterMethod());
+                if (innerGetter is null) continue;
+
+                var primitiveType = (CodeTypeBase)innerGetter.ReturnType.Clone();
+                var methodBaseName = getter.SimpleName ?? getter.Name;
+
+                // Convenience getter: FirstName_Value() : Text
+                var convenienceGetter = new CodeMethod
+                {
+                    Name = $"{methodBaseName}_Value",
+                    Kind = CodeMethodKind.Getter,
+                    ReturnType = primitiveType,
+                    Access = AccessModifier.Public,
+                    Documentation = new CodeDocumentation
+                    {
+                        DescriptionTemplate = $"Convenience helper that unwraps the value from the {methodBaseName} wrapper object.",
+                    },
+                    Parent = parentClass,
+                };
+                convenienceGetter.SimpleName = $"{methodBaseName}_Value";
+                convenienceGetter.CustomData["method-type"] = "Getter";
+                convenienceGetter.CustomData["source"] = "value-wrapper-getter";
+                convenienceGetter.CustomData["wrapper-getter-name"] = methodBaseName;
+                if (getter.CustomData.TryGetValue("serialization-name", out var serName))
+                    convenienceGetter.CustomData["serialization-name"] = serName;
+                methodsToAdd.Add(convenienceGetter);
+
+                // Convenience setter: FirstName(p: Text)
+                var convenienceSetter = new CodeMethod
+                {
+                    Name = $"{methodBaseName}",
+                    Kind = CodeMethodKind.Setter,
+                    ReturnType = new CodeType { Name = "void", IsExternal = true },
+                    Access = AccessModifier.Public,
+                    Documentation = new CodeDocumentation
+                    {
+                        DescriptionTemplate = $"Convenience helper that wraps the value into a {methodBaseName} wrapper object.",
+                    },
+                    Parent = parentClass,
+                };
+                convenienceSetter.SimpleName = $"{methodBaseName}";
+                convenienceSetter.CustomData["method-type"] = "Setter";
+                convenienceSetter.CustomData["source"] = "value-wrapper-setter";
+                convenienceSetter.CustomData["wrapper-getter-name"] = methodBaseName;
+                convenienceSetter.CustomData["wrapper-class-name"] = wrapperClass.Name;
+
+                var valueParam = new CodeParameter
+                {
+                    Name = "p",
+                    Kind = CodeParameterKind.Custom,
+                    Type = (CodeTypeBase)primitiveType.Clone(),
+                };
+                convenienceSetter.AddParameter(valueParam);
+
+                // Add a local variable for the wrapper codeunit
+                var wrapperParam = new CodeParameter
+                {
+                    Name = "Wrapper",
+                    Kind = CodeParameterKind.Custom,
+                    Type = (CodeTypeBase)getter.ReturnType.Clone(),
+                };
+                wrapperParam.CustomData["local-variable"] = "true";
+                convenienceSetter.AddParameter(wrapperParam);
+
+                methodsToAdd.Add(convenienceSetter);
+            }
+
+            foreach (var m in methodsToAdd)
+                parentClass.AddMethod(m);
+        });
+    }
+
+    /// <summary>
+    /// A value-wrapper class is a model with exactly one getter that returns a primitive type
+    /// and whose serialization name (or simple name) is "value".
+    /// </summary>
+    private static bool IsValueWrapperClass(CodeClass c)
+    {
+        if (!c.IsOfKind(CodeClassKind.Model)) return false;
+        var getters = c.Methods.Where(m => m.IsGetterMethod()).ToList();
+        if (getters.Count != 1) return false;
+        var getter = getters[0];
+        var serName = getter.CustomData.TryGetValue("serialization-name", out var sn) ? sn : getter.SimpleName ?? getter.Name;
+        return string.Equals(serName, "value", StringComparison.OrdinalIgnoreCase)
+            && getter.ReturnType is CodeType ct
+            && ct.TypeDefinition is null; // primitive type — no TypeDefinition
     }
     #endregion
 

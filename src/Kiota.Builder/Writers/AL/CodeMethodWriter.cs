@@ -258,8 +258,13 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var isCollection = returnType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None;
         var isEnum = returnType is CodeType { TypeDefinition: CodeEnum };
         var isCodeunit = returnType is CodeType { TypeDefinition: CodeClass };
-
-        if (isCollection)
+        var isWrapperGetter = method.CustomData.TryGetValue("source", out var wrapperVal) &&
+                             wrapperVal.Equals("value-wrapper-getter", StringComparison.OrdinalIgnoreCase);
+        if (isWrapperGetter)
+        {
+            WriteValueWrapperGetterBody(method, writer);
+        }
+        else if (isCollection)
         {
             WriteCollectionGetterBody(method, writer, serializationName, isEnum, isCodeunit);
         }
@@ -369,8 +374,13 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var isEnum = returnType is CodeType { TypeDefinition: CodeEnum };
         var isCodeunit = returnType is CodeType { TypeDefinition: CodeClass };
 #pragma warning restore CA1508
-
-        if (isCollection)
+        var isWrapperSetter = method.CustomData.TryGetValue("source", out var wrapperVal) &&
+                             wrapperVal.Equals("value-wrapper-setter", StringComparison.OrdinalIgnoreCase);
+        if (isWrapperSetter)
+        {
+            WriteValueWrapperSetterBody(method, writer);
+        }
+        else if (isCollection)
         {
             WriteCollectionSetterBody(method, writer, serializationName, isEnum, isCodeunit);
         }
@@ -547,6 +557,22 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
         // Default custom method - might be unused
         writer.WriteLine("// TODO: Implement custom method body");
+    }
+
+    private void WriteValueWrapperGetterBody(CodeMethod method, LanguageWriter writer)
+    {
+        // exit(FirstName().Value());
+        var wrapperGetterName = method.CustomData.TryGetValue("wrapper-getter-name", out var wgn) ? wgn : method.Name;
+        writer.WriteLine($"exit({wrapperGetterName}().Value());");
+    }
+
+    private void WriteValueWrapperSetterBody(CodeMethod method, LanguageWriter writer)
+    {
+        // Wrapper.Value(p);
+        // FirstName(Wrapper);
+        var wrapperGetterName = method.CustomData.TryGetValue("wrapper-getter-name", out var wgn) ? wgn : method.Name;
+        writer.WriteLine("Wrapper.Value(p);");
+        writer.WriteLine($"{wrapperGetterName}(Wrapper);");
     }
 
     private void WriteValidateBodyBody(CodeMethod method, LanguageWriter writer)
