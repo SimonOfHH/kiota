@@ -70,14 +70,16 @@ public class CodeEnumWriter : BaseElementWriter<CodeEnum, ALConventionService>
 
         if (objectProps.Count == 0)
         {
-            // Default: add Extensible = true
-            writer.WriteLine("Extensible = true;");
+            // Default: add Extensible = false
+            writer.WriteLine("Extensible = false;");
         }
         else
         {
             foreach (var prop in objectProps)
             {
-                var propValue = prop.CustomData.TryGetValue("value", out var val) ? val : "true";
+                var propValue = prop.CustomData.TryGetValue("value", out var val) ? val : string.Empty;
+                if (string.IsNullOrEmpty(propValue))
+                    continue; // Skip properties without a value
                 writer.WriteLine($"{prop.Name} = {propValue};");
             }
         }
