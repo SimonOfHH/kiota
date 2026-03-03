@@ -65,6 +65,8 @@ public class ALConfiguration
 
     [JsonPropertyName("appUrl")]
     public string AppUrl { get; set; } = string.Empty;
+    [JsonPropertyName("generateInterfaces")]
+    public bool GenerateInterfaces { get; set; } = false;
 
     // Computed companion references
     [JsonIgnore]
