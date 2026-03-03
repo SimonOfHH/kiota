@@ -668,7 +668,11 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             if (param is not null)
             {
                 writer.WriteLine($"Identifier := {param.Name};");
-                writer.WriteLine($"ReqConfig.AppendBaseURL(Format(Identifier));");
+                var typeString = conventions.GetTypeString(param.Type, method);
+                if (typeString == "Guid")
+                    writer.WriteLine($"ReqConfig.AppendBaseURL('/' + Format(Identifier).Replace('{{', '').Replace('}}', ''));");
+                else
+                    writer.WriteLine($"ReqConfig.AppendBaseURL('/' + Format(Identifier));");
             }
         }
         else // SetConfiguration
