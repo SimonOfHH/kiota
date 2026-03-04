@@ -41,6 +41,8 @@ public static class CodeTypeBaseExtensions
         {
             return true; // CodeClass basically translates to a Codeunit in AL
         }
+        if (codeTypeBase is not null && codeTypeBase.Name.StartsWith("Codeunit", StringComparison.OrdinalIgnoreCase))
+            return true;
         return false;
     }
     public static bool IsModelCodeunitType(this CodeTypeBase codeTypeBase)
