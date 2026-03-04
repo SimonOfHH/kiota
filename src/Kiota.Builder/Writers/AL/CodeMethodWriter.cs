@@ -828,7 +828,9 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             return;
 
         var prefix = conventions.DocCommentPrefix;
-
+        method.CustomData.TryGetValue("documentation-pragmas", out var documentationPragmas);
+        if (!string.IsNullOrEmpty(documentationPragmas))
+            writer.WriteLine($"#pragma warning disable {documentationPragmas}", false);
         // <summary> block
         if (hasDescription || hasExternalDocs)
         {
@@ -856,6 +858,8 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             var returnTypeName = conventions.GetTypeString(method.ReturnType, method);
             writer.WriteLine($"{prefix}<returns>A {returnTypeName}</returns>");
         }
+        if (!string.IsNullOrEmpty(documentationPragmas))
+            writer.WriteLine($"#pragma warning restore {documentationPragmas}", false);
     }
 
     #endregion

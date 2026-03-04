@@ -103,6 +103,9 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         if (parentClass.Documentation?.DescriptionAvailable == true)
         {
             var description = parentClass.Documentation.GetDescription(static t => t.Name);
+            parentClass.CustomData.TryGetValue("documentation-pragmas", out var pragmas);
+            if (!string.IsNullOrEmpty(pragmas))
+                writer.WriteLine($"#pragma warning disable {pragmas}", false);
             // Strip any CustomData metadata from description
             if (!string.IsNullOrEmpty(description))
             {
@@ -110,6 +113,8 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
                 writer.WriteLine($"/// {description}");
                 writer.WriteLine("/// </summary>");
             }
+            if (!string.IsNullOrEmpty(pragmas))
+                writer.WriteLine($"#pragma warning restore {pragmas}", false);
         }
     }
 

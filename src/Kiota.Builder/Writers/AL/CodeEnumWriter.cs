@@ -33,12 +33,17 @@ public class CodeEnumWriter : BaseElementWriter<CodeEnum, ALConventionService>
         if (codeElement.Documentation?.DescriptionAvailable == true)
         {
             var description = codeElement.Documentation.GetDescription(static t => t.Name);
+            codeElement.CustomData.TryGetValue("documentation-pragmas", out var docPragmas);
+            if (!string.IsNullOrEmpty(docPragmas))
+                writer.WriteLine($"#pragma warning disable {docPragmas}", false);
             if (!string.IsNullOrEmpty(description))
             {
                 writer.WriteLine("/// <summary>");
                 writer.WriteLine($"/// {description}");
                 writer.WriteLine("/// </summary>");
             }
+            if (!string.IsNullOrEmpty(docPragmas))
+                writer.WriteLine($"#pragma warning restore {docPragmas}", false);
         }
 
         // Object ID

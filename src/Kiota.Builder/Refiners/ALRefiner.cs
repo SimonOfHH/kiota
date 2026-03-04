@@ -71,6 +71,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             ModifyOverloadMethodNames(generatedCode);
             UpdateMethodParameters(generatedCode);
 
+            AddDefaultPragmas(generatedCode, alConfig, conventionService);
         }, cancellationToken);
     }
 
@@ -297,6 +298,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 {
                     if (!c.CustomData.ContainsKey("original-name"))
                         c.CustomData["original-name"] = originalName;
+                    c.CustomData["pragmas"] = c.CustomData.TryGetValue("pragmas", out var existingPragmas) // Filename is original, but classname differs -> add pragma to suppress warning about that
+                        ? $"{existingPragmas},AA0215" : "AA0215";
                 }
             }
         });
@@ -393,6 +396,87 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                         e.AddOption(extensibleOption);
                         break;
                     }
+            }
+        });
+    }
+    #endregion
+
+    #region Step 3.75: Add pragmas
+    private static void AddDefaultPragmas(CodeElement generatedCode, ALConfiguration alConfig, ALConventionService conventionService)
+    {
+        AddPragmasForSpecificCharactersInDocumentation(generatedCode, alConfig, conventionService);
+        AddPragmasForUnderscoreNames(generatedCode, alConfig, conventionService);
+    }
+    private static void AddPragmasForSpecificCharactersInDocumentation(CodeElement generatedCode, ALConfiguration alConfig, ALConventionService conventionService)
+    {
+        DeepCrawlTree(generatedCode, element =>
+        {
+            if (element is CodeClass c)
+            {
+                if (c.Documentation?.DescriptionAvailable == true)
+                {
+                    var description = c.Documentation.GetDescription(static t => t.Name);
+                    if (!string.IsNullOrEmpty(description) && ContainsNotAllowedCharacters(description))
+                    {
+                        c.CustomData["documentation-pragmas"] = c.CustomData.TryGetValue("documentation-pragmas", out var existingPragmas)
+                            ? $"{existingPragmas},AL0640" : "AL0640";
+                    }
+                }
+            }
+            else if (element is CodeEnum e)
+            {
+                if (e.Documentation?.DescriptionAvailable == true)
+                {
+                    var description = e.Documentation.GetDescription(static t => t.Name);
+                    if (!string.IsNullOrEmpty(description) && ContainsNotAllowedCharacters(description))
+                    {
+                        e.CustomData["documentation-pragmas"] = e.CustomData.TryGetValue("documentation-pragmas", out var existingPragmas)
+                            ? $"{existingPragmas},AL0640" : "AL0640";
+                    }
+                }
+            }
+            else if (element is CodeMethod m)
+            {
+                if (m.Documentation?.DescriptionAvailable == true)
+                {
+                    var description = m.Documentation.GetDescription(static t => t.Name);
+                    if (!string.IsNullOrEmpty(description) && ContainsNotAllowedCharacters(description))
+                    {
+                        m.CustomData["documentation-pragmas"] = m.CustomData.TryGetValue("documentation-pragmas", out var existingPragmas)
+                            ? $"{existingPragmas},AL0640" : "AL0640";
+                    }
+                }
+            }
+        });
+    }
+    private static bool ContainsNotAllowedCharacters(string input)
+    {
+        // AL does not allow certain characters in XML comments, such as & and <
+        // This method checks for those characters.
+        return input.Contains('&', StringComparison.Ordinal) || input.Contains('<', StringComparison.Ordinal);
+    }
+    /// <summary>
+    /// Adds necessary pragmas to classes that have names with underscores, which are not recommended in AL and would trigger warnings. This is done as a last step in name management to ensure we catch any classes that end up with underscores after all modifications.
+    /// </summary>
+    private static void AddPragmasForUnderscoreNames(CodeElement generatedCode, ALConfiguration alConfig, ALConventionService conventionService)
+    {
+        DeepCrawlTree(generatedCode, element =>
+        {
+            if (element is CodeClass c)
+            {
+                if (c.Name.Contains('_', StringComparison.Ordinal))
+                {
+                    c.CustomData["pragmas"] = c.CustomData.TryGetValue("pragmas", out var existingPragmas)
+                        ? $"{existingPragmas},AA0215" : "AA0215";
+                }
+            }
+            else if (element is CodeEnum e)
+            {
+                if (e.Name.Contains('_', StringComparison.Ordinal))
+                {
+                    e.CustomData["pragmas"] = e.CustomData.TryGetValue("pragmas", out var existingPragmas)
+                        ? $"{existingPragmas},AA0215" : "AA0215";
+                }
             }
         });
     }
