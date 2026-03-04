@@ -124,7 +124,9 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         foreach (var prop in objectProps)
         {
             var propName = prop.Name;
-            var propValue = prop.CustomData.TryGetValue("value", out var val) ? val : prop.DefaultValue;
+            var propValue = prop.CustomData.TryGetValue("value", out var val) ? val : string.Empty;
+            if (string.IsNullOrEmpty(propValue))
+                continue; // Skip properties without a value
             writer.WriteLine($"{propName} = {propValue};");
         }
         writer.WriteLine();

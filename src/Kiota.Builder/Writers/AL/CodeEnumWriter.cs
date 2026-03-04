@@ -67,21 +67,12 @@ public class CodeEnumWriter : BaseElementWriter<CodeEnum, ALConventionService>
         var objectProps = codeElement.Options
             .Where(o => o.CustomData.ContainsKey("object-property"))
             .ToList();
-
-        if (objectProps.Count == 0)
+        foreach (var prop in objectProps)
         {
-            // Default: add Extensible = false
-            writer.WriteLine("Extensible = false;");
-        }
-        else
-        {
-            foreach (var prop in objectProps)
-            {
-                var propValue = prop.CustomData.TryGetValue("value", out var val) ? val : string.Empty;
-                if (string.IsNullOrEmpty(propValue))
-                    continue; // Skip properties without a value
-                writer.WriteLine($"{prop.Name} = {propValue};");
-            }
+            var propValue = prop.CustomData.TryGetValue("value", out var val) ? val : string.Empty;
+            if (string.IsNullOrEmpty(propValue))
+                continue; // Skip properties without a value
+            writer.WriteLine($"{prop.Name} = {propValue};");
         }
 
         writer.WriteLine();
