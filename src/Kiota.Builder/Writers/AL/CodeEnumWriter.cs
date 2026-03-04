@@ -54,12 +54,12 @@ public class CodeEnumWriter : BaseElementWriter<CodeEnum, ALConventionService>
         // Pragma disable for object
         codeElement.CustomData.TryGetValue("pragmas", out var pragmas);
         if (!string.IsNullOrEmpty(pragmas))
-            writer.WriteLine($"#pragma warning disable {pragmas}");
+            writer.WriteLine($"#pragma warning disable {pragmas}", false);
 
         writer.WriteLine($"{accessModifier}enum {objectId} \"{enumName}\"");
 
         if (!string.IsNullOrEmpty(pragmas))
-            writer.WriteLine($"#pragma warning restore {pragmas}");
+            writer.WriteLine($"#pragma warning restore {pragmas}", false);
 
         writer.StartBlock();
 

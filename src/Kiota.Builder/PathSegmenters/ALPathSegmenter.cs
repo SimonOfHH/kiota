@@ -24,8 +24,13 @@ public class ALPathSegmenter : CommonPathSegmenter
             return $"{GetOriginalName(currentElement)}.Enum";
         if (currentElement is CodeInterface)
             return $"{GetOriginalName(currentElement)}.Interface";
-        if (currentElement is CodeFunction cf && cf.Name.Equals("AppJson", StringComparison.OrdinalIgnoreCase))
-            return "app.json";
+        if (currentElement is CodeFunction cf)
+        {
+            if (cf.Name.Equals("AppJson", StringComparison.OrdinalIgnoreCase))
+                return "app.json";
+            if (cf.Name.Equals("Readme", StringComparison.OrdinalIgnoreCase))
+                return "README.md";
+        }
         return $"{GetLastFileNameSegment(currentElement)}.Function"; // TODO: review what this is for
     }
 
@@ -33,6 +38,8 @@ public class ALPathSegmenter : CommonPathSegmenter
     {
         ArgumentNullException.ThrowIfNull(fullPath);
         if (fullPath.EndsWith("app.json.al", StringComparison.OrdinalIgnoreCase))
+            return fullPath[..^3]; // Strip trailing ".al"
+        if (fullPath.EndsWith("README.md.al", StringComparison.OrdinalIgnoreCase))
             return fullPath[..^3]; // Strip trailing ".al"
 
         // Truncate filename if total path exceeds limits

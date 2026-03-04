@@ -12,9 +12,10 @@ public class CodeBlockEndWriter : ICodeElementWriter<BlockEnd>
         if (codeElement.ParentIsSkipped())
             return;
         if (codeElement?.Parent is CodeFunction func &&
-            func.Name.Equals("AppJson", StringComparison.OrdinalIgnoreCase))
+            (func.Name.Equals("AppJson", StringComparison.OrdinalIgnoreCase) ||
+             func.Name.Equals("Readme", StringComparison.OrdinalIgnoreCase)))
         {
-            // AppJson writer handles its own output
+            // These writers handle their own output — no closing block needed
             return;
         }
 

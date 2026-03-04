@@ -66,12 +66,12 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         // Pragma disable for object declaration
         parentClass.CustomData.TryGetValue("pragmas", out var pragmas);
         if (!string.IsNullOrEmpty(pragmas))
-            writer.WriteLine($"#pragma warning disable {pragmas}");
+            writer.WriteLine($"#pragma warning disable {pragmas}", false);
 
         writer.WriteLine($"codeunit {objectId} \"{className}\"{implementsClause}");
 
         if (!string.IsNullOrEmpty(pragmas))
-            writer.WriteLine($"#pragma warning restore {pragmas}");
+            writer.WriteLine($"#pragma warning restore {pragmas}", false);
 
         writer.StartBlock();
 
@@ -171,13 +171,13 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         // Pragma disable for variables
         parentClass.CustomData.TryGetValue("pragmas-variables", out var varPragmas);
         if (!string.IsNullOrEmpty(varPragmas))
-            writer.WriteLine($"#pragma warning disable {varPragmas}");
+            writer.WriteLine($"#pragma warning disable {varPragmas}", false);
 
         foreach (var v in ordered)
             v.Write(writer, conventions);
 
         if (!string.IsNullOrEmpty(varPragmas))
-            writer.WriteLine($"#pragma warning restore {varPragmas}");
+            writer.WriteLine($"#pragma warning restore {varPragmas}", false);
 
         writer.DecreaseIndent();
         writer.WriteLine();

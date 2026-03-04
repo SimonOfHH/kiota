@@ -322,14 +322,14 @@ public class ALConventionService : CommonLanguageConventionService
     {
         ArgumentNullException.ThrowIfNull(writer);
         if (!string.IsNullOrEmpty(pragmas))
-            writer.WriteLine($"#pragma warning disable {pragmas}");
+            writer.WriteLine($"#pragma warning disable {pragmas}", false);
     }
 
     public void WritePragmaRestore(LanguageWriter writer, string? pragmas)
     {
         ArgumentNullException.ThrowIfNull(writer);
         if (!string.IsNullOrEmpty(pragmas))
-            writer.WriteLine($"#pragma warning restore {pragmas}");
+            writer.WriteLine($"#pragma warning restore {pragmas}", false);
     }
 
     public static void WriteVariablesDeclaration(IEnumerable<ALVariable> variables, LanguageWriter writer, ALConventionService conventions, string? pragmas = null)
@@ -343,7 +343,7 @@ public class ALConventionService : CommonLanguageConventionService
         writer.IncreaseIndent();
 
         if (!string.IsNullOrEmpty(pragmas))
-            writer.WriteLine($"#pragma warning disable {pragmas}");
+            writer.WriteLine($"#pragma warning disable {pragmas}", false);
 
         // Group variables that can be combined
         var written = new HashSet<int>();
@@ -377,7 +377,7 @@ public class ALConventionService : CommonLanguageConventionService
         }
 
         if (!string.IsNullOrEmpty(pragmas))
-            writer.WriteLine($"#pragma warning restore {pragmas}");
+            writer.WriteLine($"#pragma warning restore {pragmas}", false);
 
         writer.DecreaseIndent();
     }

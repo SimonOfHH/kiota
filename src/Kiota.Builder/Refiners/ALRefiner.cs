@@ -67,6 +67,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
             // Step 8: Manifest and finalization
             AddAppJsonAsCodeFunction(generatedCode, alConfig, _configuration);
+            AddReadmeAsCodeFunction(generatedCode, alConfig, _configuration);
             ModifyOverloadMethodNames(generatedCode);
             UpdateMethodParameters(generatedCode);
 
@@ -1423,6 +1424,50 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 appJsonFunc.AddUsing(u);
 
             rootNs.AddFunction(appJsonFunc);
+            rootNs.RemoveChildElement(holderClass);
+        }
+    }
+
+    private static void AddReadmeAsCodeFunction(CodeElement generatedCode, ALConfiguration alConfig, GenerationConfiguration configuration)
+    {
+        if (generatedCode is CodeNamespace rootNs)
+        {
+            var holderClass = new CodeClass { Name = "_ReadmeHolder" };
+            rootNs.AddClass(holderClass);
+
+            var method = new CodeMethod
+            {
+                Name = "Readme",
+                Kind = CodeMethodKind.Custom,
+                IsStatic = true,
+                ReturnType = new CodeType { Name = "void", IsExternal = true },
+            };
+            holderClass.AddMethod(method);
+
+            var readmeFunc = new CodeFunction(method);
+
+            var usings = new List<CodeUsing>();
+            AddConfigUsing(usings, "OpenAPIFilePath", configuration.OpenAPIFilePath);
+            AddConfigUsing(usings, "Language", configuration.Language.ToString());
+            AddConfigUsing(usings, "ClientClassName", configuration.ClientClassName);
+            AddConfigUsing(usings, "ClientNamespaceName", configuration.ClientNamespaceName);
+            AddConfigUsing(usings, "OutputPath", configuration.OutputPath);
+            AddConfigUsing(usings, "ObjectPrefix", alConfig.ObjectPrefix);
+            AddConfigUsing(usings, "ObjectSuffix", alConfig.ObjectSuffix);
+            AddConfigUsing(usings, "IDRangeStart", alConfig.ObjectIdRangeStart.ToString(CultureInfo.InvariantCulture));
+            AddConfigUsing(usings, "IDRangeEnd", alConfig.ObjectIdRangeEnd.ToString(CultureInfo.InvariantCulture));
+            AddConfigUsing(usings, "CompanionNamespace", alConfig.CompanionNamespace);
+            AddConfigUsing(usings, "GenerateInterfaces", alConfig.GenerateInterfaces.ToString(CultureInfo.InvariantCulture));
+
+            if (configuration.IncludePatterns.Count > 0)
+                AddConfigUsing(usings, "IncludePatterns", string.Join(",", configuration.IncludePatterns));
+            if (configuration.ExcludePatterns.Count > 0)
+                AddConfigUsing(usings, "ExcludePatterns", string.Join(",", configuration.ExcludePatterns));
+
+            foreach (var u in usings)
+                readmeFunc.AddUsing(u);
+
+            rootNs.AddFunction(readmeFunc);
             rootNs.RemoveChildElement(holderClass);
         }
     }

@@ -56,18 +56,20 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var returnType = GetReturnTypeString(method);
 
         var returnVarName = method.CustomData.TryGetValue("return-variable-name", out var returnVar) ? returnVar : null;
+        if (!String.IsNullOrEmpty(returnVarName))
+            returnVarName = $" {returnVarName}"; // Precede with space for formatting, that's what the AL formatter would do anyway
         var returnClause = !string.IsNullOrEmpty(returnType) && !returnType.Equals("void", StringComparison.OrdinalIgnoreCase)
-            ? $" {returnVarName}: {returnType}" : string.Empty;
+            ? $"{returnVarName}: {returnType}" : string.Empty;
 
         // Pragma for method
         method.CustomData.TryGetValue("pragmas", out var pragmas);
         if (!string.IsNullOrEmpty(pragmas))
-            writer.WriteLine($"#pragma warning disable {pragmas}");
+            writer.WriteLine($"#pragma warning disable {pragmas}", false);
 
         writer.WriteLine($"{access}procedure {methodName}({paramStr}){returnClause}");
 
         if (!string.IsNullOrEmpty(pragmas))
-            writer.WriteLine($"#pragma warning restore {pragmas}");
+            writer.WriteLine($"#pragma warning restore {pragmas}", false);
 
         // Local variables
         if (method.HasVariables())
@@ -79,7 +81,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             method.CustomData.TryGetValue("pragmas-variables", out varPragmas);
 
             if (!string.IsNullOrEmpty(varPragmas))
-                writer.WriteLine($"#pragma warning disable {varPragmas}");
+                writer.WriteLine($"#pragma warning disable {varPragmas}", false);
 
             foreach (var v in method.Variables())
             {
@@ -88,7 +90,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             }
 
             if (!string.IsNullOrEmpty(varPragmas))
-                writer.WriteLine($"#pragma warning restore {varPragmas}");
+                writer.WriteLine($"#pragma warning restore {varPragmas}", false);
 
             writer.DecreaseIndent();
         }
@@ -473,9 +475,9 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             writer.WriteLine("JsonBody := NewJsonBody;");
             writer.WriteLine("if (Debug) then begin");
             writer.IncreaseIndent();
-            writer.WriteLine("#pragma warning disable AA0206");
+            writer.WriteLine("#pragma warning disable AA0206", false);
             writer.WriteLine("DebugCall := true;");
-            writer.WriteLine("#pragma warning restore AA0206");
+            writer.WriteLine("#pragma warning restore AA0206", false);
             writer.WriteLine("ValidateBody();");
             writer.DecreaseIndent();
             writer.WriteLine("end;");
