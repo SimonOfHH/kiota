@@ -151,6 +151,8 @@ public class ALConventionService : CommonLanguageConventionService
 
         if (code is CodeType codeType)
         {
+            if (codeType.Name.Equals("MultipartBody", StringComparison.OrdinalIgnoreCase))
+                codeType = new CodeType { Name = $"Codeunit \"Kiota File Body\"", IsExternal = true };
             string typeName;
             if (codeType.TypeDefinition is CodeClass or CodeEnum)
                 typeName = codeType.TypeDefinition.GetFullALName();
