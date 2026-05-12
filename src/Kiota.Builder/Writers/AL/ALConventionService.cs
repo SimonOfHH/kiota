@@ -157,6 +157,10 @@ public class ALConventionService : CommonLanguageConventionService
             else
                 typeName = TranslateType(codeType);
 
+            // AL dictionary type: Dictionary of [Text, <valueType>]
+            if (codeType.IsDictionaryType())
+                return $"Dictionary of [Text, {typeName}]";
+
             if (includeCollectionInformation && code.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None)
                 return $"List of [{typeName}]";
 

@@ -54,4 +54,10 @@ public static class CodeTypeBaseExtensions
         }
         return false;
     }
+    public static bool IsDictionaryType(this CodeTypeBase codeTypeBase)
+    {
+        if (codeTypeBase is CodeType codeType && codeType.CustomData.TryGetValue("al-dictionary", out var dv) && dv.Equals("true", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return false;
+    }
 }

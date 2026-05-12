@@ -260,6 +260,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     {
         var serializationName = GetSerializationName(method);
         var returnType = method.ReturnType;
+        var isDictionary = returnType.IsDictionaryType();
         var isCollection = returnType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None;
         var isEnum = returnType is CodeType { TypeDefinition: CodeEnum };
         var isCodeunit = returnType is CodeType { TypeDefinition: CodeClass };
@@ -268,6 +269,10 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         if (isWrapperGetter)
         {
             WriteValueWrapperGetterBody(method, writer);
+        }
+        else if (isDictionary)
+        {
+            WriteDictionaryGetterBody(method, writer, serializationName, isEnum, isCodeunit);
         }
         else if (isCollection)
         {
@@ -285,6 +290,36 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         {
             WriteSinglePrimitiveGetterBody(method, writer, serializationName, returnType);
         }
+    }
+
+    private void WriteDictionaryGetterBody(CodeMethod method, LanguageWriter writer, string serializationName, bool isEnum, bool isCodeunit)
+    {
+        writer.WriteLine($"if not JsonBody.SelectToken('{serializationName}', JToken) then");
+        writer.IncreaseIndent();
+        writer.WriteLine("exit;");
+        writer.DecreaseIndent();
+        writer.WriteLine("JObject := JToken.AsObject();");
+        writer.WriteLine("foreach KeyText in JObject.Keys do begin");
+        writer.IncreaseIndent();
+        writer.WriteLine("JObject.Get(KeyText, JToken);");
+        if (isEnum)
+        {
+            writer.WriteLine("Evaluate(EnumValue, JToken.AsValue().AsText());");
+            writer.WriteLine("ReturnDict.Add(KeyText, EnumValue);");
+        }
+        else if (isCodeunit)
+        {
+            writer.WriteLine("Clear(TargetCodeunit);");
+            writer.WriteLine("TargetCodeunit.SetBody(JToken.AsObject(), DebugCall);");
+            writer.WriteLine("ReturnDict.Add(KeyText, TargetCodeunit);");
+        }
+        else
+        {
+            // Primitive fallback – store the raw text value
+            writer.WriteLine("ReturnDict.Add(KeyText, JToken.AsValue().AsText());");
+        }
+        writer.DecreaseIndent();
+        writer.WriteLine("end;");
     }
 
     private void WriteSinglePrimitiveGetterBody(CodeMethod method, LanguageWriter writer, string serializationName, CodeTypeBase returnType)
@@ -373,7 +408,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var serializationName = GetSerializationName(method);
         var returnType = method.Parameters.FirstOrDefault(p => !p.CustomData.ContainsKey("local-variable"))?.Type;
         if (returnType is null) return;
-
+        var isDictionary = returnType.IsDictionaryType();
         var isCollection = returnType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None;
 #pragma warning disable CA1508 // Avoid dead conditional code
         var isEnum = returnType is CodeType { TypeDefinition: CodeEnum };
@@ -384,6 +419,10 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         if (isWrapperSetter)
         {
             WriteValueWrapperSetterBody(method, writer);
+        }
+        else if (isDictionary)
+        {
+            WriteDictionarySetterBody(method, writer, serializationName, isEnum, isCodeunit);
         }
         else if (isCollection)
         {
@@ -423,6 +462,40 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             writer.WriteLine($"JsonBody.Add('{serializationName}', p);");
             writer.DecreaseIndent();
         }
+    }
+
+    private void WriteDictionarySetterBody(CodeMethod method, LanguageWriter writer, string serializationName, bool isEnum, bool isCodeunit)
+    {
+        // Iterate the caller's dictionary and build a JSON object
+        writer.WriteLine("foreach KeyText in p.Keys do begin");
+        writer.IncreaseIndent();
+        if (isEnum)
+        {
+            writer.WriteLine("p.Get(KeyText, EnumValue);");
+            writer.WriteLine("JObject.Add(KeyText, Format(EnumValue));");
+        }
+        else if (isCodeunit)
+        {
+            writer.WriteLine("p.Get(KeyText, TargetCodeunit);");
+            writer.WriteLine("JObject.Add(KeyText, TargetCodeunit.ToJson().AsToken());");
+        }
+        else
+        {
+            // Primitive fallback
+            writer.WriteLine("p.Get(KeyText, SubToken);");
+            writer.WriteLine("JObject.Add(KeyText, SubToken);");
+        }
+        writer.DecreaseIndent();
+        writer.WriteLine("end;");
+
+        writer.WriteLine($"if JsonBody.SelectToken('{serializationName}', SubToken) then");
+        writer.IncreaseIndent();
+        writer.WriteLine($"JsonBody.Replace('{serializationName}', JObject.AsToken())");
+        writer.DecreaseIndent();
+        writer.WriteLine("else");
+        writer.IncreaseIndent();
+        writer.WriteLine($"JsonBody.Add('{serializationName}', JObject.AsToken());");
+        writer.DecreaseIndent();
     }
 
     private void WriteCollectionSetterBody(CodeMethod method, LanguageWriter writer, string serializationName, bool isEnum, bool isCodeunit)

@@ -35,6 +35,11 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             // Step 1.5: Flatten inherited properties (AL has no inheritance)
             FlattenInheritedProperties(generatedCode);
 
+            // Step 1.7: Convert pure-dictionary properties (type:object + additionalProperties)
+            // Must run after deduplication (canonical types are settled) but before name management
+            // (so TypeDefinition references survive renaming automatically).
+            ConvertPureDictionaryProperties(generatedCode);
+
             // Step 2: AL-specific method removal/recreation
             RemoveUnusedMethods(generatedCode);
             RemoveAdditionalDataProperty(generatedCode);
@@ -168,6 +173,74 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         }
 
         return result;
+    }
+    #endregion
+
+    #region Step 1.7: Convert pure-dictionary properties
+    /// <summary>
+    /// Finds every CodeClass that was generated from a pure-dictionary OpenAPI schema
+    /// (type:object + additionalProperties only, no named properties) and replaces the
+    /// CodeProperty types that point at it with a CodeType whose TypeDefinition is the
+    /// actual value type (enum or class) referenced by additionalProperties.
+    /// The AL writer will then render that property as "Dictionary of [Text, &lt;valueType&gt;]".
+    /// </summary>
+    private static void ConvertPureDictionaryProperties(CodeElement generatedCode)
+    {
+        // Collect all pure-dictionary classes together with their parent namespace.
+        // Detection strategy:
+        //   - a Model class with ONLY an AdditionalData property and no
+        //     Custom properties is structurally a pure-dict wrapper 
+        var pureDictClasses = new List<(CodeClass Class, CodeNamespace Namespace, string ValueTypeName)>();
+        DeepCrawlTree(generatedCode, element =>
+        {
+            if (element is not CodeClass c || c.Parent is not CodeNamespace ns)
+                return;
+
+            // Structural fallback: Model with only AdditionalData, no Custom properties
+            if (c.Kind == CodeClassKind.Model &&
+                c.Properties.Any(p => p.Kind == CodePropertyKind.AdditionalData) &&
+                !c.Properties.Any(p => p.Kind == CodePropertyKind.Custom))
+            {
+                var additionalDataProp = c.Properties.First(p => p.Kind == CodePropertyKind.AdditionalData);
+                var additionalDataPropType = additionalDataProp.Type as CodeType;
+                pureDictClasses.Add((c, ns, additionalDataPropType?.TypeDefinition?.Name ?? string.Empty));
+            }
+        });
+
+        foreach (var (dictClass, ns, valueTypeName) in pureDictClasses)
+        {
+
+            // Find the actual CodeElement that the additionalProperties $ref resolves to
+            CodeElement? valueTypeElement = null;
+            DeepCrawlTree(generatedCode, element =>
+            {
+                if (valueTypeElement is not null) return;
+                if (element is CodeEnum e && e.Name.Equals(valueTypeName, StringComparison.OrdinalIgnoreCase))
+                    valueTypeElement = e;
+                else if (element is CodeClass c2 &&
+                         !ReferenceEquals(c2, dictClass) &&
+                         c2.Name.Equals(valueTypeName, StringComparison.OrdinalIgnoreCase))
+                    valueTypeElement = c2;
+            });
+
+            if (valueTypeElement is null) continue; // Cannot resolve — leave as-is
+
+            // Replace every CodeProperty that currently points to this pure-dictionary class
+            DeepCrawlTree(generatedCode, element =>
+            {
+                if (element is CodeProperty prop &&
+                    prop.Type is CodeType ct &&
+                    ReferenceEquals(ct.TypeDefinition, dictClass))
+                {
+                    var dictType = new CodeType { TypeDefinition = valueTypeElement };
+                    dictType.CustomData["al-dictionary"] = "true";
+                    prop.Type = dictType;
+                }
+            });
+
+            // Remove the now-redundant wrapper class
+            ns.RemoveChildElement(dictClass);
+        }
     }
     #endregion
 
@@ -548,11 +621,75 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
     private static void AddGetterLocalVariables(CodeMethod method, CodeProperty property, ALConfiguration alConfig)
     {
+        var isDictionary = property.Type.IsDictionaryType();
         var isCollection = property.Type.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None;
         var isEnum = property.Type is CodeType { TypeDefinition: CodeEnum };
         var isCodeunit = property.Type is CodeType { TypeDefinition: CodeClass };
 
-        if (isCollection)
+        if (isDictionary)
+        {
+            method.CustomData["source-type"] = "Dictionary";
+            method.CustomData["return-variable-name"] = "ReturnDict";
+
+            // JObject for iterating the JSON object keys
+            var jObjectParam = new CodeParameter
+            {
+                Name = "JObject",
+                Kind = CodeParameterKind.Custom,
+                Type = new CodeType { Name = "JsonObject", IsExternal = true },
+            };
+            jObjectParam.CustomData["local-variable"] = "true";
+            method.AddParameter(jObjectParam);
+
+            // JToken for reading each value
+            var jTokenParam = new CodeParameter
+            {
+                Name = "JToken",
+                Kind = CodeParameterKind.Custom,
+                Type = new CodeType { Name = "JsonToken", IsExternal = true },
+            };
+            jTokenParam.CustomData["local-variable"] = "true";
+            method.AddParameter(jTokenParam);
+
+            // KeyText for the dictionary key
+            var keyTextParam = new CodeParameter
+            {
+                Name = "KeyText",
+                Kind = CodeParameterKind.Custom,
+                Type = new CodeType { Name = "Text", IsExternal = true },
+            };
+            keyTextParam.CustomData["local-variable"] = "true";
+            method.AddParameter(keyTextParam);
+
+            // Value-type-specific local variable (without the al-dictionary marker)
+            if (isEnum)
+            {
+                var enumType = (CodeTypeBase)property.Type.Clone();
+                if (enumType is CodeType et) et.CustomData.Remove("al-dictionary");
+                var enumValueParam = new CodeParameter
+                {
+                    Name = "EnumValue",
+                    Kind = CodeParameterKind.Custom,
+                    Type = enumType,
+                };
+                enumValueParam.CustomData["local-variable"] = "true";
+                method.AddParameter(enumValueParam);
+            }
+            else if (isCodeunit)
+            {
+                var codeunitType = (CodeTypeBase)property.Type.Clone();
+                if (codeunitType is CodeType ct2) ct2.CustomData.Remove("al-dictionary");
+                var targetParam = new CodeParameter
+                {
+                    Name = "TargetCodeunit",
+                    Kind = CodeParameterKind.Custom,
+                    Type = codeunitType,
+                };
+                targetParam.CustomData["local-variable"] = "true";
+                method.AddParameter(targetParam);
+            }
+        }
+        else if (isCollection)
         {
             method.CustomData["source-type"] = "List";
             method.CustomData["return-variable-name"] = "ReturnList";
@@ -673,9 +810,62 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         };
         method.AddParameter(valueParam);
 
+        // For dictionary types, add JSON-object helpers for serialization
+        var isDictionary = property.Type.IsDictionaryType();
         // For collection types, add iteration helpers
         var isCollection = property.Type.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None;
-        if (isCollection)
+
+        if (isDictionary)
+        {
+            var isEnum = property.Type is CodeType { TypeDefinition: CodeEnum };
+            var isCodeunit = property.Type is CodeType { TypeDefinition: CodeClass };
+
+            var jObjectParam = new CodeParameter
+            {
+                Name = "JObject",
+                Kind = CodeParameterKind.Custom,
+                Type = new CodeType { Name = "JsonObject", IsExternal = true },
+            };
+            jObjectParam.CustomData["local-variable"] = "true";
+            method.AddParameter(jObjectParam);
+
+            var keyTextParam = new CodeParameter
+            {
+                Name = "KeyText",
+                Kind = CodeParameterKind.Custom,
+                Type = new CodeType { Name = "Text", IsExternal = true },
+            };
+            keyTextParam.CustomData["local-variable"] = "true";
+            method.AddParameter(keyTextParam);
+
+            if (isEnum)
+            {
+                var enumType = (CodeTypeBase)property.Type.Clone();
+                if (enumType is CodeType et) et.CustomData.Remove("al-dictionary");
+                var enumValueParam = new CodeParameter
+                {
+                    Name = "EnumValue",
+                    Kind = CodeParameterKind.Custom,
+                    Type = enumType,
+                };
+                enumValueParam.CustomData["local-variable"] = "true";
+                method.AddParameter(enumValueParam);
+            }
+            else if (isCodeunit)
+            {
+                var codeunitType = (CodeTypeBase)property.Type.Clone();
+                if (codeunitType is CodeType ct2) ct2.CustomData.Remove("al-dictionary");
+                var targetParam = new CodeParameter
+                {
+                    Name = "TargetCodeunit",
+                    Kind = CodeParameterKind.Custom,
+                    Type = codeunitType,
+                };
+                targetParam.CustomData["local-variable"] = "true";
+                method.AddParameter(targetParam);
+            }
+        }
+        else if (isCollection)
         {
             var elementType = (CodeTypeBase)property.Type.Clone();
             elementType.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.None;
