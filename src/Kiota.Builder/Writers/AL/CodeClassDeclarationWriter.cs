@@ -209,7 +209,8 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
 
         writer.WriteLine($"codeunit {objectId} \"{parentClass.Name}\"");
         writer.StartBlock();
-
+        if (this.conventions.AlConfig.MarkInternal)
+            writer.WriteLine("Access = Internal;");
         // Dictionary variable
         writer.WriteLine("var");
         writer.IncreaseIndent();

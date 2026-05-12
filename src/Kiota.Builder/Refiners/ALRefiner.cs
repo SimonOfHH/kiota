@@ -45,7 +45,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             SetObjectIdsOnClassesAndEnums(generatedCode, objectIdProvider);
             ModifyClassNames(generatedCode, alConfig, conventionService);
             ModifyEnumNames(generatedCode, alConfig, conventionService);
-            SetDefaultObjectProperties(generatedCode);
+            SetDefaultObjectProperties(generatedCode, alConfig);
 
             // Step 4: Property → Method conversion
             MovePropertiesToMethods(generatedCode, alConfig);
@@ -355,13 +355,15 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     /// Adds default AL object properties (e.g., Access = Internal) to all
     /// codeunit classes and enum objects that will be generated.
     /// </summary>
-    private static void SetDefaultObjectProperties(CodeElement generatedCode)
+    private static void SetDefaultObjectProperties(CodeElement generatedCode, ALConfiguration alConfig)
     {
         DeepCrawlTree(generatedCode, element =>
         {
             switch (element)
             {
                 case CodeClass c:
+                    {
+                        if (alConfig.MarkInternal)
                     {
                         var accessProp = new CodeProperty
                         {
@@ -373,9 +375,12 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                         accessProp.CustomData["value"] = "Internal";
                         accessProp.CustomData["locked"] = "true"; // Mark it as locked to prevent overrides during name modifications
                         c.AddProperty(accessProp);
+                        }
                         break;
                     }
                 case CodeEnum e:
+                    {
+                        if (alConfig.MarkInternal)
                     {
                         var accessOption = new CodeEnumOption
                         {
@@ -385,6 +390,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                         accessOption.CustomData["value"] = "Internal";
                         accessOption.CustomData["locked"] = "true"; // Mark it as locked to prevent overrides during name modifications
                         e.AddOption(accessOption);
+                        }
 
                         var extensibleOption = new CodeEnumOption
                         {
