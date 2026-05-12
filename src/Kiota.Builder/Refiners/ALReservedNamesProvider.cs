@@ -15,7 +15,7 @@ public class ALReservedNamesProvider : IReservedNamesProvider
         "dateformula", "datetime", "debugger", "decimal", "defaultlayout",
         "dialog", "dictionary", "do", "dotnet", "duration",
         "else", "end", "enum", "errorbehavior", "errorinfo", "errortype",
-        "executioncontext", "executionmode", "exit",
+        "executioncontext", "executionmode", "exit", "event",
         "fieldclass", "fieldref", "fieldtype", "file", "fileupload",
         "filterpagebuilder", "for",
         "guid",
