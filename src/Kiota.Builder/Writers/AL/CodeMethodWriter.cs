@@ -328,7 +328,10 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var asMethod = GetAsMethodForType(alType);
         writer.WriteLine($"if JsonBody.SelectToken('{serializationName}', SubToken) then");
         writer.IncreaseIndent();
+        writer.WriteLine($"if not JSONHelper.SubTokenIsNull(SubToken) then");
+        writer.IncreaseIndent();
         writer.WriteLine($"exit(SubToken.AsValue().{asMethod}());");
+        writer.DecreaseIndent();
         writer.DecreaseIndent();
     }
 
@@ -358,7 +361,10 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         writer.DecreaseIndent();
         writer.WriteLine("end;");
         var propertyName = method.SimpleName ?? method.Name;
-        writer.WriteLine($"Error('Invalid value for {propertyName}: %1', SubToken.AsValue().AsText());");
+        writer.WriteLine($"#pragma warning disable AA0217");
+        writer.WriteLine($"// No match found for {serializationName} value");
+        writer.WriteLine($"Error(StrSubstNo('Invalid value for {propertyName}: %1', SubToken.AsValue().AsText()));");
+        writer.WriteLine($"#pragma warning restore AA0217");
         writer.DecreaseIndent();
         writer.WriteLine("end;");
     }
@@ -393,7 +399,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         else
         {
             // Primitive collection
-            var alType = conventions.GetTypeString(method.ReturnType, method);
+            var alType = conventions.GetTypeString(method.ReturnType, method, false);
             var asMethod = GetAsMethodForType(alType);
             writer.WriteLine("foreach JToken in JArray do");
             writer.IncreaseIndent();
@@ -453,13 +459,28 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         else
         {
             // Primitive
+
             writer.WriteLine($"if JsonBody.SelectToken('{serializationName}', SubToken) then");
             writer.IncreaseIndent();
+            if (returnType.Name.Equals("Guid", StringComparison.OrdinalIgnoreCase))
+            {
+                writer.WriteLine($"JsonBody.Replace('{serializationName}', JSONHelper.FormatGuid(p))");
+            }
+            else
+            {
             writer.WriteLine($"JsonBody.Replace('{serializationName}', p)");
+            }
             writer.DecreaseIndent();
             writer.WriteLine("else");
             writer.IncreaseIndent();
+            if (returnType.Name.Equals("Guid", StringComparison.OrdinalIgnoreCase))
+            {
+                writer.WriteLine($"JsonBody.Add('{serializationName}', JSONHelper.FormatGuid(p));");
+            }
+            else
+            {
             writer.WriteLine($"JsonBody.Add('{serializationName}', p);");
+            }
             writer.DecreaseIndent();
         }
     }
@@ -757,6 +778,8 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             // Extract URL template from parent class
             if (method.Parent is CodeClass parentClass)
             {
+                if (parentClass.Methods.Any(m => m.Name.Equals("SetIdentifier", StringComparison.OrdinalIgnoreCase)) && parentClass.Methods.Any(m => m.Name.Equals("SetConfiguration", StringComparison.OrdinalIgnoreCase)))
+                    return; // if there is "SetIdentifier" and "SetConfiguration" it means we are in a With-Request-Builder scenario and the URL template is already applied from the parent request builder
                 var urlTemplate = GetUrlTemplatePart(parentClass);
                 if (!string.IsNullOrEmpty(urlTemplate))
                     writer.WriteLine($"ReqConfig.AppendBaseURL('{urlTemplate}');");
@@ -795,6 +818,8 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         // Try CustomData first (set by refiner from property)
         if (method.CustomData.TryGetValue("serialization-name", out var serName) && !string.IsNullOrEmpty(serName))
             return serName;
+        if (method.CustomData.TryGetValue("property-name", out var propName) && !string.IsNullOrEmpty(propName))
+            return propName;
 
         // Fall back to method simple name
         return (method.SimpleName ?? method.Name).ToFirstCharacterLowerCase();
