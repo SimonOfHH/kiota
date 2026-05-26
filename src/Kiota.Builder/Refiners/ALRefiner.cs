@@ -94,9 +94,9 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 // Replace any namespace segments that start with an underscore, which is not recommended in AL and would trigger warnings. This is done as a first step to ensure we catch any namespaces that start with underscores before we do any other modifications.
                 var ns = (CodeNamespace)element;
                 if (ns.Name.Split('.').Any(s => s.StartsWith('_')))
-            {
-                ns.Name = string.Join('.', ns.Name.Split('.').Select(s =>
-                    s.StartsWith('_') ? "u" + s.TrimStart('_') : s));
+                {
+                    ns.Name = string.Join('.', ns.Name.Split('.').Select(s =>
+                        s.StartsWith('_') ? "u" + s.TrimStart('_') : s));
                 }
                 // Also check if any part of the namespace is a reserved name, and if so, append an underscore to it. This is done after the underscore replacement to ensure we catch any namespaces that become reserved names after the first modification.
                 var segments = ns.Name.Split('.');
@@ -597,32 +597,32 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 case CodeClass c:
                     {
                         if (alConfig.MarkInternal)
-                    {
-                        var accessProp = new CodeProperty
                         {
-                            Name = "Access",
-                            Kind = CodePropertyKind.Custom,
-                            Type = new CodeType { Name = "ObjectProperty", IsExternal = true },
-                        };
-                        accessProp.CustomData["object-property"] = "true";
-                        accessProp.CustomData["value"] = "Internal";
-                        accessProp.CustomData["locked"] = "true"; // Mark it as locked to prevent overrides during name modifications
-                        c.AddProperty(accessProp);
+                            var accessProp = new CodeProperty
+                            {
+                                Name = "Access",
+                                Kind = CodePropertyKind.Custom,
+                                Type = new CodeType { Name = "ObjectProperty", IsExternal = true },
+                            };
+                            accessProp.CustomData["object-property"] = "true";
+                            accessProp.CustomData["value"] = "Internal";
+                            accessProp.CustomData["locked"] = "true"; // Mark it as locked to prevent overrides during name modifications
+                            c.AddProperty(accessProp);
                         }
                         break;
                     }
                 case CodeEnum e:
                     {
                         if (alConfig.MarkInternal)
-                    {
-                        var accessOption = new CodeEnumOption
                         {
-                            Name = "Access",
-                        };
-                        accessOption.CustomData["object-property"] = "true";
-                        accessOption.CustomData["value"] = "Internal";
-                        accessOption.CustomData["locked"] = "true"; // Mark it as locked to prevent overrides during name modifications
-                        e.AddOption(accessOption);
+                            var accessOption = new CodeEnumOption
+                            {
+                                Name = "Access",
+                            };
+                            accessOption.CustomData["object-property"] = "true";
+                            accessOption.CustomData["value"] = "Internal";
+                            accessOption.CustomData["locked"] = "true"; // Mark it as locked to prevent overrides during name modifications
+                            e.AddOption(accessOption);
                         }
 
                         var extensibleOption = new CodeEnumOption
@@ -2032,7 +2032,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     if (reservedNames.ReservedNames.Contains(param.Name))
                     {
                         param.CustomData["property-name"] = param.Name;
-                param.Name += "_";
+                        param.Name += "_";
                     }
                 }
             }
