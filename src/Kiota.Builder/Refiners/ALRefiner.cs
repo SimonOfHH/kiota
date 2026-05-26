@@ -35,6 +35,9 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             // Step 1.5: Flatten inherited properties (AL has no inheritance)
             FlattenInheritedProperties(generatedCode);
 
+            // Step 1.6: Deduplicate identical enums/model classes across namespaces
+            DeduplicateObjects(generatedCode);
+
             // Step 1.7: Convert pure-dictionary properties (type:object + additionalProperties)
             // Must run after deduplication (canonical types are settled) but before name management
             // (so TypeDefinition references survive renaming automatically).
@@ -173,6 +176,149 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         }
 
         return result;
+    }
+    #endregion
+
+    #region Step 1.6: Deduplicate objects across namespaces
+    /// <summary>
+    /// Detects enums and model classes that appear more than once (identical name + identical
+    /// members) across different namespaces.  For each duplicate group the copy that lives in
+    /// the shallowest namespace (fewest dots) is kept as the canonical one; every other copy
+    /// is removed and every <see cref="CodeType.TypeDefinition"/> that pointed to a removed
+    /// copy is re-wired to the canonical copy.
+    /// </summary>
+    private static void DeduplicateObjects(CodeElement generatedCode)
+    {
+        DeduplicateEnums(generatedCode);
+        DeduplicateModelClasses(generatedCode);
+    }
+
+    private static void DeduplicateEnums(CodeElement generatedCode)
+    {
+        // Collect every enum together with its parent namespace and namespace depth
+        var allEnums = new List<(CodeEnum Enum, CodeNamespace Namespace, int Depth)>();
+        DeepCrawlTree(generatedCode, element =>
+        {
+            if (element is CodeEnum e && e.Parent is CodeNamespace ns)
+                allEnums.Add((e, ns, ns.Name.Split('.').Length));
+        });
+
+        // Group by name; only care about groups with more than one member
+        var groups = allEnums
+            .GroupBy(x => x.Enum.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1);
+
+        foreach (var group in groups)
+        {
+            var items = group.ToList();
+            // The canonical copy lives in the shallowest (shortest) namespace
+            var canonical = items
+                .OrderBy(x => x.Depth)
+                .ThenBy(x => x.Namespace.Name, StringComparer.OrdinalIgnoreCase)
+                .First();
+
+            var canonicalOptions = GetEnumOptionNames(canonical.Enum);
+
+            foreach (var dup in items.Where(x => x != canonical))
+            {
+                // Only deduplicate when the option sets are actually identical
+                if (!GetEnumOptionNames(dup.Enum).SetEquals(canonicalOptions))
+                    continue;
+                canonical.Enum.CustomData["deduplicated"] = "true";
+                RewriteTypeDefinitionReferences(generatedCode, dup.Enum, canonical.Enum);
+                dup.Namespace.RemoveChildElement(dup.Enum);
+            }
+        }
+    }
+
+    private static HashSet<string> GetEnumOptionNames(CodeEnum e) =>
+        new(e.Options
+               .Where(o => !o.CustomData.ContainsKey("object-property"))
+               .Select(o => o.Name),
+           StringComparer.OrdinalIgnoreCase);
+
+    private static void DeduplicateModelClasses(CodeElement generatedCode)
+    {
+        var allClasses = new List<(CodeClass Class, CodeNamespace Namespace, int Depth)>();
+        DeepCrawlTree(generatedCode, element =>
+        {
+            if (element is CodeClass c &&
+                c.IsOfKind(CodeClassKind.Model) &&
+                c.Parent is CodeNamespace ns)
+                allClasses.Add((c, ns, ns.Name.Split('.').Length));
+        });
+
+        var groups = allClasses
+            .GroupBy(x => x.Class.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1);
+
+        foreach (var group in groups)
+        {
+            var items = group.ToList();
+            var canonical = items
+                .OrderBy(x => x.Depth)
+                .ThenBy(x => x.Namespace.Name, StringComparer.OrdinalIgnoreCase)
+                .First();
+
+            var canonicalProps = GetModelPropertyNames(canonical.Class);
+
+            foreach (var dup in items.Where(x => x != canonical))
+            {
+                if (!GetModelPropertyNames(dup.Class).SetEquals(canonicalProps))
+                    continue;
+                canonical.Class.CustomData["deduplicated"] = "true";
+                RewriteTypeDefinitionReferences(generatedCode, dup.Class, canonical.Class);
+                dup.Namespace.RemoveChildElement(dup.Class);
+            }
+        }
+    }
+
+    private static HashSet<string> GetModelPropertyNames(CodeClass c) =>
+        new(c.Properties
+               .Where(p => !p.CustomData.ContainsKey("global-variable") &&
+                           !p.CustomData.ContainsKey("object-property"))
+               .Select(p => p.Name),
+           StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Walks the entire CodeDOM tree and replaces every <see cref="CodeType.TypeDefinition"/>
+    /// that points at <paramref name="oldDef"/> with <paramref name="newDef"/>.
+    /// </summary>
+    private static void RewriteTypeDefinitionReferences(
+        CodeElement root, CodeElement oldDef, CodeElement newDef)
+    {
+        DeepCrawlTree(root, element =>
+        {
+            switch (element)
+            {
+                case CodeMethod m:
+                    RewireCodeTypeBase(m.ReturnType, oldDef, newDef);
+                    foreach (var p in m.Parameters)
+                        RewireCodeTypeBase(p.Type, oldDef, newDef);
+                    break;
+
+                case CodeProperty prop:
+                    RewireCodeTypeBase(prop.Type, oldDef, newDef);
+                    break;
+
+                case CodeParameter param:
+                    RewireCodeTypeBase(param.Type, oldDef, newDef);
+                    break;
+
+                case CodeClass c:
+                    if (c.StartBlock.Inherits is CodeType inheritType)
+                        RewireCodeTypeBase(inheritType, oldDef, newDef);
+                    foreach (var impl in c.StartBlock.Implements)
+                        RewireCodeTypeBase(impl, oldDef, newDef);
+                    break;
+            }
+        });
+    }
+
+    private static void RewireCodeTypeBase(CodeTypeBase? typeBase, CodeElement oldDef, CodeElement newDef)
+    {
+        if (typeBase is CodeType ct && ReferenceEquals(ct.TypeDefinition, oldDef))
+            ct.TypeDefinition = newDef;
     }
     #endregion
 
@@ -1677,6 +1823,23 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                             paramClass.CustomData["query-parameters"] = string.Join(",", queryParams);
                             paramClass.CustomData["object-id"] = objectIdProvider.GetNextCodeunitId().ToString(CultureInfo.InvariantCulture);
                             parentNs.AddClass(paramClass);
+
+                            // Add usings for any referenced types (e.g. deduplicated enums) whose
+                            // TypeDefinition lives in a namespace different from the one this
+                            // parameter codeunit is being placed in.
+                            foreach (var qp in queryParamsClass.Properties.Where(p => p.Kind == CodePropertyKind.QueryParameter))
+                            {
+                                if (qp.Type is CodeType qpType && qpType.TypeDefinition is not null)
+                                {
+                                    try
+                                    {
+                                        var typeNs = qpType.TypeDefinition.GetImmediateParentOfType<CodeNamespace>();
+                                        if (!typeNs.Name.Equals(parentNs.Name, StringComparison.OrdinalIgnoreCase))
+                                            AddUsing(paramClass, typeNs.Name);
+                                    }
+                                    catch (InvalidOperationException) { }
+                                }
+                            }
 
                             // Add parameter to executor method
                             var paramsParam = new CodeParameter
