@@ -468,7 +468,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             }
             else
             {
-            writer.WriteLine($"JsonBody.Replace('{serializationName}', p)");
+                writer.WriteLine($"JsonBody.Replace('{serializationName}', p)");
             }
             writer.DecreaseIndent();
             writer.WriteLine("else");
@@ -479,7 +479,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             }
             else
             {
-            writer.WriteLine($"JsonBody.Add('{serializationName}', p);");
+                writer.WriteLine($"JsonBody.Add('{serializationName}', p);");
             }
             writer.DecreaseIndent();
         }
@@ -597,11 +597,40 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             foreach (var param in parameters)
             {
                 var paramName = param.Name;
+                var paramNameClean = paramName;
+                if (param.CustomData.TryGetValue("property-name", out var propName)) // For parameters that had to be renamed due to reserved name conflicts, use the original property name for serialization
+                    paramNameClean = propName;
                 var isCodeunit = param.Type is CodeType { TypeDefinition: CodeClass };
                 var isEnum = param.Type is CodeType { TypeDefinition: CodeEnum };
                 var isCollection = param.Type.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None;
-
-                if (isCollection && isCodeunit)
+                var isDictionary = param.Type.IsDictionaryType();
+                if (isDictionary)
+                {
+                    param.CustomData.TryGetValue("key-variable", out var keyVar);
+                    param.CustomData.TryGetValue("value-variable", out var valueVar);
+                    param.CustomData.TryGetValue("object-variable", out var objVar);
+                    writer.WriteLine($"foreach {keyVar} in {paramName}.Keys do");
+                    writer.IncreaseIndent();
+                    writer.WriteLine($"if {paramName}.Get({keyVar}, {valueVar}) then");
+                    writer.IncreaseIndent();
+                    if (isEnum)
+                    {
+                        writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty({objVar}, {keyVar}, Format({valueVar}));");
+                    }
+                    else if (isCodeunit)
+                    {
+                        writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty({objVar}, {keyVar}, {valueVar}.AsToken());");
+                    }
+                    else
+                    {
+                        // Primitive fallback
+                        writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty({objVar}, {keyVar}, {valueVar});");
+                    }
+                    writer.DecreaseIndent();
+                    writer.DecreaseIndent();
+                    writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty(TargetJson, '{paramNameClean}', {objVar}.AsToken());");
+                }
+                else if (isCollection && isCodeunit)
                 {
                     // Codeunit collection
                     param.CustomData.TryGetValue("foreach-variable", out var foreachVar);
@@ -609,23 +638,23 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                     foreachVar ??= $"{paramName}_item";
                     arrayName ??= $"{paramName}Array";
 
-                    writer.WriteLine($"foreach {foreachVar} in {paramName} do");
+                    writer.WriteLine($"foreach {foreachVar} in {paramNameClean} do");
                     writer.IncreaseIndent();
                     writer.WriteLine($"JSONHelper.AddToArrayIfNotEmpty({arrayName}, {foreachVar});");
                     writer.DecreaseIndent();
-                    writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty(TargetJson, '{paramName}', {arrayName});");
+                    writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty(TargetJson, '{paramNameClean}', {arrayName});");
                 }
                 else if (isCodeunit)
                 {
-                    writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty(TargetJson, '{paramName}', {paramName}.ToJson().AsToken());");
+                    writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty(TargetJson, '{paramNameClean}', {paramName}.ToJson().AsToken());");
                 }
                 else if (isEnum)
                 {
-                    writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty(TargetJson, '{paramName}', Format({paramName}));");
+                    writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty(TargetJson, '{paramNameClean}', Format({paramName}));");
                 }
                 else
                 {
-                    writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty(TargetJson, '{paramName}', {paramName});");
+                    writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty(TargetJson, '{paramNameClean}', {paramName});");
                 }
             }
 

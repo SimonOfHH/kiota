@@ -587,18 +587,23 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
     private static CodeMethod ToGetterCodeMethod(CodeProperty property, ALConfiguration alConfig)
     {
+        var usedName = property.Name;
+        var reservedNames = new ALReservedNamesProvider();
+        if (reservedNames.ReservedNames.Contains(usedName))
+            usedName += "_";
         var method = new CodeMethod
         {
-            Name = $"Get-{property.Name.ToFirstCharacterUpperCase()}",
+            Name = $"Get-{usedName.ToFirstCharacterUpperCase()}",
             Kind = CodeMethodKind.Getter,
             ReturnType = (CodeTypeBase)property.Type.Clone(),
             Access = AccessModifier.Public,
             Documentation = (CodeDocumentation)property.Documentation.Clone(),
             Parent = property.Parent,
         };
-        method.SimpleName = property.Name.ToFirstCharacterUpperCase();
+        method.SimpleName = usedName.ToFirstCharacterUpperCase();
         method.CustomData["method-type"] = "Getter";
         method.CustomData["source"] = "from property";
+        method.CustomData["property-name"] = property.Name;
         if (!string.IsNullOrEmpty(property.SerializationName))
             method.CustomData["serialization-name"] = property.SerializationName;
 
@@ -687,6 +692,19 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 };
                 targetParam.CustomData["local-variable"] = "true";
                 method.AddParameter(targetParam);
+            }
+            else
+            {
+                var valueType = (CodeTypeBase)property.Type.Clone();
+                if (valueType is CodeType vt) vt.CustomData.Remove("al-dictionary");
+                var valueParam = new CodeParameter
+                {
+                    Name = "Value",
+                    Kind = CodeParameterKind.Custom,
+                    Type = valueType,
+                };
+                valueParam.CustomData["local-variable"] = "true";
+                method.AddParameter(valueParam);
             }
         }
         else if (isCollection)
@@ -786,18 +804,23 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
     private static CodeMethod ToSetterCodeMethod(CodeProperty property, ALConfiguration alConfig)
     {
+        var usedName = property.Name;
+        var reservedNames = new ALReservedNamesProvider();
+        if (reservedNames.ReservedNames.Contains(usedName))
+            usedName += "_";
         var method = new CodeMethod
         {
-            Name = $"Set-{property.Name.ToFirstCharacterUpperCase()}",
+            Name = $"Set-{usedName.ToFirstCharacterUpperCase()}",
             Kind = CodeMethodKind.Setter,
             ReturnType = new CodeType { Name = "void", IsExternal = true },
             Access = AccessModifier.Public,
             Documentation = (CodeDocumentation)property.Documentation.Clone(),
             Parent = property.Parent,
         };
-        method.SimpleName = property.Name.ToFirstCharacterUpperCase();
+        method.SimpleName = usedName.ToFirstCharacterUpperCase();
         method.CustomData["method-type"] = "Setter";
         method.CustomData["source"] = "from property";
+        method.CustomData["property-name"] = property.Name;
         if (!string.IsNullOrEmpty(property.SerializationName))
             method.CustomData["serialization-name"] = property.SerializationName;
 
@@ -863,6 +886,19 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 };
                 targetParam.CustomData["local-variable"] = "true";
                 method.AddParameter(targetParam);
+            }
+            else
+            {
+                var valueType = (CodeTypeBase)property.Type.Clone();
+                if (valueType is CodeType vt) vt.CustomData.Remove("al-dictionary");
+                var valueParam2 = new CodeParameter
+                {
+                    Name = "Value",
+                    Kind = CodeParameterKind.Custom,
+                    Type = valueType,
+                };
+                valueParam2.CustomData["local-variable"] = "true";
+                method.AddParameter(valueParam2);
             }
         }
         else if (isCollection)
@@ -1212,9 +1248,45 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                             Kind = CodeParameterKind.Custom,
                             Type = paramType,
                         };
+                        param.CustomData["property-name"] = getter.CustomData["property-name"];
+                        if (paramType.IsDictionaryType())
+                        {
+                            var singularName = CodeMethodExtensions.GetSingularName(paramName, toJson2.Parameters);
+                            param.CustomData["key-variable"] = $"{singularName}Key";
+                            param.CustomData["value-variable"] = $"{singularName}Value";
+                            param.CustomData["object-variable"] = $"{paramName}Object";
 
+                            var keyVariable = new CodeParameter
+                            {
+                                Name = $"{singularName}Key",
+                                Kind = CodeParameterKind.Custom,
+                                Type = new CodeType { Name = "Text", IsExternal = true },
+                            };
+                            keyVariable.CustomData["local-variable"] = "true";
+                            toJson2.AddParameter(keyVariable);
+
+                            var type = (CodeTypeBase)getter.ReturnType.Clone();
+                            if (type is CodeType et) et.CustomData.Remove("al-dictionary");
+                            var valueVariable = new CodeParameter
+                            {
+                                Name = $"{singularName}Value",
+                                Kind = CodeParameterKind.Custom,
+                                Type = type,
+                            };
+                            valueVariable.CustomData["local-variable"] = "true";
+                            toJson2.AddParameter(valueVariable);
+
+                            var objectVariable = new CodeParameter
+                            {
+                                Name = $"{paramName}Object",
+                                Kind = CodeParameterKind.Custom,
+                                Type = new CodeType { Name = "JsonObject", IsExternal = true },
+                            };
+                            objectVariable.CustomData["local-variable"] = "true";
+                            toJson2.AddParameter(objectVariable);
+                        }
                         // For codeunit collections, add array + foreach vars
-                        if (paramType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None &&
+                        else if (paramType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None &&
                             paramType is CodeType pt && pt.TypeDefinition is CodeClass)
                         {
                             var singularName = CodeMethodExtensions.GetSingularName(paramName, toJson2.Parameters);
@@ -1776,9 +1848,16 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         var reservedNames = new ALReservedNamesProvider();
         DeepCrawlTree(generatedCode, element =>
         {
-            if (element is CodeParameter param && reservedNames.ReservedNames.Contains(param.Name))
+            if (element is CodeMethod method)
             {
+                foreach (var param in method.Parameters)
+                {
+                    if (reservedNames.ReservedNames.Contains(param.Name))
+                    {
+                        param.CustomData["property-name"] = param.Name;
                 param.Name += "_";
+                    }
+                }
             }
         });
     }
