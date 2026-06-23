@@ -200,7 +200,8 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
             writer.WriteLine();
         }
 
-        // Usings
+        // Usings        
+        codeElement.AddUsings(new CodeUsing { Name = "Fps.Kiota.Client" });
         WriteUsings(codeElement, writer);
 
         // Object ID
@@ -214,6 +215,7 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         // Dictionary variable
         writer.WriteLine("var");
         writer.IncreaseIndent();
+        writer.WriteLine("QueryParamFormatter: Codeunit \"Kiota Query Param Formatter\";");
         writer.WriteLine("QueryParameters: Dictionary of [Text, Text];");
         writer.DecreaseIndent();
         writer.WriteLine();
@@ -243,12 +245,14 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
                 var paramType = parts.Length > 1 ? parts[1].Trim() : "Text";
                 var alType = conventions.GetTypeString(new CodeType { Name = paramType }, parentClass);
                 var isText = alType.Equals("Text", StringComparison.OrdinalIgnoreCase);
-                var valueExpr = isText ? "Value" : "Format(Value)";
+                var isEnum = alType.StartsWith("Enum ", StringComparison.OrdinalIgnoreCase);
+                var valueExpr = isText ? "Value" : isEnum ? "Format(Value)" : "this.QueryParamFormatter.FormatAsText(Value)";
 
                 writer.WriteLine($"procedure Set{paramName.ToFirstCharacterUpperCase()}(Value: {alType})");
                 writer.WriteLine("begin");
                 writer.IncreaseIndent();
-                writer.WriteLine($"this.SetQueryParameter('{paramName.ToFirstCharacterLowerCase()}', {valueExpr});");
+                // writer.WriteLine($"this.SetQueryParameter('{paramName.ToFirstCharacterLowerCase()}', {valueExpr});");
+                writer.WriteLine($"this.SetQueryParameter('{paramName}', {valueExpr});");
                 writer.DecreaseIndent();
                 writer.WriteLine("end;");
                 writer.WriteLine();
