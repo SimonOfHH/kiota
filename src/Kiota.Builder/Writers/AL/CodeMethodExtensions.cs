@@ -103,4 +103,14 @@ public static class CodeMethodExtensions
         method.CustomData.TryGetValue("pragmas", out var pragmas);
         return new ALVariable(method.Name, method.ReturnType, string.Empty, string.Empty, pragmas ?? string.Empty);
     }
+
+    public static bool IsConvenienceOverload(this CodeMethod method)
+    {
+        ArgumentNullException.ThrowIfNull(method);
+        if (method.CustomData.TryGetValue("source", out var val))
+        {
+            return val.Contains("multipart-overload", StringComparison.OrdinalIgnoreCase);
+        }
+        return false;
+    }
 }

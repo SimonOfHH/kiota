@@ -15,4 +15,10 @@ public static class TypeDefinitionExtensions
             _ => typeDefinition.Name.ToFirstCharacterUpperCase(),
         };
     }
+    public static bool IsLocalVariable(this CodeParameter parameter)
+    {
+        if (parameter is null) return false;
+        if (!parameter.CustomData.TryGetValue("local-variable", out var val)) return false;
+        return val.Equals("true", StringComparison.OrdinalIgnoreCase);
+    }
 }

@@ -60,4 +60,15 @@ public static class CodeTypeBaseExtensions
             return true;
         return false;
     }
+    public static bool IsKiotaFileBodyType(this CodeTypeBase codeTypeBase)
+    {
+        if (codeTypeBase is CodeType codeType)
+        {
+            if (codeType.Name.Equals($"Codeunit \"Kiota File Body\"", StringComparison.OrdinalIgnoreCase) && codeType.IsExternal)
+                return true;
+            if (codeType.Name.Equals("MultipartBody", StringComparison.OrdinalIgnoreCase) && codeType.IsExternal)
+                return true;
+        }
+        return false;
+    }
 }

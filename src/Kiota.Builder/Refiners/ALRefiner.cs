@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Kiota.Builder.CodeDOM;
@@ -69,6 +70,9 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
             // Step 6: Request executor enhancement
             UpdateRequestExecutorMethods(generatedCode, alConfig, conventionService, objectIdProvider);
+
+            // Step 5.6: Multipart body convenience overloads
+            AddMultipartBodyConvenienceOverloads(generatedCode);
 
             // Step 7: Interface generation
             AddCodeInterfacesForInheritedTypes(generatedCode, alConfig);
@@ -1560,6 +1564,17 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                             Type = (CodeTypeBase)indexerParamType.Clone(),
                         };
                         setId.AddParameter(idParam);
+                        if (idParam.Type is CodeType ct && conventionService.GetTypeString(ct, setId).Equals("Guid", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var wrapperParam = new CodeParameter
+                            {
+                                Name = "JsonHelper",
+                                Kind = CodeParameterKind.Custom,
+                                Type = new CodeType { Name = $"Codeunit {alConfig.CompanionNamespace}.Utilities.\"JSON Helper\"", IsExternal = true }
+                            };
+                            wrapperParam.CustomData["local-variable"] = "true";
+                            setId.AddParameter(wrapperParam);
+                        }
                         indexerTypeAsClass?.AddMethod(setId);
                         // Add Identifier global variable
                         if (indexerTypeAsClass != null)
@@ -1701,13 +1716,157 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     }
     #endregion
 
+    #region Step 5.6: Multipart body convenience overloads
+    /// <summary>
+    /// For every <see cref="CodeMethodKind.RequestExecutor"/> with a matching 
+    /// <c>multipart-file-fields</c> entry on the request-body parameter, this step adds one
+    /// additional overload per file field.  Each overload replaces the generic
+    /// <c>Codeunit "Kiota File Body"</c> parameter with a <c>InStream</c> parameter so callers
+    /// can pass a stream directly without having to construct the wrapper manually.
+    ///
+    /// The overloads are named with a <c>-overload</c> suffix (stripped by
+    /// <see cref="ModifyOverloadMethodNames"/> in Step 8) and carry two pieces of
+    /// <see cref="CodeElement.CustomData"/>:
+    /// <list type="bullet">
+    ///   <item><c>multipart-field-name</c> — the exact form-field name from the OpenAPI spec
+    ///         (e.g. <c>rebFile</c>) that the AL writer should pass to <c>SetFileBody</c>.</item>
+    ///   <item><c>source</c> — <c>multipart-overload</c>, used by the writer to emit the correct body.</item>
+    /// </list>
+    /// </summary>
+    private static void AddMultipartBodyConvenienceOverloads(CodeElement generatedCode)
+    {
+        var methodsToAdd = new List<(CodeClass Parent, CodeMethod Method)>();
+
+        DeepCrawlTree(generatedCode, element =>
+        {
+            if (element is not CodeMethod executor || executor.Kind != CodeMethodKind.RequestExecutor)
+                return;
+            if (executor.Parent is not CodeClass parentClass)
+                return;
+            var bodyParam = executor.Parameters.OfKind(CodeParameterKind.RequestBody);
+            if (bodyParam is null) return;
+            if (!executor.Parameters.Any(p => p.Type is CodeType ct && ct.IsKiotaFileBodyType()))
+                return;
+            if (!bodyParam.CustomData.TryGetValue("multipart-file-fields", out var fieldsCsv) ||
+                string.IsNullOrEmpty(fieldsCsv))
+                return;
+
+            var fieldNames = fieldsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (var fieldName in fieldNames)
+            {
+                // Clone the executor so we inherit return type, documentation, etc.
+                var overload = executor.Clone() as CodeMethod;
+                if (overload is null) continue;
+                overload.SimpleName = overload.Name;
+                overload.Name += "-overload-1";
+                var savedParameters = overload.Parameters;
+                overload.ClearParameters();
+                foreach (var param in savedParameters)
+                {
+                    if (param.Kind == CodeParameterKind.RequestBody)
+                        continue; // we'll add a new body parameter below with the correct type and name
+                    if (param.IsLocalVariable())
+                        continue; // skip local variables
+                    var clonedParam = (CodeParameter)param.Clone();
+                    overload.AddParameter(clonedParam);
+                }
+
+                overload.CustomData["source"] = "multipart-overload";
+                overload.CustomData["multipart-field-name"] = fieldName;
+
+                var filenameParam = new CodeParameter
+                {
+                    Name = "Filename",
+                    Kind = CodeParameterKind.Custom,
+                    Type = new CodeType { Name = "Text", IsExternal = true },
+                    Documentation = new CodeDocumentation
+                    {
+                        DescriptionTemplate = $"The filename for form field '{fieldName}'.",
+                    },
+                };
+                overload.AddParameter(filenameParam);
+
+                // Replace the MultipartBody parameter with an InStream parameter
+                var fileBodyParam = new CodeParameter
+                {
+                    Name = "FileBody",
+                    Kind = CodeParameterKind.RequestBody,
+                    Optional = false,
+                    Type = new CodeType { Name = "InStream", IsExternal = true },
+                    Documentation = new CodeDocumentation
+                    {
+                        DescriptionTemplate = $"The file content for form field '{fieldName}'.",
+                    },
+                };
+                overload.AddParameter(fileBodyParam);
+                var bodyLocalVar = new CodeParameter
+                {
+                    Name = "body",
+                    Kind = CodeParameterKind.Custom,
+                    Type = new CodeType { Name = "Codeunit \"Kiota File Body\"", IsExternal = true },
+                };
+                bodyLocalVar.CustomData["local-variable"] = "true";
+                overload.AddParameter(bodyLocalVar);
+
+                methodsToAdd.Add((parentClass, overload));
+
+                var overload2 = executor.Clone() as CodeMethod;
+                if (overload2 is null) continue;
+                overload2.SimpleName = overload2.Name;
+                overload2.Name += "-overload-2";
+                overload2.ClearParameters();
+                foreach (var param in savedParameters)
+                {
+                    if (param.Kind == CodeParameterKind.RequestBody)
+                        continue; // we'll add a new body parameter below with the correct type and name
+                    if (param.IsLocalVariable()) continue; // skip local variables
+                    var clonedParam = (CodeParameter)param.Clone();
+                    overload2.AddParameter(clonedParam);
+                }
+
+                overload2.CustomData["source"] = "multipart-overload";
+                overload2.CustomData["multipart-field-name"] = fieldName;
+
+                overload2.AddParameter(filenameParam);
+                // Replace the MultipartBody parameter with an InStream parameter
+                fileBodyParam = new CodeParameter
+                {
+                    Name = "FileBody",
+                    Kind = CodeParameterKind.RequestBody,
+                    Optional = false,
+                    Type = new CodeType { Name = "Text", IsExternal = true },
+                    Documentation = new CodeDocumentation
+                    {
+                        DescriptionTemplate = $"The file content for form field '{fieldName}'.",
+                    },
+                };
+                overload2.AddParameter(fileBodyParam);
+                bodyLocalVar = new CodeParameter
+                {
+                    Name = "body",
+                    Kind = CodeParameterKind.Custom,
+                    Type = new CodeType { Name = "Codeunit \"Kiota File Body\"", IsExternal = true },
+                };
+                bodyLocalVar.CustomData["local-variable"] = "true";
+                overload2.AddParameter(bodyLocalVar);
+                methodsToAdd.Add((parentClass, overload2));
+            }
+        });
+
+        foreach (var (parent, method) in methodsToAdd)
+            parent.AddMethod(method);
+    }
+    #endregion
+
     #region Step 6: Request Executor Enhancement
     private static void UpdateRequestExecutorMethods(CodeElement generatedCode, ALConfiguration alConfig, ALConventionService conventionService, ALObjectIdProvider objectIdProvider)
     {
         DeepCrawlTree(generatedCode, element =>
         {
             if (element is CodeMethod method && method.Kind == CodeMethodKind.RequestExecutor &&
-                method.Parent is CodeClass parentClass)
+                method.Parent is CodeClass parentClass &&
+                !method.IsConvenienceOverload()) // skip multipart overloads since they will be implemented by calling the main executor method
             {
                 // Add RequestHandler local variable
                 var reqHandlerParam = new CodeParameter
@@ -2016,6 +2175,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             if (element is CodeMethod method && method.Name.Contains("-overload", StringComparison.OrdinalIgnoreCase))
             {
                 method.Name = method.Name.Replace("-overload", string.Empty, StringComparison.OrdinalIgnoreCase);
+                if (method.SimpleName != null)
+                    method.Name = method.SimpleName; // reset to original name so that the writer can apply AL naming conventions (e.g. PascalCase)
             }
         });
     }

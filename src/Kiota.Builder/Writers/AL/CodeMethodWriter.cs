@@ -177,8 +177,34 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     {
         var parentClass = method.Parent as CodeClass;
 
-        writer.WriteLine("RequestHandler.SetClientConfig(ReqConfig);");
+        // Find companion RequestGenerator method to retrieve Content-Type / Accept header values
+        var generatorMethod = parentClass?.Methods
+            .FirstOrDefault(m => m.IsOfKind(CodeMethodKind.RequestGenerator) && m.HttpMethod == method.HttpMethod);
 
+        if (method.CustomData.TryGetValue("source", out var source) && source == "multipart-overload")
+        {
+            var fieldName = method.CustomData.TryGetValue("multipart-field-name", out var field) ? field : "file";
+            writer.WriteLine($"body.Initialize(Filename);");
+            writer.WriteLine($"body.WriteMultipartContent(FileBody, '{fieldName}');");
+            if (method.Parameters.Any(p => p.Name.Equals("Parameters", StringComparison.OrdinalIgnoreCase)))
+                writer.WriteLine($"exit(this.{method.Name}(body, Parameters));");
+            else
+                writer.WriteLine($"exit(this.{method.Name}(body));");
+            return;
+        }
+        // Body parameter (hoisted so it can inform the Content-Type header below)
+        var bodyParam = method.Parameters.FirstOrDefault(p => p.Kind == CodeParameterKind.RequestBody);
+
+        // Content-Type header – emit only when there is a request body and the spec declares a media type
+        if (bodyParam is not null && !bodyParam.Type.Name.Equals("MultipartBody", StringComparison.OrdinalIgnoreCase) && generatorMethod is not null && !string.IsNullOrEmpty(generatorMethod.RequestBodyContentType))
+            writer.WriteLine($"ReqConfig.AddHeader('Content-Type', '{generatorMethod.RequestBodyContentType}');");
+
+        // Accept header – emit when the spec declares accepted response media types
+        if (generatorMethod is not null && generatorMethod.ShouldAddAcceptHeader)
+            writer.WriteLine($"ReqConfig.AddHeader('Accept', '{generatorMethod.AcceptHeaderValue}');");
+
+
+        writer.WriteLine("RequestHandler.SetClientConfig(ReqConfig);");
         // Query parameters
         if (method.CustomData.TryGetValue("use-parameter-codeunit", out var usePcu) &&
             usePcu.Equals("true", StringComparison.OrdinalIgnoreCase))
@@ -187,10 +213,6 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             if (paramsParam is not null)
                 writer.WriteLine("RequestHandler.AddQueryParameter(Parameters.GetQueryParameters());");
         }
-
-        // Body parameter
-        var bodyParam = method.Parameters.FirstOrDefault(p =>
-            p.Kind == CodeParameterKind.RequestBody);
         if (bodyParam is not null)
         {
             if (bodyParam.Type.IsCollection && bodyParam.Type.IsModelCodeunitType())
@@ -247,7 +269,38 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                 if (alType == "HttpContent")
                     writer.WriteLine($"exit(ReqConfig.Client().Response().GetContent().GetHttpContent());");
                 else
-                    writer.WriteLine($"exit(ReqConfig.Client().Response().GetContent().AsJson().AsValue().{asMethod}());");
+                {
+                    switch (alType)
+                    {
+                        case "Blob":
+                            writer.WriteLine($"exit(ReqConfig.Client().Response().GetContent().AsBlob());");
+                            break;
+                        case "InStream":
+                            writer.WriteLine($"exit(ReqConfig.Client().Response().GetContent().AsInStream());");
+                            break;
+                        case "Json":
+                            writer.WriteLine($"exit(ReqConfig.Client().Response().GetContent().AsJson());");
+                            break;
+                        case "JsonArray":
+                            writer.WriteLine($"exit(ReqConfig.Client().Response().GetContent().AsJsonArray().AsArray());");
+                            break;
+                        case "JsonObject":
+                            writer.WriteLine($"exit(ReqConfig.Client().Response().GetContent().AsJsonObject().AsObject());");
+                            break;
+                        case "SecretText":
+                            writer.WriteLine($"exit(ReqConfig.Client().Response().GetContent().AsSecretText());");
+                            break;
+                        case "Text":
+                            writer.WriteLine($"exit(ReqConfig.Client().Response().GetContent().AsText());");
+                            break;
+                        case "XmlDocument":
+                            writer.WriteLine($"exit(ReqConfig.Client().Response().GetContent().AsXmlDocument());");
+                            break;
+                        default:
+                            writer.WriteLine($"exit(ReqConfig.Client().Response().GetContent().AsJson().AsValue().{asMethod}());");
+                            break;
+                    }
+                }
             }
 
             writer.DecreaseIndent();
@@ -646,7 +699,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                 }
                 else if (isCodeunit)
                 {
-                    writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty(TargetJson, '{paramNameClean}', {paramName}.ToJson().AsToken());");
+                    writer.WriteLine($"JSONHelper.AddToObjectIfNotEmpty(TargetJson, '{paramNameClean}', {paramName});");
                 }
                 else if (isEnum)
                 {
@@ -789,13 +842,13 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     {
         if (method.Name.Equals("SetIdentifier", StringComparison.OrdinalIgnoreCase))
         {
-            var param = method.Parameters.FirstOrDefault();
+            var param = method.Parameters.FirstOrDefault(p => !p.IsLocalVariable());
             if (param is not null)
             {
                 writer.WriteLine($"Identifier := {param.Name};");
                 var typeString = conventions.GetTypeString(param.Type, method);
                 if (typeString == "Guid")
-                    writer.WriteLine($"ReqConfig.AppendBaseURL('/' + Format(Identifier).Replace('{{', '').Replace('}}', ''));");
+                    writer.WriteLine($"ReqConfig.AppendBaseURL('/' + JsonHelper.FormatGuid(Identifier));");
                 else
                     writer.WriteLine($"ReqConfig.AppendBaseURL('/' + Format(Identifier));");
             }
