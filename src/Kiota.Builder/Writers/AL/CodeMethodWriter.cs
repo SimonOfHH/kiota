@@ -26,11 +26,6 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             codeElement.Kind == CodeMethodKind.RequestGenerator)
             return;
 
-        if (codeElement.Parent is CodeClass parentClass &&
-            parentClass.CustomData.TryGetValue("parameter-codeunit", out var paramCu) &&
-            paramCu.Equals("true", StringComparison.OrdinalIgnoreCase))
-            return; // Parameter codeunit methods are written by class declaration writer
-
         WriteMethodPrototype(codeElement, writer);
         WriteMethodBody(codeElement, writer);
     }
@@ -733,11 +728,42 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                 case "response-setter":
                     writer.WriteLine("StoredResponse := ApiResponse;");
                     return;
+                case "query-param-generic-setter":
+                    WriteQueryParamGenericSetterBody(writer);
+                    return;
+                case "query-param-typed-setter":
+                    WriteQueryParamTypedSetterBody(method, writer);
+                    return;
+                case "query-param-getter":
+                    writer.WriteLine("exit(QueryParameters);");
+                    return;
             }
         }
 
         // Default custom method - might be unused
         writer.WriteLine("// TODO: Implement custom method body");
+    }
+
+    private static void WriteQueryParamGenericSetterBody(LanguageWriter writer)
+    {
+        writer.WriteLine("if QueryParameters.ContainsKey(QueryKey) then");
+        writer.IncreaseIndent();
+        writer.WriteLine("QueryParameters.Remove(QueryKey);");
+        writer.DecreaseIndent();
+        writer.WriteLine("QueryParameters.Add(QueryKey, QueryValue);");
+    }
+
+    private static void WriteQueryParamTypedSetterBody(CodeMethod method, LanguageWriter writer)
+    {
+        var paramName = method.CustomData.TryGetValue("query-param-name", out var qpn) ? qpn : method.Name;
+        var typeCategory = method.CustomData.TryGetValue("query-param-type-category", out var cat) ? cat : "primitive";
+        var valueExpr = typeCategory switch
+        {
+            "text" => "Value",
+            "enum" => "Format(Value)",
+            _ => "this.QueryParamFormatter.FormatAsText(Value)",
+        };
+        writer.WriteLine($"this.SetQueryParameter('{paramName}', {valueExpr});");
     }
 
     private void WriteValueWrapperGetterBody(CodeMethod method, LanguageWriter writer)

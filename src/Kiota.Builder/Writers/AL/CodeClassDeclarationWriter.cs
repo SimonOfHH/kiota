@@ -26,14 +26,6 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
             return;
         }
 
-        // Check if this is a parameter codeunit
-        if (parentClass.CustomData.TryGetValue("parameter-codeunit", out var paramCu) &&
-            paramCu.Equals("true", StringComparison.OrdinalIgnoreCase))
-        {
-            WriteParameterCodeunit(parentClass, codeElement, writer);
-            return;
-        }
-
         // Auto-generation header
         writer.WriteLine(AutoGenerationHeader);
 
@@ -188,85 +180,4 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         writer.WriteLine();
     }
 
-    private void WriteParameterCodeunit(CodeClass parentClass, ClassDeclaration codeElement, LanguageWriter writer)
-    {
-        // Auto-generation header
-        writer.WriteLine(AutoGenerationHeader);
-
-        // Namespace
-        if (parentClass.Parent is CodeNamespace parentNs && !string.IsNullOrEmpty(parentNs.Name))
-        {
-            writer.WriteLine($"namespace {parentNs.Name};");
-            writer.WriteLine();
-        }
-
-        // Usings        
-        codeElement.AddUsings(new CodeUsing { Name = "Fps.Kiota.Client" });
-        WriteUsings(codeElement, writer);
-
-        // Object ID
-        parentClass.CustomData.TryGetValue("object-id", out var objectId);
-        objectId ??= "0";
-
-        writer.WriteLine($"codeunit {objectId} \"{parentClass.Name}\"");
-        writer.StartBlock();
-        if (this.conventions.AlConfig.MarkInternal)
-            writer.WriteLine("Access = Internal;");
-        // Dictionary variable
-        writer.WriteLine("var");
-        writer.IncreaseIndent();
-        writer.WriteLine("QueryParamFormatter: Codeunit \"Kiota Query Param Formatter\";");
-        writer.WriteLine("QueryParameters: Dictionary of [Text, Text];");
-        writer.DecreaseIndent();
-        writer.WriteLine();
-
-        // SetQueryParameter method
-        writer.WriteLine("procedure SetQueryParameter(QueryKey: Text; QueryValue: Text)");
-        writer.WriteLine("begin");
-        writer.IncreaseIndent();
-        writer.WriteLine("if QueryParameters.ContainsKey(QueryKey) then");
-        writer.IncreaseIndent();
-        writer.WriteLine("QueryParameters.Remove(QueryKey);");
-        writer.DecreaseIndent();
-        writer.WriteLine("QueryParameters.Add(QueryKey, QueryValue);");
-        writer.DecreaseIndent();
-        writer.WriteLine("end;");
-        writer.WriteLine();
-
-        // Parse query parameters from CustomData
-        if (parentClass.CustomData.TryGetValue("query-parameters", out var queryParamsStr) &&
-            !string.IsNullOrEmpty(queryParamsStr))
-        {
-            var queryParams = queryParamsStr.Split(',', StringSplitOptions.RemoveEmptyEntries);
-            foreach (var qp in queryParams)
-            {
-                var parts = qp.Split(':', 2);
-                var paramName = parts[0].Trim();
-                var paramType = parts.Length > 1 ? parts[1].Trim() : "Text";
-                var alType = conventions.GetTypeString(new CodeType { Name = paramType }, parentClass);
-                var isText = alType.Equals("Text", StringComparison.OrdinalIgnoreCase);
-                var isEnum = alType.StartsWith("Enum ", StringComparison.OrdinalIgnoreCase);
-                var valueExpr = isText ? "Value" : isEnum ? "Format(Value)" : "this.QueryParamFormatter.FormatAsText(Value)";
-
-                writer.WriteLine($"procedure Set{paramName.ToFirstCharacterUpperCase()}(Value: {alType})");
-                writer.WriteLine("begin");
-                writer.IncreaseIndent();
-                // writer.WriteLine($"this.SetQueryParameter('{paramName.ToFirstCharacterLowerCase()}', {valueExpr});");
-                writer.WriteLine($"this.SetQueryParameter('{paramName}', {valueExpr});");
-                writer.DecreaseIndent();
-                writer.WriteLine("end;");
-                writer.WriteLine();
-            }
-        }
-
-        // GetQueryParameters method
-        writer.WriteLine("procedure GetQueryParameters(): Dictionary of [Text, Text]");
-        writer.WriteLine("begin");
-        writer.IncreaseIndent();
-        writer.WriteLine("exit(QueryParameters);");
-        writer.DecreaseIndent();
-        writer.WriteLine("end;");
-
-        writer.CloseBlock();
-    }
 }

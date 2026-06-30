@@ -19,14 +19,6 @@ public class CodeBlockEndWriter : ICodeElementWriter<BlockEnd>
             return;
         }
 
-        if (codeElement?.Parent is CodeClass parentClass &&
-            parentClass.CustomData.TryGetValue("parameter-codeunit", out var val) &&
-            val.Equals("true", StringComparison.OrdinalIgnoreCase))
-        {
-            // Parameter codeunit writer handles closing
-            return;
-        }
-
         writer.CloseBlock();
     }
 }

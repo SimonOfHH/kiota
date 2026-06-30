@@ -1966,6 +1966,11 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                         // Single codeunit return
                         method.CustomData["return-variable-name"] = "Target";
                     }
+                    else if (conventionService.GetTypeString(ct, method).Equals("InStream", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Stream return
+                        method.CustomData["return-variable-name"] = "InStr";
+                    }
                 }
 
                 // Handle query parameters → parameter codeunit
@@ -1973,12 +1978,11 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
                 if (queryParamsClass is not null)
                 {
-                    var queryParams = queryParamsClass.Properties
+                    var queryParamProperties = queryParamsClass.Properties
                         .Where(p => p.Kind == CodePropertyKind.QueryParameter)
-                        .Select(p => $"{p.Name}:{conventionService.GetTypeString(p.Type, p)}")
                         .ToList();
 
-                    if (queryParams.Count > 0)
+                    if (queryParamProperties.Count > 0)
                     {
                         // Create parameter codeunit class
                         var paramClassName = $"{parentClass.Name}{method.Name}Parameters";
@@ -1993,14 +1997,63 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                                 Kind = CodeClassKind.QueryParameters,
                             };
                             paramClass.CustomData["parameter-codeunit"] = "true";
-                            paramClass.CustomData["query-parameters"] = string.Join(",", queryParams);
                             paramClass.CustomData["object-id"] = objectIdProvider.GetNextCodeunitId().ToString(CultureInfo.InvariantCulture);
                             parentNs.AddClass(paramClass);
+
+                            // Using for the client namespace (where Kiota Query Param Formatter lives)
+                            AddUsing(paramClass, alConfig.ClientNamespace);
+
+                            // Access = Internal object property (SetDefaultObjectProperties ran before this class existed)
+                            if (alConfig.MarkInternal)
+                            {
+                                var accessProp = new CodeProperty
+                                {
+                                    Name = "Access",
+                                    Kind = CodePropertyKind.Custom,
+                                    Type = new CodeType { Name = "ObjectProperty", IsExternal = true },
+                                };
+                                accessProp.CustomData["object-property"] = "true";
+                                accessProp.CustomData["value"] = "Internal";
+                                accessProp.CustomData["locked"] = "true";
+                                paramClass.AddProperty(accessProp);
+                            }
+
+                            // Global variables
+                            AddGlobalVariable(paramClass, "QueryParamFormatter", $"Codeunit {alConfig.ClientNamespace}.\"Kiota Query Param Formatter\"", "1");
+                            AddGlobalVariable(paramClass, "QueryParameters", "Dictionary of [Text, Text]", "2");
+
+                            // SetQueryParameter(QueryKey: Text; QueryValue: Text) method
+                            var setQueryParamMethod = new CodeMethod
+                            {
+                                Name = "SetQueryParameter",
+                                Kind = CodeMethodKind.Custom,
+                                Access = AccessModifier.Public,
+                                ReturnType = new CodeType { Name = "void", IsExternal = true },
+                                Parent = paramClass,
+                            };
+                            setQueryParamMethod.CustomData["source"] = "query-param-generic-setter";
+                            setQueryParamMethod.CustomData["sorting-value"] = "1";
+                            var queryKeyParam = new CodeParameter
+                            {
+                                Name = "QueryKey",
+                                Kind = CodeParameterKind.Custom,
+                                Type = new CodeType { Name = "Text", IsExternal = true },
+                            };
+                            setQueryParamMethod.AddParameter(queryKeyParam);
+                            var queryValueParam = new CodeParameter
+                            {
+                                Name = "QueryValue",
+                                Kind = CodeParameterKind.Custom,
+                                Type = new CodeType { Name = "Text", IsExternal = true },
+                            };
+                            setQueryParamMethod.AddParameter(queryValueParam);
+                            paramClass.AddMethod(setQueryParamMethod);
 
                             // Add usings for any referenced types (e.g. deduplicated enums) whose
                             // TypeDefinition lives in a namespace different from the one this
                             // parameter codeunit is being placed in.
-                            foreach (var qp in queryParamsClass.Properties.Where(p => p.Kind == CodePropertyKind.QueryParameter))
+                            // Also add one typed Set{Name}(Value: <type>) method per query parameter.
+                            foreach (var qp in queryParamProperties)
                             {
                                 if (qp.Type is CodeType qpType && qpType.TypeDefinition is not null)
                                 {
@@ -2012,7 +2065,51 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                                     }
                                     catch (InvalidOperationException) { }
                                 }
+
+                                // Determine type category for writer formatting
+                                string typeCategory;
+                                var alTypeName = conventionService.GetTypeString(qp.Type, qp);
+                                if (alTypeName.Equals("Text", StringComparison.OrdinalIgnoreCase))
+                                    typeCategory = "text";
+                                else if (qp.Type is CodeType { TypeDefinition: CodeEnum })
+                                    typeCategory = "enum";
+                                else
+                                    typeCategory = "primitive";
+
+                                var typedSetterMethod = new CodeMethod
+                                {
+                                    Name = $"Set{qp.Name.ToFirstCharacterUpperCase()}",
+                                    Kind = CodeMethodKind.Custom,
+                                    Access = AccessModifier.Public,
+                                    ReturnType = new CodeType { Name = "void", IsExternal = true },
+                                    Parent = paramClass,
+                                };
+                                typedSetterMethod.CustomData["source"] = "query-param-typed-setter";
+                                typedSetterMethod.CustomData["sorting-value"] = "2";
+                                typedSetterMethod.CustomData["query-param-name"] = qp.Name;
+                                typedSetterMethod.CustomData["query-param-type-category"] = typeCategory;
+                                var valueParam2 = new CodeParameter
+                                {
+                                    Name = "Value",
+                                    Kind = CodeParameterKind.Custom,
+                                    Type = (CodeTypeBase)qp.Type.Clone(),
+                                };
+                                typedSetterMethod.AddParameter(valueParam2);
+                                paramClass.AddMethod(typedSetterMethod);
                             }
+
+                            // GetQueryParameters(): Dictionary of [Text, Text] method
+                            var getQueryParamsMethod = new CodeMethod
+                            {
+                                Name = "GetQueryParameters",
+                                Kind = CodeMethodKind.Custom,
+                                Access = AccessModifier.Public,
+                                ReturnType = new CodeType { Name = "Dictionary of [Text, Text]", IsExternal = true },
+                                Parent = paramClass,
+                            };
+                            getQueryParamsMethod.CustomData["source"] = "query-param-getter";
+                            getQueryParamsMethod.CustomData["sorting-value"] = "3";
+                            paramClass.AddMethod(getQueryParamsMethod);
 
                             // Add parameter to executor method
                             var paramsParam = new CodeParameter
