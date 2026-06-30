@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
-using System.Runtime.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Kiota.Builder.CodeDOM;
@@ -727,15 +726,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         var reservedNames = new ALReservedNamesProvider();
         if (reservedNames.ReservedNames.Contains(usedName))
             usedName += "_";
-        var method = new CodeMethod
-        {
-            Name = $"Get-{usedName.ToFirstCharacterUpperCase()}",
-            Kind = CodeMethodKind.Getter,
-            ReturnType = (CodeTypeBase)property.Type.Clone(),
-            Access = AccessModifier.Public,
-            Documentation = (CodeDocumentation)property.Documentation.Clone(),
-            Parent = property.Parent,
-        };
+        var method = CreateMethod($"Get-{usedName.ToFirstCharacterUpperCase()}", CodeMethodKind.Getter, (CodeClass)property.Parent!, (CodeTypeBase)property.Type.Clone());
+        method.Documentation = (CodeDocumentation)property.Documentation.Clone();
         method.SimpleName = usedName.ToFirstCharacterUpperCase();
         method.CustomData["method-type"] = "Getter";
         method.CustomData["source"] = "from property";
@@ -819,15 +811,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         var reservedNames = new ALReservedNamesProvider();
         if (reservedNames.ReservedNames.Contains(usedName))
             usedName += "_";
-        var method = new CodeMethod
-        {
-            Name = $"Set-{usedName.ToFirstCharacterUpperCase()}",
-            Kind = CodeMethodKind.Setter,
-            ReturnType = new CodeType { Name = "void", IsExternal = true },
-            Access = AccessModifier.Public,
-            Documentation = (CodeDocumentation)property.Documentation.Clone(),
-            Parent = property.Parent,
-        };
+        var method = CreateVoidMethod($"Set-{usedName.ToFirstCharacterUpperCase()}", CodeMethodKind.Setter, (CodeClass)property.Parent!);
+        method.Documentation = (CodeDocumentation)property.Documentation.Clone();
         method.SimpleName = usedName.ToFirstCharacterUpperCase();
         method.CustomData["method-type"] = "Setter";
         method.CustomData["source"] = "from property";
@@ -836,13 +821,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             method.CustomData["serialization-name"] = property.SerializationName;
 
         // Add the value parameter
-        var valueParam = new CodeParameter
-        {
-            Name = "p",
-            Kind = CodeParameterKind.Custom,
-            Type = (CodeTypeBase)property.Type.Clone(),
-        };
-        method.AddParameter(valueParam);
+        AddParameter(method, "p", (CodeTypeBase)property.Type.Clone());
 
         // For dictionary types, add JSON-object helpers for serialization
         var isDictionary = property.Type.IsDictionaryType();
@@ -929,105 +908,14 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 AddLabel(codeClass, "AuthorizationNotInitializedErr", "Authorization is uninitialized.", false, "4");
 
                 // Add Initialize method
-                var initMethod = new CodeMethod
-                {
-                    Name = "Initialize",
-                    Kind = CodeMethodKind.Constructor,
-                    Access = AccessModifier.Public,
-                    ReturnType = new CodeType { Name = "void", IsExternal = true },
-                    Parent = codeClass,
-                };
-                initMethod.CustomData["skip"] = "false"; // Override the skip set earlier
-                initMethod.CustomData["sorting-value"] = "1";
-                var authParam = new CodeParameter
-                {
-                    Name = "NewAPIAuthorization",
-                    Kind = CodeParameterKind.Custom,
-                    Type = new CodeType { Name = $"Codeunit \"Kiota API Authorization\"", IsExternal = true },
-                };
-                initMethod.AddParameter(authParam);
-                codeClass.AddMethod(initMethod);
+                codeClass.AddMethod(CreateDefaultInitMethod(codeClass));
 
-                // Add Configuration getter
-                var configGetter = new CodeMethod
-                {
-                    Name = "Configuration",
-                    Kind = CodeMethodKind.ClientConstructor,
-                    Access = AccessModifier.Public,
-                    ReturnType = new CodeType { Name = $"Codeunit \"Kiota ClientConfig\"", IsExternal = true },
-                    Parent = codeClass,
-                };
-                configGetter.CustomData["skip"] = "false";
-                configGetter.CustomData["sorting-value"] = "27";
-                codeClass.AddMethod(configGetter);
+                // Add Configuration getter, setter and DefaultConfiguration
+                AddConfigurationMethods(codeClass);
 
-                // Add Configuration setter (overload)
-                var configSetter = new CodeMethod
-                {
-                    Name = "Configuration-overload",
-                    Kind = CodeMethodKind.ClientConstructor,
-                    Access = AccessModifier.Public,
-                    ReturnType = new CodeType { Name = "void", IsExternal = true },
-                    Parent = codeClass,
-                };
-                configSetter.SimpleName = "Configuration";
-                configSetter.CustomData["skip"] = "false";
-                configSetter.CustomData["sorting-value"] = "28";
-                var configParam = new CodeParameter
-                {
-                    Name = "config",
-                    Kind = CodeParameterKind.Custom,
-                    Type = new CodeType { Name = $"Codeunit \"Kiota ClientConfig\"", IsExternal = true },
-                };
-                configSetter.AddParameter(configParam);
-                codeClass.AddMethod(configSetter);
-
-                // Add DefaultConfiguration
-                var defaultConfig = new CodeMethod
-                {
-                    Name = "DefaultConfiguration",
-                    Kind = CodeMethodKind.Factory,
-                    Access = AccessModifier.Private,
-                    ReturnType = new CodeType { Name = $"Codeunit \"Kiota ClientConfig\"", IsExternal = true },
-                    Parent = codeClass,
-                };
-                defaultConfig.CustomData["skip"] = "false";
-                defaultConfig.CustomData["sorting-value"] = "29";
-                codeClass.AddMethod(defaultConfig);
-
-                // Add Response getter
-                var responseGetter = new CodeMethod
-                {
-                    Name = "Response",
-                    Kind = CodeMethodKind.Custom,
-                    Access = AccessModifier.Public,
-                    ReturnType = new CodeType { Name = "Codeunit System.RestClient.\"Http Response Message\"", IsExternal = true },
-                    Parent = codeClass,
-                };
-                responseGetter.CustomData["sorting-value"] = "50";
-                responseGetter.CustomData["source"] = "response-getter";
-                codeClass.AddMethod(responseGetter);
-
-                // Add Response setter
-                var responseSetter = new CodeMethod
-                {
-                    Name = "Response-overload",
-                    Kind = CodeMethodKind.Custom,
-                    Access = AccessModifier.Public,
-                    ReturnType = new CodeType { Name = "void", IsExternal = true },
-                    Parent = codeClass,
-                };
-                responseSetter.SimpleName = "Response";
-                responseSetter.CustomData["sorting-value"] = "51";
-                responseSetter.CustomData["source"] = "response-setter";
-                var responseParam = new CodeParameter
-                {
-                    Name = "var ApiResponse", // 'var' to pass it by reference in AL
-                    Kind = CodeParameterKind.Custom,
-                    Type = new CodeType { Name = "Codeunit System.RestClient.\"Http Response Message\"", IsExternal = true },
-                };
-                responseSetter.AddParameter(responseParam);
-                codeClass.AddMethod(responseSetter);
+                // Add Response getter and setter
+                codeClass.AddMethod(CreateResponseGetterMethod(codeClass));
+                codeClass.AddMethod(CreateResponseSetterMethod(codeClass));
 
                 foreach (var property in codeClass.Properties.Where(p => p.IsOfKind(CodePropertyKind.RequestBuilder)))
                 {
@@ -1069,63 +957,11 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 AddGlobalVariable(codeClass, "JsonBody", "JsonObject", "3");
                 AddGlobalVariable(codeClass, "SubToken", "JsonToken", "3");
 
-                // Add SetBody (1 param)
-                var setBody1 = new CodeMethod
-                {
-                    Name = "SetBody",
-                    Kind = CodeMethodKind.Deserializer,
-                    Access = AccessModifier.Public,
-                    ReturnType = new CodeType { Name = "void", IsExternal = true },
-                    Parent = codeClass,
-                };
-                setBody1.CustomData["sorting-value"] = "100";
-                var jsonBodyParam1 = new CodeParameter
-                {
-                    Name = "NewJsonBody",
-                    Kind = CodeParameterKind.Custom,
-                    Type = new CodeType { Name = "JsonObject", IsExternal = true },
-                };
-                setBody1.AddParameter(jsonBodyParam1);
-                codeClass.AddMethod(setBody1);
-
-                // Add SetBody (2 params - overload)
-                var setBody2 = new CodeMethod
-                {
-                    Name = "SetBody-overload",
-                    Kind = CodeMethodKind.Deserializer,
-                    Access = AccessModifier.Public,
-                    ReturnType = new CodeType { Name = "void", IsExternal = true },
-                    Parent = codeClass,
-                };
-                setBody2.SimpleName = "SetBody";
-                setBody2.CustomData["sorting-value"] = "101";
-                var jsonBodyParam2 = new CodeParameter
-                {
-                    Name = "NewJsonBody",
-                    Kind = CodeParameterKind.Custom,
-                    Type = new CodeType { Name = "JsonObject", IsExternal = true },
-                    DefaultValue = "1",
-                };
-                setBody2.AddParameter(jsonBodyParam2);
-                var debugParam = new CodeParameter
-                {
-                    Name = "Debug",
-                    Kind = CodeParameterKind.Custom,
-                    Type = new CodeType { Name = "Boolean", IsExternal = true },
-                    DefaultValue = "2",
-                };
-                setBody2.AddParameter(debugParam);
-                codeClass.AddMethod(setBody2);
+                // Add SetBody overloads
+                AddSetBodyMethods(codeClass);
 
                 // Add ValidateBody
-                var validateBody = new CodeMethod
-                {
-                    Name = "ValidateBody",
-                    Kind = CodeMethodKind.Custom,
-                    Access = AccessModifier.Private,
-                    ReturnType = new CodeType { Name = "void", IsExternal = true },
-                    Parent = codeClass,
-                };
+                var validateBody = CreateVoidMethod("ValidateBody", CodeMethodKind.Custom, codeClass, AccessModifier.Private);
                 validateBody.CustomData["pragmas-variables"] = "AA0202";
                 // Add local variables; we need to add variables for each property in the class to validate presence of required properties; the properties were previously added as getter- and setter-methods, so we can find them by looking for getter methods with source "from property"
                 var gettersHelper = codeClass.Methods.Where(m => m.IsGetterMethod() && m.CustomData.TryGetValue("source", out var source) && source.Equals("from property", StringComparison.Ordinal)).ToList();
@@ -1140,14 +976,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 codeClass.AddMethod(validateBody);
 
                 // Add ToJson (simple)
-                var toJson1 = new CodeMethod
-                {
-                    Name = "ToJson",
-                    Kind = CodeMethodKind.Serializer,
-                    Access = AccessModifier.Public,
-                    ReturnType = new CodeType { Name = "JsonObject", IsExternal = true },
-                    Parent = codeClass,
-                };
+                var toJson1 = CreateMethod("ToJson", CodeMethodKind.Serializer, codeClass, "JsonObject");
                 toJson1.CustomData["sorting-value"] = "103";
                 codeClass.AddMethod(toJson1);
 
@@ -1155,14 +984,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 var getters = codeClass.Methods.Where(m => m.IsGetterMethod()).ToList();
                 if (getters.Count != 0)
                 {
-                    var toJson2 = new CodeMethod
-                    {
-                        Name = "ToJson-overload",
-                        Kind = CodeMethodKind.Serializer,
-                        Access = AccessModifier.Public,
-                        ReturnType = new CodeType { Name = "JsonObject", IsExternal = true },
-                        Parent = codeClass,
-                    };
+                    var toJson2 = CreateMethod("ToJson-overload", CodeMethodKind.Serializer, codeClass, "JsonObject");
                     toJson2.SimpleName = "ToJson";
                     toJson2.CustomData["sorting-value"] = "104";
                     toJson2.CustomData["pragmas"] = "AA0245";
@@ -1237,23 +1059,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 AddGlobalVariable(codeClass, "ReqConfig", $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"", "1", "AA0137");
 
                 // Add SetConfiguration method
-                var setConfig = new CodeMethod
-                {
-                    Name = "SetConfiguration",
-                    Kind = CodeMethodKind.RawUrlBuilder,
-                    Access = AccessModifier.Public,
-                    ReturnType = new CodeType { Name = "void", IsExternal = true },
-                    Parent = codeClass,
-                };
-                setConfig.CustomData["skip"] = "false";
-                setConfig.CustomData["sorting-value"] = "2";
-                var configParam = new CodeParameter
-                {
-                    Name = "NewReqConfig",
-                    Kind = CodeParameterKind.Custom,
-                    Type = new CodeType { Name = $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"", IsExternal = true },
-                };
-                setConfig.AddParameter(configParam);
+                var setConfig = CreateSkippableMethod("SetConfiguration", CodeMethodKind.RawUrlBuilder, codeClass, "void", "2");
+                AddParameter(setConfig, "NewReqConfig", $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"");
                 codeClass.AddMethod(setConfig);
 
                 // Handle indexers — check for methods converted from indexers
@@ -1280,23 +1087,9 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     if (indexerParamType is not null)
                     {
                         // Add SetIdentifier method
-                        var setId = new CodeMethod
-                        {
-                            Name = "SetIdentifier",
-                            Kind = CodeMethodKind.RawUrlBuilder,
-                            Access = AccessModifier.Public,
-                            ReturnType = new CodeType { Name = "void", IsExternal = true },
-                            Parent = codeClass,
-                        };
-                        setId.CustomData["skip"] = "false";
-                        setId.CustomData["sorting-value"] = "3";
-                        var idParam = new CodeParameter
-                        {
-                            Name = "NewIdentifier",
-                            Kind = CodeParameterKind.Custom,
-                            Type = (CodeTypeBase)indexerParamType.Clone(),
-                        };
-                        setId.AddParameter(idParam);
+                        var setId = CreateSkippableMethod("SetIdentifier", CodeMethodKind.RawUrlBuilder, codeClass, "void", "3");
+                        AddParameter(setId, "NewIdentifier", (CodeTypeBase)indexerParamType.Clone());
+                        var idParam = setId.Parameters.First(p => p.Name == "NewIdentifier");
                         if (idParam.Type is CodeType ct && conventionService.GetTypeString(ct, setId).Equals("Guid", StringComparison.OrdinalIgnoreCase))
                         {
                             AddLocalVariable(setId, "JsonHelper", CodeTypeBaseExtensions.CreateExternal($"Codeunit {alConfig.CompanionNamespace}.Utilities.\"JSON Helper\""));
@@ -1360,17 +1153,10 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 var methodBaseName = getter.SimpleName ?? getter.Name;
 
                 // Convenience getter: FirstName_Value() : Text
-                var convenienceGetter = new CodeMethod
+                var convenienceGetter = CreateMethod($"{methodBaseName}_Value", CodeMethodKind.Getter, parentClass, primitiveType);
+                convenienceGetter.Documentation = new CodeDocumentation
                 {
-                    Name = $"{methodBaseName}_Value",
-                    Kind = CodeMethodKind.Getter,
-                    ReturnType = primitiveType,
-                    Access = AccessModifier.Public,
-                    Documentation = new CodeDocumentation
-                    {
-                        DescriptionTemplate = $"Convenience helper that unwraps the value from the {methodBaseName} wrapper object.",
-                    },
-                    Parent = parentClass,
+                    DescriptionTemplate = $"Convenience helper that unwraps the value from the {methodBaseName} wrapper object.",
                 };
                 convenienceGetter.SimpleName = $"{methodBaseName}_Value";
                 convenienceGetter.CustomData["method-type"] = "Getter";
@@ -1381,17 +1167,10 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 methodsToAdd.Add(convenienceGetter);
 
                 // Convenience setter: FirstName(p: Text)
-                var convenienceSetter = new CodeMethod
+                var convenienceSetter = CreateVoidMethod($"{methodBaseName}", CodeMethodKind.Setter, parentClass);
+                convenienceSetter.Documentation = new CodeDocumentation
                 {
-                    Name = $"{methodBaseName}",
-                    Kind = CodeMethodKind.Setter,
-                    ReturnType = new CodeType { Name = "void", IsExternal = true },
-                    Access = AccessModifier.Public,
-                    Documentation = new CodeDocumentation
-                    {
-                        DescriptionTemplate = $"Convenience helper that wraps the value into a {methodBaseName} wrapper object.",
-                    },
-                    Parent = parentClass,
+                    DescriptionTemplate = $"Convenience helper that wraps the value into a {methodBaseName} wrapper object.",
                 };
                 convenienceSetter.SimpleName = $"{methodBaseName}";
                 convenienceSetter.CustomData["method-type"] = "Setter";
@@ -1399,13 +1178,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 convenienceSetter.CustomData["wrapper-getter-name"] = methodBaseName;
                 convenienceSetter.CustomData["wrapper-class-name"] = wrapperClass.Name;
 
-                var valueParam = new CodeParameter
-                {
-                    Name = "p",
-                    Kind = CodeParameterKind.Custom,
-                    Type = (CodeTypeBase)primitiveType.Clone(),
-                };
-                convenienceSetter.AddParameter(valueParam);
+                AddParameter(convenienceSetter, "p", (CodeTypeBase)primitiveType.Clone());
 
                 // Add a local variable for the wrapper codeunit
                 AddLocalVariable(convenienceSetter, "Wrapper", (CodeTypeBase)getter.ReturnType.Clone());
@@ -1470,97 +1243,60 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 string.IsNullOrEmpty(fieldsCsv))
                 return;
 
-            var fieldNames = fieldsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries);
-
-            foreach (var fieldName in fieldNames)
+            foreach (var fieldName in fieldsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries))
             {
-                // Clone the executor so we inherit return type, documentation, etc.
-                var overload = executor.Clone() as CodeMethod;
-                if (overload is null) continue;
-                overload.SimpleName = overload.Name;
-                overload.Name += "-overload-1";
-                var savedParameters = overload.Parameters;
-                overload.ClearParameters();
-                foreach (var param in savedParameters)
-                {
-                    if (param.Kind == CodeParameterKind.RequestBody)
-                        continue; // we'll add a new body parameter below with the correct type and name
-                    if (param.IsLocalVariable())
-                        continue; // skip local variables
-                    var clonedParam = (CodeParameter)param.Clone();
-                    overload.AddParameter(clonedParam);
-                }
-
-                overload.CustomData["source"] = "multipart-overload";
-                overload.CustomData["multipart-field-name"] = fieldName;
-
-                var filenameParam = new CodeParameter
-                {
-                    Name = "Filename",
-                    Kind = CodeParameterKind.Custom,
-                    Type = new CodeType { Name = "Text", IsExternal = true },
-                    Documentation = new CodeDocumentation
-                    {
-                        DescriptionTemplate = $"The filename for form field '{fieldName}'.",
-                    },
-                };
-                overload.AddParameter(filenameParam);
-
-                // Replace the MultipartBody parameter with an InStream parameter
-                var fileBodyParam = new CodeParameter
-                {
-                    Name = "FileBody",
-                    Kind = CodeParameterKind.RequestBody,
-                    Optional = false,
-                    Type = new CodeType { Name = "InStream", IsExternal = true },
-                    Documentation = new CodeDocumentation
-                    {
-                        DescriptionTemplate = $"The file content for form field '{fieldName}'.",
-                    },
-                };
-                overload.AddParameter(fileBodyParam);
-                AddLocalVariable(overload, "body", "Codeunit \"Kiota File Body\"");
-
-                methodsToAdd.Add((parentClass, overload));
-
-                var overload2 = executor.Clone() as CodeMethod;
-                if (overload2 is null) continue;
-                overload2.SimpleName = overload2.Name;
-                overload2.Name += "-overload-2";
-                overload2.ClearParameters();
-                foreach (var param in savedParameters)
-                {
-                    if (param.Kind == CodeParameterKind.RequestBody)
-                        continue; // we'll add a new body parameter below with the correct type and name
-                    if (param.IsLocalVariable()) continue; // skip local variables
-                    var clonedParam = (CodeParameter)param.Clone();
-                    overload2.AddParameter(clonedParam);
-                }
-
-                overload2.CustomData["source"] = "multipart-overload";
-                overload2.CustomData["multipart-field-name"] = fieldName;
-
-                overload2.AddParameter(filenameParam);
-                // Replace the MultipartBody parameter with an InStream parameter
-                fileBodyParam = new CodeParameter
-                {
-                    Name = "FileBody",
-                    Kind = CodeParameterKind.RequestBody,
-                    Optional = false,
-                    Type = new CodeType { Name = "Text", IsExternal = true },
-                    Documentation = new CodeDocumentation
-                    {
-                        DescriptionTemplate = $"The file content for form field '{fieldName}'.",
-                    },
-                };
-                overload2.AddParameter(fileBodyParam);
-                AddLocalVariable(overload2, "body", "Codeunit \"Kiota File Body\"");
-                methodsToAdd.Add((parentClass, overload2));
+                methodsToAdd.Add((parentClass, CreateMultipartOverload(executor, fieldName, 1, "InStream")));
+                methodsToAdd.Add((parentClass, CreateMultipartOverload(executor, fieldName, 2, "Text")));
             }
         });
 
         foreach (var (parent, method) in methodsToAdd)
             parent.AddMethod(method);
+    }
+
+    /// <summary>
+    /// Clones <paramref name="executor"/>, strips its body/local parameters, then appends a
+    /// <c>Filename</c> parameter and a <c>FileBody</c> parameter of type
+    /// <paramref name="fileBodyTypeName"/> for the given multipart <paramref name="fieldName"/>.
+    /// </summary>
+    private static CodeMethod CreateMultipartOverload(
+        CodeMethod executor, string fieldName, int overloadIndex, string fileBodyTypeName)
+    {
+        var overload = (executor.Clone() as CodeMethod)!;
+        overload.SimpleName = overload.Name;
+        overload.Name += $"-overload-{overloadIndex}";
+        overload.CustomData["source"] = "multipart-overload";
+        overload.CustomData["multipart-field-name"] = fieldName;
+
+        // Rebuild the parameter list: drop the original body and all local variables,
+        // then append the field-specific Filename + FileBody parameters.
+        var originalParams = overload.Parameters;
+        overload.ClearParameters();
+        foreach (var param in originalParams)
+        {
+            if (param.Kind == CodeParameterKind.RequestBody || param.IsLocalVariable())
+                continue;
+            overload.AddParameter((CodeParameter)param.Clone());
+        }
+
+        overload.AddParameter(new CodeParameter
+        {
+            Name = "Filename",
+            Kind = CodeParameterKind.Custom,
+            Type = new CodeType { Name = "Text", IsExternal = true },
+            Documentation = new CodeDocumentation { DescriptionTemplate = $"The filename for form field '{fieldName}'." },
+        });
+        overload.AddParameter(new CodeParameter
+        {
+            Name = "FileBody",
+            Kind = CodeParameterKind.RequestBody,
+            Optional = false,
+            Type = new CodeType { Name = fileBodyTypeName, IsExternal = true },
+            Documentation = new CodeDocumentation { DescriptionTemplate = $"The file content for form field '{fieldName}'." },
+        });
+        AddLocalVariable(overload, "body", "Codeunit \"Kiota File Body\"");
+
+        return overload;
     }
     #endregion
 
@@ -1670,30 +1406,11 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                             AddGlobalVariable(paramClass, "QueryParameters", "Dictionary of [Text, Text]", "2");
 
                             // SetQueryParameter(QueryKey: Text; QueryValue: Text) method
-                            var setQueryParamMethod = new CodeMethod
-                            {
-                                Name = "SetQueryParameter",
-                                Kind = CodeMethodKind.Custom,
-                                Access = AccessModifier.Public,
-                                ReturnType = new CodeType { Name = "void", IsExternal = true },
-                                Parent = paramClass,
-                            };
+                            var setQueryParamMethod = CreateVoidMethod("SetQueryParameter", CodeMethodKind.Custom, paramClass);
                             setQueryParamMethod.CustomData["source"] = "query-param-generic-setter";
                             setQueryParamMethod.CustomData["sorting-value"] = "1";
-                            var queryKeyParam = new CodeParameter
-                            {
-                                Name = "QueryKey",
-                                Kind = CodeParameterKind.Custom,
-                                Type = new CodeType { Name = "Text", IsExternal = true },
-                            };
-                            setQueryParamMethod.AddParameter(queryKeyParam);
-                            var queryValueParam = new CodeParameter
-                            {
-                                Name = "QueryValue",
-                                Kind = CodeParameterKind.Custom,
-                                Type = new CodeType { Name = "Text", IsExternal = true },
-                            };
-                            setQueryParamMethod.AddParameter(queryValueParam);
+                            AddParameter(setQueryParamMethod, "QueryKey", "Text");
+                            AddParameter(setQueryParamMethod, "QueryValue", "Text");
                             paramClass.AddMethod(setQueryParamMethod);
 
                             // Add usings for any referenced types (e.g. deduplicated enums) whose
@@ -1723,37 +1440,17 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                                 else
                                     typeCategory = "primitive";
 
-                                var typedSetterMethod = new CodeMethod
-                                {
-                                    Name = $"Set{qp.Name.ToFirstCharacterUpperCase()}",
-                                    Kind = CodeMethodKind.Custom,
-                                    Access = AccessModifier.Public,
-                                    ReturnType = new CodeType { Name = "void", IsExternal = true },
-                                    Parent = paramClass,
-                                };
+                                var typedSetterMethod = CreateVoidMethod($"Set{qp.Name.ToFirstCharacterUpperCase()}", CodeMethodKind.Custom, paramClass);
                                 typedSetterMethod.CustomData["source"] = "query-param-typed-setter";
                                 typedSetterMethod.CustomData["sorting-value"] = "2";
                                 typedSetterMethod.CustomData["query-param-name"] = qp.Name;
                                 typedSetterMethod.CustomData["query-param-type-category"] = typeCategory;
-                                var valueParam2 = new CodeParameter
-                                {
-                                    Name = "Value",
-                                    Kind = CodeParameterKind.Custom,
-                                    Type = (CodeTypeBase)qp.Type.Clone(),
-                                };
-                                typedSetterMethod.AddParameter(valueParam2);
+                                AddParameter(typedSetterMethod, "Value", (CodeTypeBase)qp.Type.Clone());
                                 paramClass.AddMethod(typedSetterMethod);
                             }
 
                             // GetQueryParameters(): Dictionary of [Text, Text] method
-                            var getQueryParamsMethod = new CodeMethod
-                            {
-                                Name = "GetQueryParameters",
-                                Kind = CodeMethodKind.Custom,
-                                Access = AccessModifier.Public,
-                                ReturnType = new CodeType { Name = "Dictionary of [Text, Text]", IsExternal = true },
-                                Parent = paramClass,
-                            };
+                            var getQueryParamsMethod = CreateMethod("GetQueryParameters", CodeMethodKind.Custom, paramClass, "Dictionary of [Text, Text]");
                             getQueryParamsMethod.CustomData["source"] = "query-param-getter";
                             getQueryParamsMethod.CustomData["sorting-value"] = "3";
                             paramClass.AddMethod(getQueryParamsMethod);
@@ -2049,6 +1746,127 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         option.CustomData["value"] = value;
         option.CustomData["locked"] = "true";
         codeEnum.AddOption(option);
+    }
+
+    private static CodeMethod CreateMethod(
+        string name, CodeMethodKind kind, CodeClass parent,
+        string returnTypeName, AccessModifier access = AccessModifier.Public)
+    {
+        return new CodeMethod
+        {
+            Name = name,
+            Kind = kind,
+            Access = access,
+            ReturnType = CodeTypeBaseExtensions.CreateExternal(returnTypeName),
+            Parent = parent,
+        };
+    }
+
+    private static CodeMethod CreateMethod(
+        string name, CodeMethodKind kind, CodeClass parent,
+        CodeTypeBase returnType, AccessModifier access = AccessModifier.Public)
+    {
+        return new CodeMethod
+        {
+            Name = name,
+            Kind = kind,
+            Access = access,
+            ReturnType = returnType,
+            Parent = parent,
+        };
+    }
+
+    private static CodeMethod CreateVoidMethod(
+        string name, CodeMethodKind kind, CodeClass parent,
+        AccessModifier access = AccessModifier.Public)
+        => CreateMethod(name, kind, parent, "void", access);
+
+    private static CodeMethod CreateSkippableMethod(
+        string name, CodeMethodKind kind, CodeClass parent,
+        string returnTypeName, string sortingValue,
+        AccessModifier access = AccessModifier.Public)
+    {
+        var method = CreateMethod(name, kind, parent, returnTypeName, access);
+        method.CustomData["skip"] = "false";
+        method.CustomData["sorting-value"] = sortingValue;
+        return method;
+    }
+    private static CodeMethod CreateDefaultInitMethod(CodeClass parent)
+    {
+        var initMethod = CreateSkippableMethod("Initialize", CodeMethodKind.Constructor, parent, "void", "1");
+        AddParameter(initMethod, "NewAPIAuthorization", $"Codeunit \"Kiota API Authorization\"");
+        return initMethod;
+    }
+
+    private static void AddConfigurationMethods(CodeClass parent)
+    {
+        var configGetter = CreateSkippableMethod("Configuration", CodeMethodKind.ClientConstructor, parent, $"Codeunit \"Kiota ClientConfig\"", "27");
+        parent.AddMethod(configGetter);
+
+        var configSetter = CreateSkippableMethod("Configuration-overload", CodeMethodKind.ClientConstructor, parent, "void", "28");
+        configSetter.SimpleName = "Configuration";
+        AddParameter(configSetter, "config", $"Codeunit \"Kiota ClientConfig\"");
+        parent.AddMethod(configSetter);
+
+        var defaultConfig = CreateSkippableMethod("DefaultConfiguration", CodeMethodKind.Factory, parent, $"Codeunit \"Kiota ClientConfig\"", "29", AccessModifier.Private);
+        parent.AddMethod(defaultConfig);
+    }
+
+    private static CodeMethod CreateResponseGetterMethod(CodeClass parent)
+    {
+        var method = CreateMethod("Response", CodeMethodKind.Custom, parent, "Codeunit System.RestClient.\"Http Response Message\"");
+        method.CustomData["sorting-value"] = "50";
+        method.CustomData["source"] = "response-getter";
+        return method;
+    }
+
+    private static CodeMethod CreateResponseSetterMethod(CodeClass parent)
+    {
+        var method = CreateVoidMethod("Response-overload", CodeMethodKind.Custom, parent);
+        method.SimpleName = "Response";
+        method.CustomData["sorting-value"] = "51";
+        method.CustomData["source"] = "response-setter";
+        method.AddParameter(new CodeParameter
+        {
+            Name = "var ApiResponse", // 'var' to pass it by reference in AL
+            Kind = CodeParameterKind.Custom,
+            Type = new CodeType { Name = "Codeunit System.RestClient.\"Http Response Message\"", IsExternal = true },
+        });
+        return method;
+    }
+
+    private static void AddSetBodyMethods(CodeClass parent)
+    {
+        var setBody1 = CreateVoidMethod("SetBody", CodeMethodKind.Deserializer, parent);
+        setBody1.CustomData["sorting-value"] = "100";
+        AddParameter(setBody1, "NewJsonBody", "JsonObject");
+        parent.AddMethod(setBody1);
+
+        var setBody2 = CreateVoidMethod("SetBody-overload", CodeMethodKind.Deserializer, parent);
+        setBody2.SimpleName = "SetBody";
+        setBody2.CustomData["sorting-value"] = "101";
+        setBody2.AddParameter(new CodeParameter { Name = "NewJsonBody", Kind = CodeParameterKind.Custom, Type = new CodeType { Name = "JsonObject", IsExternal = true }, DefaultValue = "1" });
+        setBody2.AddParameter(new CodeParameter { Name = "Debug", Kind = CodeParameterKind.Custom, Type = new CodeType { Name = "Boolean", IsExternal = true }, DefaultValue = "2" });
+        parent.AddMethod(setBody2);
+    }
+    private static void AddParameter(CodeMethod method, string name, string externalTypeName)
+    {
+        method.AddParameter(new CodeParameter
+        {
+            Name = name,
+            Kind = CodeParameterKind.Custom,
+            Type = CodeTypeBaseExtensions.CreateExternal(externalTypeName),
+        });
+    }
+
+    private static void AddParameter(CodeMethod method, string name, CodeTypeBase type)
+    {
+        method.AddParameter(new CodeParameter
+        {
+            Name = name,
+            Kind = CodeParameterKind.Custom,
+            Type = type,
+        });
     }
     #endregion
 }
