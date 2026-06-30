@@ -22,7 +22,7 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
             return;
         if (parentClass.Parent is not CodeNamespace) // seems to be a nested class, we don't support that in AL
         {
-            parentClass.CustomData["skip"] = "true";
+            parentClass.SetFlag(ALCustomDataKeys.Skip);
             return;
         }
 
@@ -43,8 +43,7 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         WriteDocumentation(parentClass, writer);
 
         // Object ID
-        parentClass.CustomData.TryGetValue("object-id", out var objectId);
-        objectId ??= "0";
+        var objectId = parentClass.GetData(ALCustomDataKeys.ObjectId, "0");
 
         // Class name (no namespace prefix - AL does not allow dots in object names)
         var className = parentClass.Name;
@@ -56,7 +55,7 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
             : string.Empty;
 
         // Pragma disable for object declaration
-        parentClass.CustomData.TryGetValue("pragmas", out var pragmas);
+        var pragmas = parentClass.GetData(ALCustomDataKeys.Pragmas);
         if (!string.IsNullOrEmpty(pragmas))
             writer.WriteLine($"#pragma warning disable {pragmas}", false);
 
@@ -95,7 +94,7 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         if (parentClass.Documentation?.DescriptionAvailable == true)
         {
             var description = parentClass.Documentation.GetDescription(static t => t.Name);
-            parentClass.CustomData.TryGetValue("documentation-pragmas", out var pragmas);
+            var pragmas = parentClass.GetData(ALCustomDataKeys.DocumentationPragmas);
             if (!string.IsNullOrEmpty(pragmas))
                 writer.WriteLine($"#pragma warning disable {pragmas}", false);
             // Strip any CustomData metadata from description
@@ -113,7 +112,7 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
     private static void WriteObjectProperties(CodeClass parentClass, LanguageWriter writer)
     {
         var objectProps = parentClass.Properties
-            .Where(p => p.CustomData.ContainsKey("object-property"))
+            .Where(p => p.HasData(ALCustomDataKeys.ObjectProperty))
             .ToList();
 
         if (objectProps.Count == 0) return;
@@ -121,7 +120,7 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         foreach (var prop in objectProps)
         {
             var propName = prop.Name;
-            var propValue = prop.CustomData.TryGetValue("value", out var val) ? val : string.Empty;
+            var propValue = prop.GetData(ALCustomDataKeys.Value, string.Empty);
             if (string.IsNullOrEmpty(propValue))
                 continue; // Skip properties without a value
             writer.WriteLine($"{propName} = {propValue};");
@@ -132,7 +131,7 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
     private void WriteGlobalVariables(CodeClass parentClass, LanguageWriter writer)
     {
         var globals = parentClass.Properties
-            .Where(p => p.CustomData.ContainsKey("global-variable"))
+            .Where(p => p.HasData(ALCustomDataKeys.GlobalVariable))
             .ToList();
 
         if (globals.Count == 0) return;
@@ -140,12 +139,11 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         // Convert to ALVariable instances
         var variables = globals.Select(p =>
         {
-            p.CustomData.TryGetValue("pragmas", out var pragmas);
-            p.CustomData.TryGetValue("value", out var value);
+            var pragmas = p.GetData(ALCustomDataKeys.Pragmas);
+            var value = p.GetData(ALCustomDataKeys.Value);
             var isLabel = p.Type.Name.Equals("Label", StringComparison.OrdinalIgnoreCase);
             var varValue = isLabel ? (value ?? string.Empty) : string.Empty;
-            var isLockedLabel = p.CustomData.TryGetValue("locked-label", out var locked) &&
-                                locked.Equals("true", StringComparison.OrdinalIgnoreCase);
+            var isLockedLabel = p.GetFlag(ALCustomDataKeys.LockedLabel);
 
             return new ALVariable(p.Name, p.Type, varValue, string.Empty, pragmas ?? string.Empty, isLockedLabel);
         }).ToList();
@@ -166,7 +164,7 @@ public class CodeClassDeclarationWriter : BaseElementWriter<ClassDeclaration, AL
         writer.IncreaseIndent();
 
         // Pragma disable for variables
-        parentClass.CustomData.TryGetValue("pragmas-variables", out var varPragmas);
+        var varPragmas = parentClass.GetData(ALCustomDataKeys.PragmasVariables);
         if (!string.IsNullOrEmpty(varPragmas))
             writer.WriteLine($"#pragma warning disable {varPragmas}", false);
 

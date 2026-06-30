@@ -33,7 +33,7 @@ public class CodeEnumWriter : BaseElementWriter<CodeEnum, ALConventionService>
         if (codeElement.Documentation?.DescriptionAvailable == true)
         {
             var description = codeElement.Documentation.GetDescription(static t => t.Name);
-            codeElement.CustomData.TryGetValue("documentation-pragmas", out var docPragmas);
+            var docPragmas = codeElement.GetData(ALCustomDataKeys.DocumentationPragmas);
             if (!string.IsNullOrEmpty(docPragmas))
                 writer.WriteLine($"#pragma warning disable {docPragmas}", false);
             if (!string.IsNullOrEmpty(description))
@@ -47,8 +47,7 @@ public class CodeEnumWriter : BaseElementWriter<CodeEnum, ALConventionService>
         }
 
         // Object ID
-        codeElement.CustomData.TryGetValue("object-id", out var objectId);
-        objectId ??= "0";
+        var objectId = codeElement.GetData(ALCustomDataKeys.ObjectId, "0");
 
         // Access modifier
         var accessModifier = codeElement.Access == AccessModifier.Public ? string.Empty : "internal ";
@@ -57,7 +56,7 @@ public class CodeEnumWriter : BaseElementWriter<CodeEnum, ALConventionService>
         var enumName = codeElement.Name;
 
         // Pragma disable for object
-        codeElement.CustomData.TryGetValue("pragmas", out var pragmas);
+        var pragmas = codeElement.GetData(ALCustomDataKeys.Pragmas);
         if (!string.IsNullOrEmpty(pragmas))
             writer.WriteLine($"#pragma warning disable {pragmas}", false);
 
@@ -70,11 +69,11 @@ public class CodeEnumWriter : BaseElementWriter<CodeEnum, ALConventionService>
 
         // Object properties (e.g., Extensible = true)
         var objectProps = codeElement.Options
-            .Where(o => o.CustomData.ContainsKey("object-property"))
+            .Where(o => o.HasData(ALCustomDataKeys.ObjectProperty))
             .ToList();
         foreach (var prop in objectProps)
         {
-            var propValue = prop.CustomData.TryGetValue("value", out var val) ? val : string.Empty;
+            var propValue = prop.GetData(ALCustomDataKeys.Value, string.Empty);
             if (string.IsNullOrEmpty(propValue))
                 continue; // Skip properties without a value
             writer.WriteLine($"{prop.Name} = {propValue};");
@@ -84,7 +83,7 @@ public class CodeEnumWriter : BaseElementWriter<CodeEnum, ALConventionService>
 
         // Enum values
         var valueOptions = codeElement.Options
-            .Where(o => !o.CustomData.ContainsKey("object-property"))
+            .Where(o => !o.HasData(ALCustomDataKeys.ObjectProperty))
             .ToList();
 
         for (var i = 0; i < valueOptions.Count; i++)
@@ -95,7 +94,7 @@ public class CodeEnumWriter : BaseElementWriter<CodeEnum, ALConventionService>
 
             writer.WriteLine($"value({i.ToString(CultureInfo.InvariantCulture)}; \"{optionName}\")");
             writer.StartBlock();
-            writer.WriteLine($"Caption = '{wireName}', Locked = true;");
+            writer.WriteLine($"Caption = '{wireName.SanitizeAlSingleQuote()}', Locked = true;");
             writer.CloseBlock();
         }
     }

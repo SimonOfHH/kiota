@@ -10,6 +10,6 @@ internal static class CodeElementExtensions
     {
         ArgumentNullException.ThrowIfNull(element);
         ArgumentNullException.ThrowIfNull(element.Parent);
-        return element.Parent.CustomData.TryGetValue("skip", out var skip) && skip.Equals("true", StringComparison.OrdinalIgnoreCase);
+        return element.Parent.GetFlag(ALCustomDataKeys.Skip);
     }
 }

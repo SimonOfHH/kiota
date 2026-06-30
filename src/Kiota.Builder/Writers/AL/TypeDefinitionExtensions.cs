@@ -18,7 +18,6 @@ public static class TypeDefinitionExtensions
     public static bool IsLocalVariable(this CodeParameter parameter)
     {
         if (parameter is null) return false;
-        if (!parameter.CustomData.TryGetValue("local-variable", out var val)) return false;
-        return val.Equals("true", StringComparison.OrdinalIgnoreCase);
+        return parameter.GetFlag(ALCustomDataKeys.LocalVariable);
     }
 }

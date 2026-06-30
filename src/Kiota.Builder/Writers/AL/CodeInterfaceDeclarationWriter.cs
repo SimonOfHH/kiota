@@ -53,12 +53,11 @@ public class CodeInterfaceDeclarationWriter : BaseElementWriter<InterfaceDeclara
                 ? $": {returnType}" : string.Empty;
 
             var parameters = method.Parameters
-                .Where(p => !p.CustomData.ContainsKey("local-variable"))
+                .Where(p => !p.HasData(ALCustomDataKeys.LocalVariable))
                 .Select(p =>
                 {
                     var typeName = conventions.GetTypeString(p.Type, p);
-                    var byRef = p.CustomData.TryGetValue("by-ref", out var refVal) &&
-                                refVal.Equals("true", StringComparison.OrdinalIgnoreCase);
+                    var byRef = p.GetFlag(ALCustomDataKeys.ByRef);
                     return byRef ? $"var {p.Name}: {typeName}" : $"{p.Name}: {typeName}";
                 });
 

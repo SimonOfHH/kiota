@@ -163,7 +163,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     clonedProp.CustomData[kvp.Key] = kvp.Value;
 
                 // Mark it so we know it was inherited (useful for debugging / future logic)
-                clonedProp.CustomData["inherited-from"] = ancestorProp.Parent?.Name ?? "unknown";
+                clonedProp.SetData(ALCustomDataKeys.InheritedFrom, ancestorProp.Parent?.Name ?? "unknown");
 
                 derivedClass.AddProperty(clonedProp);
                 existingPropertyNames.Add(clonedProp.Name);
@@ -241,7 +241,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 // Only deduplicate when the option sets are actually identical
                 if (!GetEnumOptionNames(dup.Enum).SetEquals(canonicalOptions))
                     continue;
-                canonical.Enum.CustomData["deduplicated"] = "true";
+                canonical.Enum.SetFlag(ALCustomDataKeys.Deduplicated);
                 RewriteTypeDefinitionReferences(generatedCode, dup.Enum, canonical.Enum);
                 dup.Namespace.RemoveChildElement(dup.Enum);
             }
@@ -250,7 +250,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
     private static HashSet<string> GetEnumOptionNames(CodeEnum e) =>
         new(e.Options
-               .Where(o => !o.CustomData.ContainsKey("object-property"))
+               .Where(o => !o.HasData(ALCustomDataKeys.ObjectProperty))
                .Select(o => o.Name),
            StringComparer.OrdinalIgnoreCase);
 
@@ -283,7 +283,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             {
                 if (!GetModelPropertyNames(dup.Class).SetEquals(canonicalProps))
                     continue;
-                canonical.Class.CustomData["deduplicated"] = "true";
+                canonical.Class.SetFlag(ALCustomDataKeys.Deduplicated);
                 RewriteTypeDefinitionReferences(generatedCode, dup.Class, canonical.Class);
                 dup.Namespace.RemoveChildElement(dup.Class);
             }
@@ -292,8 +292,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
     private static HashSet<string> GetModelPropertyNames(CodeClass c) =>
         new(c.Properties
-               .Where(p => !p.CustomData.ContainsKey("global-variable") &&
-                           !p.CustomData.ContainsKey("object-property"))
+               .Where(p => !p.HasData(ALCustomDataKeys.GlobalVariable) &&
+                           !p.HasData(ALCustomDataKeys.ObjectProperty))
                .Select(p => p.Name),
            StringComparer.OrdinalIgnoreCase);
 
@@ -396,7 +396,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     ReferenceEquals(ct.TypeDefinition, dictClass))
                 {
                     var dictType = new CodeType { TypeDefinition = valueTypeElement };
-                    dictType.CustomData["al-dictionary"] = "true";
+                    dictType.SetFlag(ALCustomDataKeys.AlDictionary);
                     prop.Type = dictType;
                 }
             });
@@ -459,7 +459,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     CodeMethodKind.RawUrlConstructor, CodeMethodKind.RequestGenerator,
                     CodeMethodKind.Constructor, CodeMethodKind.Factory))
             {
-                method.CustomData["skip"] = "true";
+                method.SetFlag(ALCustomDataKeys.Skip);
             }
         });
     }
@@ -473,12 +473,12 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             if (element is CodeClass c)
             {
                 var id = objectIdProvider.GetNextCodeunitId().ToString(CultureInfo.InvariantCulture);
-                c.CustomData["object-id"] = id;
+                c.SetData(ALCustomDataKeys.ObjectId, id);
             }
             else if (element is CodeEnum e)
             {
                 var id = objectIdProvider.GetNextEnumId().ToString(CultureInfo.InvariantCulture);
-                e.CustomData["object-id"] = id;
+                e.SetData(ALCustomDataKeys.ObjectId, id);
             }
         });
     }
@@ -532,10 +532,10 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 c.Name = $"{alConfig.ObjectPrefix}{processedName}{alConfig.ObjectSuffix}";
                 if (!c.Name.Equals($"{alConfig.ObjectPrefix}{originalName}{alConfig.ObjectSuffix}", StringComparison.Ordinal))
                 {
-                    if (!c.CustomData.ContainsKey("original-name"))
-                        c.CustomData["original-name"] = originalName;
-                    c.CustomData["pragmas"] = c.CustomData.TryGetValue("pragmas", out var existingPragmas) // Filename is original, but classname differs -> add pragma to suppress warning about that
-                        ? $"{existingPragmas},AA0215" : "AA0215";
+                    if (!c.HasData(ALCustomDataKeys.OriginalName))
+                        c.SetData(ALCustomDataKeys.OriginalName, originalName);
+                    // Filename is original, but classname differs -> add pragma to suppress warning about that
+                    c.AppendCsv(ALCustomDataKeys.Pragmas, "AA0215");
                 }
             }
         });
@@ -575,8 +575,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     if (!string.IsNullOrEmpty(parentSegment))
                     {
                         e.Name = parentSegment.ToFirstCharacterUpperCase() + e.Name;
-                        if (!e.CustomData.ContainsKey("original-name"))
-                            e.CustomData["original-name"] = originalName;
+                        if (!e.HasData(ALCustomDataKeys.OriginalName))
+                            e.SetData(ALCustomDataKeys.OriginalName, originalName);
                     }
                 }
 
@@ -632,8 +632,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     var description = c.Documentation.GetDescription(static t => t.Name);
                     if (!string.IsNullOrEmpty(description) && ContainsNotAllowedCharacters(description))
                     {
-                        c.CustomData["documentation-pragmas"] = c.CustomData.TryGetValue("documentation-pragmas", out var existingPragmas)
-                            ? $"{existingPragmas},AL0640" : "AL0640";
+                        c.AppendCsv(ALCustomDataKeys.DocumentationPragmas, "AL0640");
                     }
                 }
             }
@@ -644,8 +643,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     var description = e.Documentation.GetDescription(static t => t.Name);
                     if (!string.IsNullOrEmpty(description) && ContainsNotAllowedCharacters(description))
                     {
-                        e.CustomData["documentation-pragmas"] = e.CustomData.TryGetValue("documentation-pragmas", out var existingPragmas)
-                            ? $"{existingPragmas},AL0640" : "AL0640";
+                        e.AppendCsv(ALCustomDataKeys.DocumentationPragmas, "AL0640");
                     }
                 }
             }
@@ -656,8 +654,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     var description = m.Documentation.GetDescription(static t => t.Name);
                     if (!string.IsNullOrEmpty(description) && ContainsNotAllowedCharacters(description))
                     {
-                        m.CustomData["documentation-pragmas"] = m.CustomData.TryGetValue("documentation-pragmas", out var existingPragmas)
-                            ? $"{existingPragmas},AL0640" : "AL0640";
+                        m.AppendCsv(ALCustomDataKeys.DocumentationPragmas, "AL0640");
                     }
                 }
             }
@@ -680,16 +677,14 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             {
                 if (c.Name.Contains('_', StringComparison.Ordinal))
                 {
-                    c.CustomData["pragmas"] = c.CustomData.TryGetValue("pragmas", out var existingPragmas)
-                        ? $"{existingPragmas},AA0215" : "AA0215";
+                    c.AppendCsv(ALCustomDataKeys.Pragmas, "AA0215");
                 }
             }
             else if (element is CodeEnum e)
             {
                 if (e.Name.Contains('_', StringComparison.Ordinal))
                 {
-                    e.CustomData["pragmas"] = e.CustomData.TryGetValue("pragmas", out var existingPragmas)
-                        ? $"{existingPragmas},AA0215" : "AA0215";
+                    e.AppendCsv(ALCustomDataKeys.Pragmas, "AA0215");
                 }
             }
         });
@@ -705,7 +700,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             {
                 var properties = codeClass.Properties
                     .Where(p => p.Kind == CodePropertyKind.Custom &&
-                                (!p.CustomData.TryGetValue("locked", out var locked) || !locked.Equals("true", StringComparison.OrdinalIgnoreCase)))
+                                !p.GetFlag(ALCustomDataKeys.Locked))
                     .ToList();
 
                 foreach (var prop in properties)
@@ -729,20 +724,20 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         var method = CreateMethod($"Get-{usedName.ToFirstCharacterUpperCase()}", CodeMethodKind.Getter, (CodeClass)property.Parent!, (CodeTypeBase)property.Type.Clone());
         method.Documentation = (CodeDocumentation)property.Documentation.Clone();
         method.SimpleName = usedName.ToFirstCharacterUpperCase();
-        method.CustomData["method-type"] = "Getter";
-        method.CustomData["source"] = "from property";
-        method.CustomData["property-name"] = property.Name;
+        method.SetData(ALCustomDataKeys.MethodType, ALCustomDataKeys.MethodTypes.Getter);
+        method.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.FromProperty);
+        method.SetData(ALCustomDataKeys.PropertyName, property.Name);
         if (!string.IsNullOrEmpty(property.SerializationName))
-            method.CustomData["serialization-name"] = property.SerializationName;
+            method.SetData(ALCustomDataKeys.SerializationName, property.SerializationName);
 
         // Check if this is a request builder property
         if (property.Type is CodeType ct && ct.TypeDefinition is CodeClass targetClass &&
             targetClass.IsOfKind(CodeClassKind.RequestBuilder))
         {
             method.Kind = CodeMethodKind.RequestBuilderBackwardCompatibility;
-            method.CustomData["source"] = "from request-builder";
-            method.CustomData["sorting-value"] = "99";
-            method.CustomData["return-variable-name"] = "Rqst";
+            method.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.FromRequestBuilder);
+            method.SetData(ALCustomDataKeys.SortingValue, "99");
+            method.SetData(ALCustomDataKeys.ReturnVariableName, "Rqst");
             return method;
         }
 
@@ -761,8 +756,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
         if (isDictionary)
         {
-            method.CustomData["source-type"] = "Dictionary";
-            method.CustomData["return-variable-name"] = "ReturnDict";
+            method.SetData(ALCustomDataKeys.SourceType, ALCustomDataKeys.SourceTypes.Dictionary);
+            method.SetData(ALCustomDataKeys.ReturnVariableName, "ReturnDict");
 
             // JObject for iterating the JSON object keys
             AddLocalVariable(method, "JObject", "JsonObject");
@@ -781,8 +776,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         }
         else if (isCollection)
         {
-            method.CustomData["source-type"] = "List";
-            method.CustomData["return-variable-name"] = "ReturnList";
+            method.SetData(ALCustomDataKeys.SourceType, ALCustomDataKeys.SourceTypes.List);
+            method.SetData(ALCustomDataKeys.ReturnVariableName, "ReturnList");
 
             // Add JArray, JToken
             AddLocalVariable(method, "JArray", "JsonArray");
@@ -814,11 +809,11 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         var method = CreateVoidMethod($"Set-{usedName.ToFirstCharacterUpperCase()}", CodeMethodKind.Setter, (CodeClass)property.Parent!);
         method.Documentation = (CodeDocumentation)property.Documentation.Clone();
         method.SimpleName = usedName.ToFirstCharacterUpperCase();
-        method.CustomData["method-type"] = "Setter";
-        method.CustomData["source"] = "from property";
-        method.CustomData["property-name"] = property.Name;
+        method.SetData(ALCustomDataKeys.MethodType, ALCustomDataKeys.MethodTypes.Setter);
+        method.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.FromProperty);
+        method.SetData(ALCustomDataKeys.PropertyName, property.Name);
         if (!string.IsNullOrEmpty(property.SerializationName))
-            method.CustomData["serialization-name"] = property.SerializationName;
+            method.SetData(ALCustomDataKeys.SerializationName, property.SerializationName);
 
         // Add the value parameter
         AddParameter(method, "p", (CodeTypeBase)property.Type.Clone());
@@ -875,7 +870,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             if (element is CodeClass codeClass &&
                 codeClass.Name.Equals(configuration.ClientClassName, StringComparison.OrdinalIgnoreCase))
             {
-                codeClass.CustomData["client-class"] = "true";
+                codeClass.SetFlag(ALCustomDataKeys.ClientClass);
 
                 // Add usings
                 AddUsing(codeClass, alConfig.ClientNamespace);
@@ -962,22 +957,22 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
                 // Add ValidateBody
                 var validateBody = CreateVoidMethod("ValidateBody", CodeMethodKind.Custom, codeClass, AccessModifier.Private);
-                validateBody.CustomData["pragmas-variables"] = "AA0202";
+                validateBody.SetData(ALCustomDataKeys.PragmasVariables, "AA0202");
                 // Add local variables; we need to add variables for each property in the class to validate presence of required properties; the properties were previously added as getter- and setter-methods, so we can find them by looking for getter methods with source "from property"
-                var gettersHelper = codeClass.Methods.Where(m => m.IsGetterMethod() && m.CustomData.TryGetValue("source", out var source) && source.Equals("from property", StringComparison.Ordinal)).ToList();
+                var gettersHelper = codeClass.Methods.Where(m => m.IsGetterMethod() && m.GetData(ALCustomDataKeys.Source) is string source && source.Equals(ALCustomDataKeys.Sources.FromProperty, StringComparison.Ordinal)).ToList();
                 foreach (var getter in gettersHelper)
                 {
                     var propName = getter.SimpleName.ToFirstCharacterLowerCase() ?? getter.Name.ToFirstCharacterLowerCase();
                     var varName = $"{propName}";
                     AddLocalVariable(validateBody, varName, (CodeTypeBase)getter.ReturnType.Clone());
                 }
-                validateBody.CustomData["sorting-value"] = "6";
-                validateBody.CustomData["source"] = "validate-body";
+                validateBody.SetData(ALCustomDataKeys.SortingValue, "6");
+                validateBody.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.ValidateBody);
                 codeClass.AddMethod(validateBody);
 
                 // Add ToJson (simple)
                 var toJson1 = CreateMethod("ToJson", CodeMethodKind.Serializer, codeClass, "JsonObject");
-                toJson1.CustomData["sorting-value"] = "103";
+                toJson1.SetData(ALCustomDataKeys.SortingValue, "103");
                 codeClass.AddMethod(toJson1);
 
                 // Add ToJson (with parameters - overload)
@@ -986,8 +981,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 {
                     var toJson2 = CreateMethod("ToJson-overload", CodeMethodKind.Serializer, codeClass, "JsonObject");
                     toJson2.SimpleName = "ToJson";
-                    toJson2.CustomData["sorting-value"] = "104";
-                    toJson2.CustomData["pragmas"] = "AA0245";
+                    toJson2.SetData(ALCustomDataKeys.SortingValue, "104");
+                    toJson2.SetData(ALCustomDataKeys.Pragmas, "AA0245");
 
                     // Add TargetJson local var
                     AddLocalVariable(toJson2, "TargetJson", "JsonObject");
@@ -1002,18 +997,18 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                             Kind = CodeParameterKind.Custom,
                             Type = paramType,
                         };
-                        param.CustomData["property-name"] = getter.CustomData["property-name"];
+                        param.SetData(ALCustomDataKeys.PropertyName, getter.GetData(ALCustomDataKeys.PropertyName, string.Empty));
                         if (paramType.IsDictionaryType())
                         {
                             var singularName = CodeMethodExtensions.GetSingularName(paramName, toJson2.Parameters);
-                            param.CustomData["key-variable"] = $"{singularName}Key";
-                            param.CustomData["value-variable"] = $"{singularName}Value";
-                            param.CustomData["object-variable"] = $"{paramName}Object";
+                            param.SetData(ALCustomDataKeys.KeyVariable, $"{singularName}Key");
+                            param.SetData(ALCustomDataKeys.ValueVariable, $"{singularName}Value");
+                            param.SetData(ALCustomDataKeys.ObjectVariable, $"{paramName}Object");
 
                             AddLocalVariable(toJson2, $"{singularName}Key", "Text");
 
                             var type = (CodeTypeBase)getter.ReturnType.Clone();
-                            if (type is CodeType et) et.CustomData.Remove("al-dictionary");
+                            if (type is CodeType et) et.RemoveData(ALCustomDataKeys.AlDictionary);
                             AddLocalVariable(toJson2, $"{singularName}Value", type);
 
                             AddLocalVariable(toJson2, $"{paramName}Object", "JsonObject");
@@ -1023,10 +1018,10 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                             paramType is CodeType pt && pt.TypeDefinition is CodeClass)
                         {
                             var singularName = CodeMethodExtensions.GetSingularName(paramName, toJson2.Parameters);
-                            param.CustomData["foreach-variable"] = singularName;
+                            param.SetData(ALCustomDataKeys.ForeachVariable, singularName);
 
                             var arrayName = $"{paramName}Array";
-                            param.CustomData["corresponding-array"] = arrayName;
+                            param.SetData(ALCustomDataKeys.CorrespondingArray, arrayName);
 
                             AddLocalVariable(toJson2, arrayName, "JsonArray");
 
@@ -1050,7 +1045,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         {
             if (element is CodeClass codeClass &&
                 codeClass.IsOfKind(CodeClassKind.RequestBuilder) &&
-                !codeClass.CustomData.ContainsKey("client-class"))
+                !codeClass.HasData(ALCustomDataKeys.ClientClass))
             {
                 // Add usings
                 AddUsing(codeClass, alConfig.ClientNamespace);
@@ -1102,9 +1097,9 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                         // Update the indexer method to be Item_Idx
                         indexerMethod.Name = "Item_Idx";
                         indexerMethod.Kind = CodeMethodKind.Custom;
-                        indexerMethod.CustomData["source"] = "from indexer";
-                        indexerMethod.CustomData["sorting-value"] = "4";
-                        indexerMethod.CustomData["return-variable-name"] = "Rqst";
+                        indexerMethod.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.FromIndexer);
+                        indexerMethod.SetData(ALCustomDataKeys.SortingValue, "4");
+                        indexerMethod.SetData(ALCustomDataKeys.ReturnVariableName, "Rqst");
                     }
                 }
             }
@@ -1159,11 +1154,11 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     DescriptionTemplate = $"Convenience helper that unwraps the value from the {methodBaseName} wrapper object.",
                 };
                 convenienceGetter.SimpleName = $"{methodBaseName}_Value";
-                convenienceGetter.CustomData["method-type"] = "Getter";
-                convenienceGetter.CustomData["source"] = "value-wrapper-getter";
-                convenienceGetter.CustomData["wrapper-getter-name"] = methodBaseName;
-                if (getter.CustomData.TryGetValue("serialization-name", out var serName))
-                    convenienceGetter.CustomData["serialization-name"] = serName;
+                convenienceGetter.SetData(ALCustomDataKeys.MethodType, ALCustomDataKeys.MethodTypes.Getter);
+                convenienceGetter.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.ValueWrapperGetter);
+                convenienceGetter.SetData(ALCustomDataKeys.WrapperGetterName, methodBaseName);
+                if (getter.TryGetData(ALCustomDataKeys.SerializationName, out var serName))
+                    convenienceGetter.SetData(ALCustomDataKeys.SerializationName, serName);
                 methodsToAdd.Add(convenienceGetter);
 
                 // Convenience setter: FirstName(p: Text)
@@ -1173,10 +1168,10 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     DescriptionTemplate = $"Convenience helper that wraps the value into a {methodBaseName} wrapper object.",
                 };
                 convenienceSetter.SimpleName = $"{methodBaseName}";
-                convenienceSetter.CustomData["method-type"] = "Setter";
-                convenienceSetter.CustomData["source"] = "value-wrapper-setter";
-                convenienceSetter.CustomData["wrapper-getter-name"] = methodBaseName;
-                convenienceSetter.CustomData["wrapper-class-name"] = wrapperClass.Name;
+                convenienceSetter.SetData(ALCustomDataKeys.MethodType, ALCustomDataKeys.MethodTypes.Setter);
+                convenienceSetter.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.ValueWrapperSetter);
+                convenienceSetter.SetData(ALCustomDataKeys.WrapperGetterName, methodBaseName);
+                convenienceSetter.SetData(ALCustomDataKeys.WrapperClassName, wrapperClass.Name);
 
                 AddParameter(convenienceSetter, "p", (CodeTypeBase)primitiveType.Clone());
 
@@ -1201,7 +1196,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         var getters = c.Methods.Where(m => m.IsGetterMethod()).ToList();
         if (getters.Count != 1) return false;
         var getter = getters[0];
-        var serName = getter.CustomData.TryGetValue("serialization-name", out var sn) ? sn : getter.SimpleName ?? getter.Name;
+        var serName = getter.GetData(ALCustomDataKeys.SerializationName) ?? getter.SimpleName ?? getter.Name;
         return string.Equals(serName, "value", StringComparison.OrdinalIgnoreCase)
             && getter.ReturnType is CodeType ct
             && ct.TypeDefinition is null; // primitive type — no TypeDefinition
@@ -1239,7 +1234,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             if (bodyParam is null) return;
             if (!executor.Parameters.Any(p => p.Type is CodeType ct && ct.IsKiotaFileBodyType()))
                 return;
-            if (!bodyParam.CustomData.TryGetValue("multipart-file-fields", out var fieldsCsv) ||
+            if (!bodyParam.TryGetData(ALCustomDataKeys.MultipartFileFields, out var fieldsCsv) ||
                 string.IsNullOrEmpty(fieldsCsv))
                 return;
 
@@ -1265,8 +1260,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         var overload = (executor.Clone() as CodeMethod)!;
         overload.SimpleName = overload.Name;
         overload.Name += $"-overload-{overloadIndex}";
-        overload.CustomData["source"] = "multipart-overload";
-        overload.CustomData["multipart-field-name"] = fieldName;
+        overload.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.MultipartOverload);
+        overload.SetData(ALCustomDataKeys.MultipartFieldName, fieldName);
 
         // Rebuild the parameter list: drop the original body and all local variables,
         // then append the field-specific Filename + FileBody parameters.
@@ -1345,8 +1340,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     if (returnType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None)
                     {
                         // Collection return
-                        method.CustomData["return-variable-name"] = "Target";
-                        method.CustomData["source-type"] = "List";
+                        method.SetData(ALCustomDataKeys.ReturnVariableName, "Target");
+                        method.SetData(ALCustomDataKeys.SourceType, ALCustomDataKeys.SourceTypes.List);
 
                         var elementType = (CodeTypeBase)returnType.Clone();
                         elementType.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.None;
@@ -1358,12 +1353,12 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     else if (ct.TypeDefinition is CodeClass)
                     {
                         // Single codeunit return
-                        method.CustomData["return-variable-name"] = "Target";
+                        method.SetData(ALCustomDataKeys.ReturnVariableName, "Target");
                     }
                     else if (conventionService.GetTypeString(ct, method).Equals("InStream", StringComparison.OrdinalIgnoreCase))
                     {
                         // Stream return
-                        method.CustomData["return-variable-name"] = "InStr";
+                        method.SetData(ALCustomDataKeys.ReturnVariableName, "InStr");
                     }
                 }
 
@@ -1390,8 +1385,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                                 Name = paramClassName,
                                 Kind = CodeClassKind.QueryParameters,
                             };
-                            paramClass.CustomData["parameter-codeunit"] = "true";
-                            paramClass.CustomData["object-id"] = objectIdProvider.GetNextCodeunitId().ToString(CultureInfo.InvariantCulture);
+                            paramClass.SetFlag(ALCustomDataKeys.ParameterCodeunit);
+                            paramClass.SetData(ALCustomDataKeys.ObjectId, objectIdProvider.GetNextCodeunitId().ToString(CultureInfo.InvariantCulture));
                             parentNs.AddClass(paramClass);
 
                             // Using for the client namespace (where Kiota Query Param Formatter lives)
@@ -1407,8 +1402,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
                             // SetQueryParameter(QueryKey: Text; QueryValue: Text) method
                             var setQueryParamMethod = CreateVoidMethod("SetQueryParameter", CodeMethodKind.Custom, paramClass);
-                            setQueryParamMethod.CustomData["source"] = "query-param-generic-setter";
-                            setQueryParamMethod.CustomData["sorting-value"] = "1";
+                            setQueryParamMethod.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.QueryParamGenericSetter);
+                            setQueryParamMethod.SetData(ALCustomDataKeys.SortingValue, "1");
                             AddParameter(setQueryParamMethod, "QueryKey", "Text");
                             AddParameter(setQueryParamMethod, "QueryValue", "Text");
                             paramClass.AddMethod(setQueryParamMethod);
@@ -1441,18 +1436,18 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                                     typeCategory = "primitive";
 
                                 var typedSetterMethod = CreateVoidMethod($"Set{qp.Name.ToFirstCharacterUpperCase()}", CodeMethodKind.Custom, paramClass);
-                                typedSetterMethod.CustomData["source"] = "query-param-typed-setter";
-                                typedSetterMethod.CustomData["sorting-value"] = "2";
-                                typedSetterMethod.CustomData["query-param-name"] = qp.Name;
-                                typedSetterMethod.CustomData["query-param-type-category"] = typeCategory;
+                                typedSetterMethod.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.QueryParamTypedSetter);
+                                typedSetterMethod.SetData(ALCustomDataKeys.SortingValue, "2");
+                                typedSetterMethod.SetData(ALCustomDataKeys.QueryParamName, qp.Name);
+                                typedSetterMethod.SetData(ALCustomDataKeys.QueryParamTypeCategory, typeCategory);
                                 AddParameter(typedSetterMethod, "Value", (CodeTypeBase)qp.Type.Clone());
                                 paramClass.AddMethod(typedSetterMethod);
                             }
 
                             // GetQueryParameters(): Dictionary of [Text, Text] method
                             var getQueryParamsMethod = CreateMethod("GetQueryParameters", CodeMethodKind.Custom, paramClass, "Dictionary of [Text, Text]");
-                            getQueryParamsMethod.CustomData["source"] = "query-param-getter";
-                            getQueryParamsMethod.CustomData["sorting-value"] = "3";
+                            getQueryParamsMethod.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.QueryParamGetter);
+                            getQueryParamsMethod.SetData(ALCustomDataKeys.SortingValue, "3");
                             paramClass.AddMethod(getQueryParamsMethod);
 
                             // Add parameter to executor method
@@ -1468,7 +1463,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                                 },
                             };
                             method.AddParameter(paramsParam);
-                            method.CustomData["use-parameter-codeunit"] = "true";
+                            method.SetFlag(ALCustomDataKeys.UseParameterCodeunit);
                         }
                         catch (InvalidOperationException) { }
                     }
@@ -1633,7 +1628,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 {
                     if (reservedNames.ReservedNames.Contains(param.Name))
                     {
-                        param.CustomData["property-name"] = param.Name;
+                        param.SetData(ALCustomDataKeys.PropertyName, param.Name);
                         param.Name += "_";
                     }
                 }
@@ -1676,10 +1671,10 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             Type = new CodeType { Name = typeName, IsExternal = true },
             DefaultValue = defaultValue,
         };
-        prop.CustomData["global-variable"] = "true";
-        prop.CustomData["locked"] = "true";
+        prop.SetFlag(ALCustomDataKeys.GlobalVariable);
+        prop.SetFlag(ALCustomDataKeys.Locked);
         if (!string.IsNullOrEmpty(pragmas))
-            prop.CustomData["pragmas"] = pragmas;
+            prop.SetData(ALCustomDataKeys.Pragmas, pragmas);
         codeClass.AddProperty(prop);
     }
 
@@ -1692,11 +1687,11 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             Type = new CodeType { Name = "Label", IsExternal = true },
             DefaultValue = defaultValue,
         };
-        prop.CustomData["global-variable"] = "true";
-        prop.CustomData["locked"] = "true";
-        prop.CustomData["value"] = value;
+        prop.SetFlag(ALCustomDataKeys.GlobalVariable);
+        prop.SetFlag(ALCustomDataKeys.Locked);
+        prop.SetData(ALCustomDataKeys.Value, value);
         if (locked)
-            prop.CustomData["locked-label"] = "true";
+            prop.SetFlag(ALCustomDataKeys.LockedLabel);
         codeClass.AddProperty(prop);
     }
     private static void AddLocalVariable(CodeMethod method, string name, CodeProperty fromProperty, bool clearCollectionInformation)
@@ -1704,7 +1699,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         var genericType = (CodeTypeBase)fromProperty.Type.Clone();
         if (clearCollectionInformation)
         {
-            if (genericType is CodeType gt) gt.CustomData.Remove("al-dictionary");
+            if (genericType is CodeType gt) gt.RemoveData(ALCustomDataKeys.AlDictionary);
             genericType.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.None;
         }
         AddLocalVariable(method, name, genericType);
@@ -1718,7 +1713,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             Kind = CodeParameterKind.Custom,
             Type = type,
         };
-        param.CustomData["local-variable"] = "true";
+        param.SetFlag(ALCustomDataKeys.LocalVariable);
         method.AddParameter(param);
     }
 
@@ -1733,18 +1728,18 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             Kind = CodePropertyKind.Custom,
             Type = CodeTypeBaseExtensions.CreateExternal("ObjectProperty"),
         };
-        prop.CustomData["object-property"] = "true";
-        prop.CustomData["value"] = value;
-        prop.CustomData["locked"] = "true";
+        prop.SetFlag(ALCustomDataKeys.ObjectProperty);
+        prop.SetData(ALCustomDataKeys.Value, value);
+        prop.SetFlag(ALCustomDataKeys.Locked);
         codeClass.AddProperty(prop);
     }
 
     private static void AddObjectOption(CodeEnum codeEnum, string name, string value)
     {
         var option = new CodeEnumOption { Name = name };
-        option.CustomData["object-property"] = "true";
-        option.CustomData["value"] = value;
-        option.CustomData["locked"] = "true";
+        option.SetFlag(ALCustomDataKeys.ObjectProperty);
+        option.SetData(ALCustomDataKeys.Value, value);
+        option.SetFlag(ALCustomDataKeys.Locked);
         codeEnum.AddOption(option);
     }
 
@@ -1787,8 +1782,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         AccessModifier access = AccessModifier.Public)
     {
         var method = CreateMethod(name, kind, parent, returnTypeName, access);
-        method.CustomData["skip"] = "false";
-        method.CustomData["sorting-value"] = sortingValue;
+        method.SetFlag(ALCustomDataKeys.Skip, false);
+        method.SetData(ALCustomDataKeys.SortingValue, sortingValue);
         return method;
     }
     private static CodeMethod CreateDefaultInitMethod(CodeClass parent)
@@ -1815,8 +1810,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     private static CodeMethod CreateResponseGetterMethod(CodeClass parent)
     {
         var method = CreateMethod("Response", CodeMethodKind.Custom, parent, "Codeunit System.RestClient.\"Http Response Message\"");
-        method.CustomData["sorting-value"] = "50";
-        method.CustomData["source"] = "response-getter";
+        method.SetData(ALCustomDataKeys.SortingValue, "50");
+        method.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.ResponseGetter);
         return method;
     }
 
@@ -1824,8 +1819,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     {
         var method = CreateVoidMethod("Response-overload", CodeMethodKind.Custom, parent);
         method.SimpleName = "Response";
-        method.CustomData["sorting-value"] = "51";
-        method.CustomData["source"] = "response-setter";
+        method.SetData(ALCustomDataKeys.SortingValue, "51");
+        method.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.ResponseSetter);
         method.AddParameter(new CodeParameter
         {
             Name = "var ApiResponse", // 'var' to pass it by reference in AL
@@ -1838,13 +1833,13 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     private static void AddSetBodyMethods(CodeClass parent)
     {
         var setBody1 = CreateVoidMethod("SetBody", CodeMethodKind.Deserializer, parent);
-        setBody1.CustomData["sorting-value"] = "100";
+        setBody1.SetData(ALCustomDataKeys.SortingValue, "100");
         AddParameter(setBody1, "NewJsonBody", "JsonObject");
         parent.AddMethod(setBody1);
 
         var setBody2 = CreateVoidMethod("SetBody-overload", CodeMethodKind.Deserializer, parent);
         setBody2.SimpleName = "SetBody";
-        setBody2.CustomData["sorting-value"] = "101";
+        setBody2.SetData(ALCustomDataKeys.SortingValue, "101");
         setBody2.AddParameter(new CodeParameter { Name = "NewJsonBody", Kind = CodeParameterKind.Custom, Type = new CodeType { Name = "JsonObject", IsExternal = true }, DefaultValue = "1" });
         setBody2.AddParameter(new CodeParameter { Name = "Debug", Kind = CodeParameterKind.Custom, Type = new CodeType { Name = "Boolean", IsExternal = true }, DefaultValue = "2" });
         parent.AddMethod(setBody2);

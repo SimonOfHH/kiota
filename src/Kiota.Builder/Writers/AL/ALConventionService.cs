@@ -133,7 +133,7 @@ public class ALConventionService : CommonLanguageConventionService
             "int64" => "BigInteger",
             "sbyte" or "byte" => "Byte",
             "float" or "double" or "decimal" => "Decimal",
-            "binary" or "base64" or "base64url" => "HttpContent",
+            "binary" or "base64" or "base64url" => "InStream", // will need separate handling for serialization/deserialization
             "date" or "dateonly" => "Date",
             "time" or "timeonly" => "Time",
             "datetime" or "datetimeoffset" => "DateTime",
@@ -214,8 +214,8 @@ public class ALConventionService : CommonLanguageConventionService
             return name;
 
         // Store original name
-        if (element is not null && !element.CustomData.ContainsKey("original-name"))
-            element.CustomData["original-name"] = name;
+        if (element is not null && !element.HasData(ALCustomDataKeys.OriginalName))
+            element.SetData(ALCustomDataKeys.OriginalName, name);
 
         // Apply abbreviations
         var abbreviated = ApplyAbbreviations(name, maxLength);
@@ -239,8 +239,8 @@ public class ALConventionService : CommonLanguageConventionService
             return name;
 
         // Store original name
-        if (element is not null && !element.CustomData.ContainsKey("original-name"))
-            element.CustomData["original-name"] = name;
+        if (element is not null && !element.HasData(ALCustomDataKeys.OriginalName))
+            element.SetData(ALCustomDataKeys.OriginalName, name);
 
         // Try appending namespace segment
         if (!string.IsNullOrEmpty(parentNamespaceSegment))
@@ -313,14 +313,15 @@ public class ALConventionService : CommonLanguageConventionService
     private static void AddPragma(CodeElement? element, string pragma)
     {
         if (element is null) return;
-        if (element.CustomData.TryGetValue("pragmas", out var existing) && !string.IsNullOrEmpty(existing))
+        var existing = element.GetData(ALCustomDataKeys.Pragmas);
+        if (!string.IsNullOrEmpty(existing))
         {
             if (!existing.Contains(pragma, StringComparison.OrdinalIgnoreCase))
-                element.CustomData["pragmas"] = $"{existing},{pragma}";
+                element.SetData(ALCustomDataKeys.Pragmas, $"{existing},{pragma}");
         }
         else
         {
-            element.CustomData["pragmas"] = pragma;
+            element.SetData(ALCustomDataKeys.Pragmas, pragma);
         }
     }
 

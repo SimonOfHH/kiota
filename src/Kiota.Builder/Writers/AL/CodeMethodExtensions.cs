@@ -38,17 +38,14 @@ public static class CodeMethodExtensions
     public static bool HasVariables(this CodeMethod method)
     {
         ArgumentNullException.ThrowIfNull(method);
-        return method.Parameters.Any(p =>
-            p.CustomData.TryGetValue("local-variable", out var val) &&
-            val.Equals("true", StringComparison.OrdinalIgnoreCase));
+        return method.Parameters.Any(p => p.GetFlag(ALCustomDataKeys.LocalVariable));
     }
 
     public static IEnumerable<CodeParameter> Variables(this CodeMethod method)
     {
         ArgumentNullException.ThrowIfNull(method);
         var variables = method.Parameters
-            .Where(p => p.CustomData.TryGetValue("local-variable", out var val) &&
-                        val.Equals("true", StringComparison.OrdinalIgnoreCase))
+            .Where(p => p.GetFlag(ALCustomDataKeys.LocalVariable))
             .ToList();
 
         // Codeunit types first
@@ -62,55 +59,46 @@ public static class CodeMethodExtensions
     {
         ArgumentNullException.ThrowIfNull(method);
         return method.Parameters
-            .Where(p => !p.CustomData.ContainsKey("local-variable") ||
-                        !p.CustomData["local-variable"].Equals("true", StringComparison.OrdinalIgnoreCase))
+            .Where(p => !p.GetFlag(ALCustomDataKeys.LocalVariable))
             .OrderBy(p => p.DefaultValue ?? string.Empty, StringComparer.OrdinalIgnoreCase);
     }
 
     public static bool IsPropertyMethod(this CodeMethod method)
     {
         ArgumentNullException.ThrowIfNull(method);
-        return method.CustomData.TryGetValue("source", out var val) &&
-               val.Contains("from property", StringComparison.OrdinalIgnoreCase);
+        return method.GetData(ALCustomDataKeys.Source)?.Contains(ALCustomDataKeys.Sources.FromProperty, StringComparison.OrdinalIgnoreCase) == true;
     }
 
     public static bool IsGetterMethod(this CodeMethod method)
     {
         return method.IsPropertyMethod() &&
                method.IsOfKind(CodeMethodKind.Getter) &&
-               method.CustomData.TryGetValue("method-type", out var val) &&
-               val.Equals("Getter", StringComparison.OrdinalIgnoreCase);
+               method.GetData(ALCustomDataKeys.MethodType)?.Equals(ALCustomDataKeys.MethodTypes.Getter, StringComparison.OrdinalIgnoreCase) == true;
     }
 
     public static bool IsSetterMethod(this CodeMethod method)
     {
         return method.IsPropertyMethod() &&
                method.IsOfKind(CodeMethodKind.Setter) &&
-               method.CustomData.TryGetValue("method-type", out var val) &&
-               val.Equals("Setter", StringComparison.OrdinalIgnoreCase);
+               method.GetData(ALCustomDataKeys.MethodType)?.Equals(ALCustomDataKeys.MethodTypes.Setter, StringComparison.OrdinalIgnoreCase) == true;
     }
 
     public static int GetSortingValue(this CodeMethod method, int defaultValue = 0)
     {
         ArgumentNullException.ThrowIfNull(method);
-        return method.CustomData.TryGetValue("sorting-value", out var val) &&
-               int.TryParse(val, out var sortVal) ? sortVal : defaultValue;
+        return method.GetInt(ALCustomDataKeys.SortingValue, defaultValue);
     }
 
     public static ALVariable ToVariable(this CodeMethod method)
     {
         ArgumentNullException.ThrowIfNull(method);
-        method.CustomData.TryGetValue("pragmas", out var pragmas);
+        var pragmas = method.GetData(ALCustomDataKeys.Pragmas);
         return new ALVariable(method.Name, method.ReturnType, string.Empty, string.Empty, pragmas ?? string.Empty);
     }
 
     public static bool IsConvenienceOverload(this CodeMethod method)
     {
         ArgumentNullException.ThrowIfNull(method);
-        if (method.CustomData.TryGetValue("source", out var val))
-        {
-            return val.Contains("multipart-overload", StringComparison.OrdinalIgnoreCase);
-        }
-        return false;
+        return method.GetData(ALCustomDataKeys.Source)?.Contains(ALCustomDataKeys.Sources.MultipartOverload, StringComparison.OrdinalIgnoreCase) == true;
     }
 }

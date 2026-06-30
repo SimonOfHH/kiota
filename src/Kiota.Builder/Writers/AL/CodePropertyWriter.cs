@@ -15,16 +15,15 @@ public class CodePropertyWriter : BaseElementWriter<CodeProperty, ALConventionSe
             return;
 
         // Global variables are written by CodeClassDeclarationWriter
-        if (codeElement.CustomData.ContainsKey("global-variable"))
+        if (codeElement.HasData(ALCustomDataKeys.GlobalVariable))
             return;
 
         // Object properties are written by CodeClassDeclarationWriter
-        if (codeElement.CustomData.ContainsKey("object-property"))
+        if (codeElement.HasData(ALCustomDataKeys.ObjectProperty))
             return;
 
         // Locked properties were converted to methods by the refiner
-        if (codeElement.CustomData.TryGetValue("locked", out var locked) &&
-            locked.Equals("true", StringComparison.OrdinalIgnoreCase))
+        if (codeElement.GetFlag(ALCustomDataKeys.Locked))
             return;
 
         // Skip any remaining properties — AL doesn't have member fields

@@ -2,6 +2,7 @@
 using System.IO;
 using Kiota.Builder.CodeDOM;
 using Kiota.Builder.Extensions;
+using Kiota.Builder.Writers.AL;
 
 namespace Kiota.Builder.PathSegmenters;
 
@@ -57,8 +58,21 @@ public class ALPathSegmenter : CommonPathSegmenter
 
     private static string GetOriginalName(CodeElement element)
     {
-        if (element.CustomData.TryGetValue("original-name", out var originalName) && !string.IsNullOrEmpty(originalName))
-            return originalName;
-        return element.Name;
+        var originalName = element.GetData(ALCustomDataKeys.OriginalName);
+        if (!string.IsNullOrEmpty(originalName))
+            return SanitizeFileNameSegment(originalName);
+        return SanitizeFileNameSegment(element.Name);
+    }
+
+    private static string SanitizeFileNameSegment(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+            return name;
+        // Strip any directory components to prevent path traversal (e.g. "../../evil").
+        name = Path.GetFileName(name);
+        // Remove characters that are invalid in file names or that could otherwise alter the target path.
+        foreach (var invalid in Path.GetInvalidFileNameChars())
+            name = name.Replace(invalid.ToString(), string.Empty, StringComparison.Ordinal);
+        return name;
     }
 }

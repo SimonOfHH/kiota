@@ -26,6 +26,39 @@ public static class StringExtensions
         => SanitizeForQuotedLiteral(original, '\'');
 
     /// <summary>
+    /// Sanitizes a value for embedding inside a single-quoted AL string literal (Label, Caption, text constant).
+    /// AL escapes an embedded single quote by doubling it (Pascal/SQL convention, not backslash escaping) and
+    /// does not allow raw control characters such as line breaks inside a literal.
+    /// </summary>
+    /// <param name="original">The value to embed.</param>
+    /// <returns>The value escaped for an AL single-quoted literal.</returns>
+    public static string SanitizeAlSingleQuote(this string original)
+    {
+        if (string.IsNullOrEmpty(original)) return original;
+        var builder = new StringBuilder(original.Length);
+        foreach (var character in original)
+        {
+            switch (character)
+            {
+                case '\'':
+                    builder.Append("''");
+                    break;
+                case '\r':
+                case '\n':
+                case '\t':
+                    builder.Append(' ');
+                    break;
+                default:
+                    if (char.IsControl(character))
+                        continue; // drop control characters that would break out of the AL literal
+                    builder.Append(character);
+                    break;
+            }
+        }
+        return builder.ToString();
+    }
+
+    /// <summary>
     /// Sanitizes the inner content of a quoted string literal while preserving the surrounding quotes.
     /// </summary>
     /// <param name="original">A quoted string literal.</param>

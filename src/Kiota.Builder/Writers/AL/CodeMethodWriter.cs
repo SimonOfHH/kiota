@@ -18,8 +18,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             return;
 
         // Skip logic
-        if (codeElement.CustomData.TryGetValue("skip", out var skip) &&
-            skip.Equals("true", StringComparison.OrdinalIgnoreCase))
+        if (codeElement.GetFlag(ALCustomDataKeys.Skip))
             return;
 
         if (codeElement.Kind == CodeMethodKind.RawUrlConstructor ||
@@ -50,14 +49,14 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         // Return type
         var returnType = GetReturnTypeString(method);
 
-        var returnVarName = method.CustomData.TryGetValue("return-variable-name", out var returnVar) ? returnVar : null;
+        var returnVarName = method.GetData(ALCustomDataKeys.ReturnVariableName);
         if (!String.IsNullOrEmpty(returnVarName))
             returnVarName = $" {returnVarName}"; // Precede with space for formatting, that's what the AL formatter would do anyway
         var returnClause = !string.IsNullOrEmpty(returnType) && !returnType.Equals("void", StringComparison.OrdinalIgnoreCase)
             ? $"{returnVarName}: {returnType}" : string.Empty;
 
         // Pragma for method
-        method.CustomData.TryGetValue("pragmas", out var pragmas);
+        var pragmas = method.GetData(ALCustomDataKeys.Pragmas);
         if (!string.IsNullOrEmpty(pragmas))
             writer.WriteLine($"#pragma warning disable {pragmas}", false);
 
@@ -72,8 +71,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             writer.WriteLine("var");
             writer.IncreaseIndent();
 
-            var varPragmas = string.Empty;
-            method.CustomData.TryGetValue("pragmas-variables", out varPragmas);
+            var varPragmas = method.GetData(ALCustomDataKeys.PragmasVariables);
 
             if (!string.IsNullOrEmpty(varPragmas))
                 writer.WriteLine($"#pragma warning disable {varPragmas}", false);
@@ -99,8 +97,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var typeName = conventions.GetTypeString(param.Type, param);
 
         // Check if parameter needs 'var' (by reference)
-        var byRef = param.CustomData.TryGetValue("by-ref", out var refVal) &&
-                    refVal.Equals("true", StringComparison.OrdinalIgnoreCase);
+        var byRef = param.GetFlag(ALCustomDataKeys.ByRef);
 
         return byRef ? $"var {param.Name}: {typeName}" : $"{param.Name}: {typeName}";
     }
@@ -176,9 +173,9 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var generatorMethod = parentClass?.Methods
             .FirstOrDefault(m => m.IsOfKind(CodeMethodKind.RequestGenerator) && m.HttpMethod == method.HttpMethod);
 
-        if (method.CustomData.TryGetValue("source", out var source) && source == "multipart-overload")
+        if (method.SourceIs(ALCustomDataKeys.Sources.MultipartOverload))
         {
-            var fieldName = method.CustomData.TryGetValue("multipart-field-name", out var field) ? field : "file";
+            var fieldName = method.GetData(ALCustomDataKeys.MultipartFieldName, "file");
             writer.WriteLine($"body.Initialize(Filename);");
             writer.WriteLine($"body.WriteMultipartContent(FileBody, '{fieldName}');");
             if (method.Parameters.Any(p => p.Name.Equals("Parameters", StringComparison.OrdinalIgnoreCase)))
@@ -201,8 +198,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
         writer.WriteLine("RequestHandler.SetClientConfig(ReqConfig);");
         // Query parameters
-        if (method.CustomData.TryGetValue("use-parameter-codeunit", out var usePcu) &&
-            usePcu.Equals("true", StringComparison.OrdinalIgnoreCase))
+        if (method.GetFlag(ALCustomDataKeys.UseParameterCodeunit))
         {
             var paramsParam = method.Parameters.FirstOrDefault(p => p.Name.Equals("Parameters", StringComparison.OrdinalIgnoreCase));
             if (paramsParam is not null)
@@ -312,8 +308,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var isCollection = returnType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None;
         var isEnum = returnType is CodeType { TypeDefinition: CodeEnum };
         var isCodeunit = returnType is CodeType { TypeDefinition: CodeClass };
-        var isWrapperGetter = method.CustomData.TryGetValue("source", out var wrapperVal) &&
-                             wrapperVal.Equals("value-wrapper-getter", StringComparison.OrdinalIgnoreCase);
+        var isWrapperGetter = method.SourceIs(ALCustomDataKeys.Sources.ValueWrapperGetter);
         if (isWrapperGetter)
         {
             WriteValueWrapperGetterBody(method, writer);
@@ -460,7 +455,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     private void WriteSetterBody(CodeMethod method, LanguageWriter writer)
     {
         var serializationName = GetSerializationName(method);
-        var returnType = method.Parameters.FirstOrDefault(p => !p.CustomData.ContainsKey("local-variable"))?.Type;
+        var returnType = method.Parameters.FirstOrDefault(p => !p.HasData(ALCustomDataKeys.LocalVariable))?.Type;
         if (returnType is null) return;
         var isDictionary = returnType.IsDictionaryType();
         var isCollection = returnType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None;
@@ -468,8 +463,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var isEnum = returnType is CodeType { TypeDefinition: CodeEnum };
         var isCodeunit = returnType is CodeType { TypeDefinition: CodeClass };
 #pragma warning restore CA1508
-        var isWrapperSetter = method.CustomData.TryGetValue("source", out var wrapperVal) &&
-                             wrapperVal.Equals("value-wrapper-setter", StringComparison.OrdinalIgnoreCase);
+        var isWrapperSetter = method.SourceIs(ALCustomDataKeys.Sources.ValueWrapperSetter);
         if (isWrapperSetter)
         {
             WriteValueWrapperSetterBody(method, writer);
@@ -628,7 +622,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
     private void WriteToJsonBody(CodeMethod method, LanguageWriter writer)
     {
-        var hasParams = method.Parameters.Any(p => !p.CustomData.ContainsKey("local-variable"));
+        var hasParams = method.Parameters.Any(p => !p.HasData(ALCustomDataKeys.LocalVariable));
 
         if (!hasParams)
         {
@@ -639,14 +633,14 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         {
             // Full version with parameters
             var parameters = method.Parameters
-                .Where(p => !p.CustomData.ContainsKey("local-variable"))
+                .Where(p => !p.HasData(ALCustomDataKeys.LocalVariable))
                 .ToList();
 
             foreach (var param in parameters)
             {
                 var paramName = param.Name;
                 var paramNameClean = paramName;
-                if (param.CustomData.TryGetValue("property-name", out var propName)) // For parameters that had to be renamed due to reserved name conflicts, use the original property name for serialization
+                if (param.TryGetData(ALCustomDataKeys.PropertyName, out var propName)) // For parameters that had to be renamed due to reserved name conflicts, use the original property name for serialization
                     paramNameClean = propName;
                 var isCodeunit = param.Type is CodeType { TypeDefinition: CodeClass };
                 var isEnum = param.Type is CodeType { TypeDefinition: CodeEnum };
@@ -654,9 +648,9 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                 var isDictionary = param.Type.IsDictionaryType();
                 if (isDictionary)
                 {
-                    param.CustomData.TryGetValue("key-variable", out var keyVar);
-                    param.CustomData.TryGetValue("value-variable", out var valueVar);
-                    param.CustomData.TryGetValue("object-variable", out var objVar);
+                    param.TryGetData(ALCustomDataKeys.KeyVariable, out var keyVar);
+                    param.TryGetData(ALCustomDataKeys.ValueVariable, out var valueVar);
+                    param.TryGetData(ALCustomDataKeys.ObjectVariable, out var objVar);
                     writer.WriteLine($"foreach {keyVar} in {paramName}.Keys do");
                     writer.IncreaseIndent();
                     writer.WriteLine($"if {paramName}.Get({keyVar}, {valueVar}) then");
@@ -681,8 +675,8 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                 else if (isCollection && isCodeunit)
                 {
                     // Codeunit collection
-                    param.CustomData.TryGetValue("foreach-variable", out var foreachVar);
-                    param.CustomData.TryGetValue("corresponding-array", out var arrayName);
+                    param.TryGetData(ALCustomDataKeys.ForeachVariable, out var foreachVar);
+                    param.TryGetData(ALCustomDataKeys.CorrespondingArray, out var arrayName);
                     foreachVar ??= $"{paramName}_item";
                     arrayName ??= $"{paramName}Array";
 
@@ -712,29 +706,29 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
     private void WriteCustomMethodBody(CodeMethod method, LanguageWriter writer)
     {
-        if (method.CustomData.TryGetValue("source", out var source))
+        if (method.TryGetData(ALCustomDataKeys.Source, out var source))
         {
             switch (source)
             {
-                case "validate-body":
+                case ALCustomDataKeys.Sources.ValidateBody:
                     WriteValidateBodyBody(method, writer);
                     return;
-                case "from indexer":
+                case ALCustomDataKeys.Sources.FromIndexer:
                     WriteItemIdxBody(method, writer);
                     return;
-                case "response-getter":
+                case ALCustomDataKeys.Sources.ResponseGetter:
                     writer.WriteLine("exit(StoredResponse);");
                     return;
-                case "response-setter":
+                case ALCustomDataKeys.Sources.ResponseSetter:
                     writer.WriteLine("StoredResponse := ApiResponse;");
                     return;
-                case "query-param-generic-setter":
+                case ALCustomDataKeys.Sources.QueryParamGenericSetter:
                     WriteQueryParamGenericSetterBody(writer);
                     return;
-                case "query-param-typed-setter":
+                case ALCustomDataKeys.Sources.QueryParamTypedSetter:
                     WriteQueryParamTypedSetterBody(method, writer);
                     return;
-                case "query-param-getter":
+                case ALCustomDataKeys.Sources.QueryParamGetter:
                     writer.WriteLine("exit(QueryParameters);");
                     return;
             }
@@ -755,8 +749,8 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
     private static void WriteQueryParamTypedSetterBody(CodeMethod method, LanguageWriter writer)
     {
-        var paramName = method.CustomData.TryGetValue("query-param-name", out var qpn) ? qpn : method.Name;
-        var typeCategory = method.CustomData.TryGetValue("query-param-type-category", out var cat) ? cat : "primitive";
+        var paramName = method.GetData(ALCustomDataKeys.QueryParamName, method.Name);
+        var typeCategory = method.GetData(ALCustomDataKeys.QueryParamTypeCategory, "primitive");
         var valueExpr = typeCategory switch
         {
             "text" => "Value",
@@ -769,7 +763,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     private void WriteValueWrapperGetterBody(CodeMethod method, LanguageWriter writer)
     {
         // exit(FirstName().Value());
-        var wrapperGetterName = method.CustomData.TryGetValue("wrapper-getter-name", out var wgn) ? wgn : method.Name;
+        var wrapperGetterName = method.GetData(ALCustomDataKeys.WrapperGetterName, method.Name);
         writer.WriteLine($"exit({wrapperGetterName}().Value());");
     }
 
@@ -777,7 +771,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     {
         // Wrapper.Value(p);
         // FirstName(Wrapper);
-        var wrapperGetterName = method.CustomData.TryGetValue("wrapper-getter-name", out var wgn) ? wgn : method.Name;
+        var wrapperGetterName = method.GetData(ALCustomDataKeys.WrapperGetterName, method.Name);
         writer.WriteLine("Wrapper.Value(p);");
         writer.WriteLine($"{wrapperGetterName}(Wrapper);");
     }
@@ -903,7 +897,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var varName = "Rqst";
 
         // Check if this is on the client class
-        var isClientClass = parentClass.CustomData.ContainsKey("client-class");
+        var isClientClass = parentClass.HasData(ALCustomDataKeys.ClientClass);
         var configSource = isClientClass ? "Configuration()" : "ReqConfig";
 
         // Request builder methods return a codeunit that has SetConfiguration
@@ -924,9 +918,9 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     private string GetSerializationName(CodeMethod method)
     {
         // Try CustomData first (set by refiner from property)
-        if (method.CustomData.TryGetValue("serialization-name", out var serName) && !string.IsNullOrEmpty(serName))
+        if (method.TryGetData(ALCustomDataKeys.SerializationName, out var serName) && !string.IsNullOrEmpty(serName))
             return serName;
-        if (method.CustomData.TryGetValue("property-name", out var propName) && !string.IsNullOrEmpty(propName))
+        if (method.TryGetData(ALCustomDataKeys.PropertyName, out var propName) && !string.IsNullOrEmpty(propName))
             return propName;
 
         // Fall back to method simple name
@@ -1034,7 +1028,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             return;
 
         var prefix = conventions.DocCommentPrefix;
-        method.CustomData.TryGetValue("documentation-pragmas", out var documentationPragmas);
+        var documentationPragmas = method.GetData(ALCustomDataKeys.DocumentationPragmas);
         if (!string.IsNullOrEmpty(documentationPragmas))
             writer.WriteLine($"#pragma warning disable {documentationPragmas}", false);
         // <summary> block

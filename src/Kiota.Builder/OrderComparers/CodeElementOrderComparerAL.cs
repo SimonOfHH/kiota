@@ -1,5 +1,6 @@
 ﻿using System;
 using Kiota.Builder.CodeDOM;
+using Kiota.Builder.Writers.AL;
 
 namespace Kiota.Builder.OrderComparers;
 
@@ -32,7 +33,6 @@ public class CodeElementOrderComparerAL : CodeElementOrderComparer
 
     private static int GetSortingValue(CodeMethod method, int defaultValue)
     {
-        return method.CustomData.TryGetValue("sorting-value", out var val)
-            && int.TryParse(val, out var sortVal) ? sortVal : defaultValue;
+        return method.GetInt(ALCustomDataKeys.SortingValue, defaultValue);
     }
 }
