@@ -140,6 +140,9 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             case CodeMethodKind.IndexerBackwardCompatibility:
                 WriteRequestBuilderGetterBody(method, writer);
                 break;
+            case CodeMethodKind.RawUrlBuilder:
+                WriteWithUrlBody(method, writer);
+                break;
             case CodeMethodKind.Custom:
                 WriteCustomMethodBody(method, writer);
                 break;
@@ -710,9 +713,6 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                 case ALCustomDataKeys.Sources.RequestBuilderConfiguration:
                 case ALCustomDataKeys.Sources.RequestBuilderIdentifier:
                     WriteRawUrlBuilderBody(method, writer);
-                    return;
-                case ALCustomDataKeys.Sources.RequestBuilderWithUrl:
-                    WriteWithUrlBody(method, writer);
                     return;
                 case ALCustomDataKeys.Sources.RequestBuilderRawConfiguration:
                     WriteSetConfigurationRawBody(method, writer);
