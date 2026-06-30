@@ -113,4 +113,15 @@ public sealed class CodeEnumWriterTests : IDisposable
         var result = tw.ToString();
         Assert.Contains("namespace Vendor.Api.Models;", result);
     }
+
+    [Fact]
+    public void EscapesSingleQuoteInCaptionWireName()
+    {
+        currentEnum.AddOption(new CodeEnumOption { Name = "Option1", SerializationName = "O'Reilly" });
+        writer.Write(currentEnum);
+        var result = tw.ToString();
+        // The wire name flows into a single-quoted AL Caption literal and must be escaped by doubling.
+        Assert.Contains("Caption = 'O''Reilly', Locked = true;", result);
+        Assert.DoesNotContain("Caption = 'O'Reilly'", result);
+    }
 }

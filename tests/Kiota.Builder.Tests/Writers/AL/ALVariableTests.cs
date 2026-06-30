@@ -79,4 +79,35 @@ public sealed class ALVariableTests : IDisposable
         var second = new ALVariable("Lbl", new CodeType { Name = "Label" }, "", "A");
         Assert.True(first.CanBeCombined(second));
     }
+
+    [Fact]
+    public void EscapesSingleQuoteInLabelValue()
+    {
+        var variable = new ALVariable("GreetingLbl", new CodeType { Name = "Label" }, "Default", "O'Reilly");
+        variable.Write(writer, conventions);
+        var result = tw.ToString();
+        // AL escapes a single quote by doubling it; the raw value must not appear unescaped.
+        Assert.Contains("GreetingLbl: Label 'O''Reilly';", result);
+        Assert.DoesNotContain("'O'Reilly'", result);
+    }
+
+    [Fact]
+    public void EscapesSingleQuoteInLabelDefaultValue()
+    {
+        var variable = new ALVariable("GreetingLbl", new CodeType { Name = "Label" }, "It's a test");
+        variable.Write(writer, conventions);
+        Assert.Contains("GreetingLbl: Label 'It''s a test';", tw.ToString());
+    }
+
+    [Fact]
+    public void NeutralizesLineBreaksInLabelValue()
+    {
+        var variable = new ALVariable("GreetingLbl", new CodeType { Name = "Label" }, "Default", "line1\r\nline2");
+        variable.Write(writer, conventions);
+        var result = tw.ToString();
+        // Line breaks would otherwise break out of the AL literal; they are replaced with spaces.
+        Assert.DoesNotContain("\r", result.TrimEnd('\r', '\n'));
+        Assert.DoesNotContain("line1\n", result);
+        Assert.Contains("GreetingLbl: Label 'line1  line2';", result);
+    }
 }

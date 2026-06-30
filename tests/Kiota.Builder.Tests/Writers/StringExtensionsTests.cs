@@ -36,4 +36,23 @@ public class StringExtensionsTests
         const string input = "\"line1\\\nline2\"";
         Assert.Equal("\"line1\\\\\\nline2\"", input.SanitizeQuotedStringLiteral());
     }
+    [Fact]
+    public void SanitizesAlSingleQuoteByDoubling()
+    {
+        Assert.Equal("O''Reilly", "O'Reilly".SanitizeAlSingleQuote());
+        Assert.Equal("it''s ''quoted''", "it's 'quoted'".SanitizeAlSingleQuote());
+    }
+    [Fact]
+    public void SanitizesAlSingleQuoteNeutralizesControlCharacters()
+    {
+        // Line breaks and tabs become spaces; other control characters are dropped.
+        Assert.Equal("a  b c", "a\r\nb\tc".SanitizeAlSingleQuote());
+        Assert.Equal("ab", "a\0b".SanitizeAlSingleQuote());
+    }
+    [Fact]
+    public void SanitizesAlSingleQuoteDefensive()
+    {
+        Assert.Null(StringExtensions.SanitizeAlSingleQuote(null));
+        Assert.Empty(string.Empty.SanitizeAlSingleQuote());
+    }
 }
