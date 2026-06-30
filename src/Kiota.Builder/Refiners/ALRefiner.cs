@@ -1054,7 +1054,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 AddGlobalVariable(codeClass, "ReqConfig", $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"", "1", "AA0137");
 
                 // Add SetConfiguration method
-                var setConfig = CreateSkippableMethod("SetConfiguration", CodeMethodKind.RawUrlBuilder, codeClass, "void", "2");
+                var setConfig = CreateAlSyntheticMethod("SetConfiguration", ALCustomDataKeys.Sources.RequestBuilderConfiguration, codeClass, "void", "2");
                 AddParameter(setConfig, "NewReqConfig", $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"");
                 codeClass.AddMethod(setConfig);
 
@@ -1082,7 +1082,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     if (indexerParamType is not null)
                     {
                         // Add SetIdentifier method
-                        var setId = CreateSkippableMethod("SetIdentifier", CodeMethodKind.RawUrlBuilder, codeClass, "void", "3");
+                        var setId = CreateAlSyntheticMethod("SetIdentifier", ALCustomDataKeys.Sources.RequestBuilderIdentifier, codeClass, "void", "3");
                         AddParameter(setId, "NewIdentifier", (CodeTypeBase)indexerParamType.Clone());
                         var idParam = setId.Parameters.First(p => p.Name == "NewIdentifier");
                         if (idParam.Type is CodeType ct && conventionService.GetTypeString(ct, setId).Equals("Guid", StringComparison.OrdinalIgnoreCase))
@@ -1776,34 +1776,34 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         AccessModifier access = AccessModifier.Public)
         => CreateMethod(name, kind, parent, "void", access);
 
-    private static CodeMethod CreateSkippableMethod(
-        string name, CodeMethodKind kind, CodeClass parent,
+    private static CodeMethod CreateAlSyntheticMethod(
+        string name, string source, CodeClass parent,
         string returnTypeName, string sortingValue,
         AccessModifier access = AccessModifier.Public)
     {
-        var method = CreateMethod(name, kind, parent, returnTypeName, access);
-        method.SetFlag(ALCustomDataKeys.Skip, false);
+        var method = CreateMethod(name, CodeMethodKind.Custom, parent, returnTypeName, access);
+        method.SetData(ALCustomDataKeys.Source, source);
         method.SetData(ALCustomDataKeys.SortingValue, sortingValue);
         return method;
     }
     private static CodeMethod CreateDefaultInitMethod(CodeClass parent)
     {
-        var initMethod = CreateSkippableMethod("Initialize", CodeMethodKind.Constructor, parent, "void", "1");
+        var initMethod = CreateAlSyntheticMethod("Initialize", ALCustomDataKeys.Sources.ClientInitialize, parent, "void", "1");
         AddParameter(initMethod, "NewAPIAuthorization", $"Codeunit \"Kiota API Authorization\"");
         return initMethod;
     }
 
     private static void AddConfigurationMethods(CodeClass parent)
     {
-        var configGetter = CreateSkippableMethod("Configuration", CodeMethodKind.ClientConstructor, parent, $"Codeunit \"Kiota ClientConfig\"", "27");
+        var configGetter = CreateAlSyntheticMethod("Configuration", ALCustomDataKeys.Sources.ClientConfiguration, parent, $"Codeunit \"Kiota ClientConfig\"", "27");
         parent.AddMethod(configGetter);
 
-        var configSetter = CreateSkippableMethod("Configuration-overload", CodeMethodKind.ClientConstructor, parent, "void", "28");
+        var configSetter = CreateAlSyntheticMethod("Configuration-overload", ALCustomDataKeys.Sources.ClientConfiguration, parent, "void", "28");
         configSetter.SimpleName = "Configuration";
         AddParameter(configSetter, "config", $"Codeunit \"Kiota ClientConfig\"");
         parent.AddMethod(configSetter);
 
-        var defaultConfig = CreateSkippableMethod("DefaultConfiguration", CodeMethodKind.Factory, parent, $"Codeunit \"Kiota ClientConfig\"", "29", AccessModifier.Private);
+        var defaultConfig = CreateAlSyntheticMethod("DefaultConfiguration", ALCustomDataKeys.Sources.ClientDefaultConfiguration, parent, $"Codeunit \"Kiota ClientConfig\"", "29", AccessModifier.Private);
         parent.AddMethod(defaultConfig);
     }
 

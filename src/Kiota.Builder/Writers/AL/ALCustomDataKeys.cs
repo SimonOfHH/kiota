@@ -109,6 +109,21 @@ internal static class ALCustomDataKeys
         public const string ResponseGetter = "response-getter";
         public const string ResponseSetter = "response-setter";
         public const string ValidateBody = "validate-body";
+
+        // --- AL synthetic client / request-builder methods ---
+        // These are modelled as CodeMethodKind.Custom carrying one of the sources below, rather than
+        // hijacking shared CodeMethodKind values (Constructor/ClientConstructor/Factory/RawUrlBuilder).
+        // This keeps AL behavior off shared refiner semantics (e.g. MarkMethodsToSkip) entirely.
+        /// <summary>Client codeunit <c>Initialize</c> procedure.</summary>
+        public const string ClientInitialize = "client-initialize";
+        /// <summary>Client codeunit <c>Configuration</c> getter/setter procedures.</summary>
+        public const string ClientConfiguration = "client-configuration";
+        /// <summary>Client codeunit <c>DefaultConfiguration</c> factory procedure.</summary>
+        public const string ClientDefaultConfiguration = "client-default-configuration";
+        /// <summary>Request builder <c>SetConfiguration</c> procedure.</summary>
+        public const string RequestBuilderConfiguration = "request-builder-configuration";
+        /// <summary>Request builder <c>SetIdentifier</c> procedure.</summary>
+        public const string RequestBuilderIdentifier = "request-builder-identifier";
     }
 
     /// <summary>Well-known values for <see cref="MethodType"/>.</summary>

@@ -134,18 +134,6 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             case CodeMethodKind.Serializer:
                 WriteToJsonBody(method, writer);
                 break;
-            case CodeMethodKind.Constructor:
-                WriteInitializeBody(method, writer);
-                break;
-            case CodeMethodKind.ClientConstructor:
-                WriteConfigurationBody(method, writer);
-                break;
-            case CodeMethodKind.Factory:
-                WriteDefaultConfigurationBody(method, writer);
-                break;
-            case CodeMethodKind.RawUrlBuilder:
-                WriteRawUrlBuilderBody(method, writer);
-                break;
             case CodeMethodKind.RequestBuilderBackwardCompatibility:
                 WriteRequestBuilderGetterBody(method, writer);
                 break;
@@ -710,6 +698,19 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         {
             switch (source)
             {
+                case ALCustomDataKeys.Sources.ClientInitialize:
+                    WriteInitializeBody(method, writer);
+                    return;
+                case ALCustomDataKeys.Sources.ClientConfiguration:
+                    WriteConfigurationBody(method, writer);
+                    return;
+                case ALCustomDataKeys.Sources.ClientDefaultConfiguration:
+                    WriteDefaultConfigurationBody(method, writer);
+                    return;
+                case ALCustomDataKeys.Sources.RequestBuilderConfiguration:
+                case ALCustomDataKeys.Sources.RequestBuilderIdentifier:
+                    WriteRawUrlBuilderBody(method, writer);
+                    return;
                 case ALCustomDataKeys.Sources.ValidateBody:
                     WriteValidateBodyBody(method, writer);
                     return;
@@ -1017,7 +1018,9 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var hasExternalDocs = documentation.ExternalDocumentationAvailable;
         var hasReturnType = method.ReturnType is not null
                            && !"void".Equals(method.ReturnType.Name, StringComparison.OrdinalIgnoreCase)
-                           && method.Kind is not (CodeMethodKind.Constructor or CodeMethodKind.ClientConstructor);
+                           && !method.SourceIs(ALCustomDataKeys.Sources.ClientInitialize)
+                           && !method.SourceIs(ALCustomDataKeys.Sources.ClientConfiguration)
+                           && !method.SourceIs(ALCustomDataKeys.Sources.ClientDefaultConfiguration);
         var paramsWithDocs = method.Parameters
             .Where(static p => p.Documentation.DescriptionAvailable)
             .OrderBy(static p => p.Name, StringComparer.OrdinalIgnoreCase)

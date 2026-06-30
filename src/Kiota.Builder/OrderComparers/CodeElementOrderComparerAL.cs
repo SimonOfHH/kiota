@@ -12,6 +12,23 @@ public class CodeElementOrderComparerAL : CodeElementOrderComparer
     {
         if (element is CodeMethod method)
         {
+            // AL synthetic client/request-builder methods are modelled as Custom + an AL Source tag
+            // instead of hijacking shared CodeMethodKind values. Preserve their historical weights.
+            if (method.Kind == CodeMethodKind.Custom && method.TryGetData(ALCustomDataKeys.Source, out var alSource))
+            {
+                switch (alSource)
+                {
+                    case ALCustomDataKeys.Sources.ClientDefaultConfiguration:
+                        return 0; // formerly Factory (fell through to default 0)
+                    case ALCustomDataKeys.Sources.ClientConfiguration:
+                        return 1; // formerly ClientConstructor
+                    case ALCustomDataKeys.Sources.ClientInitialize:
+                        return 2; // formerly Constructor
+                    case ALCustomDataKeys.Sources.RequestBuilderConfiguration:
+                    case ALCustomDataKeys.Sources.RequestBuilderIdentifier:
+                        return 3; // formerly RawUrlBuilder
+                }
+            }
             return method.Kind switch
             {
                 CodeMethodKind.ClientConstructor => 1,
