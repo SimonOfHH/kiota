@@ -325,7 +325,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
     private void WriteDictionaryGetterBody(CodeMethod method, LanguageWriter writer, string serializationName, bool isEnum, bool isCodeunit)
     {
-        writer.WriteLine($"if not JsonBody.SelectToken('{serializationName}', JToken) then");
+        writer.WriteLine($"if not JsonBody.SelectToken('{GetSelectTokenPath(serializationName)}', JToken) then");
         writer.IncreaseIndent();
         writer.WriteLine("exit;");
         writer.DecreaseIndent();
@@ -357,7 +357,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     {
         var alType = conventions.GetTypeString(returnType, method);
         var asMethod = GetAsMethodForType(alType);
-        writer.WriteLine($"if JsonBody.SelectToken('{serializationName}', SubToken) then");
+        writer.WriteLine($"if JsonBody.SelectToken('{GetSelectTokenPath(serializationName)}', SubToken) then");
         writer.IncreaseIndent();
         writer.WriteLine($"if not JSONHelper.SubTokenIsNull(SubToken) then");
         writer.IncreaseIndent();
@@ -368,7 +368,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
     private void WriteSingleCodeunitGetterBody(CodeMethod method, LanguageWriter writer, string serializationName)
     {
-        writer.WriteLine($"if JsonBody.SelectToken('{serializationName}', SubToken) then begin");
+        writer.WriteLine($"if JsonBody.SelectToken('{GetSelectTokenPath(serializationName)}', SubToken) then begin");
         writer.IncreaseIndent();
         writer.WriteLine("TargetCodeunit.SetBody(SubToken.AsObject(), DebugCall);");
         writer.WriteLine("exit(TargetCodeunit);");
@@ -379,7 +379,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     private void WriteSingleEnumGetterBody(CodeMethod method, LanguageWriter writer, string serializationName, CodeTypeBase returnType)
     {
         var enumName = GetEnumName(returnType);
-        writer.WriteLine($"if JsonBody.SelectToken('{serializationName}', SubToken) then begin");
+        writer.WriteLine($"if JsonBody.SelectToken('{GetSelectTokenPath(serializationName)}', SubToken) then begin");
         writer.IncreaseIndent();
         writer.WriteLine($"Ordinals := Enum::{enumName}.Ordinals();");
         writer.WriteLine("foreach Ordinal in Ordinals do begin");
@@ -402,7 +402,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
     private void WriteCollectionGetterBody(CodeMethod method, LanguageWriter writer, string serializationName, bool isEnum, bool isCodeunit)
     {
-        writer.WriteLine($"if not JsonBody.SelectToken('{serializationName}', SubToken) then");
+        writer.WriteLine($"if not JsonBody.SelectToken('{GetSelectTokenPath(serializationName)}', SubToken) then");
         writer.IncreaseIndent();
         writer.WriteLine("exit;");
         writer.DecreaseIndent();
@@ -466,7 +466,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         }
         else if (isCodeunit)
         {
-            writer.WriteLine($"if JsonBody.SelectToken('{serializationName}', SubToken) then");
+            writer.WriteLine($"if JsonBody.SelectToken('{GetSelectTokenPath(serializationName)}', SubToken) then");
             writer.IncreaseIndent();
             writer.WriteLine($"JsonBody.Replace('{serializationName}', p.ToJson().AsToken())");
             writer.DecreaseIndent();
@@ -477,7 +477,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         }
         else if (isEnum)
         {
-            writer.WriteLine($"if JsonBody.SelectToken('{serializationName}', SubToken) then");
+            writer.WriteLine($"if JsonBody.SelectToken('{GetSelectTokenPath(serializationName)}', SubToken) then");
             writer.IncreaseIndent();
             writer.WriteLine($"JsonBody.Replace('{serializationName}', Format(p))");
             writer.DecreaseIndent();
@@ -490,7 +490,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         {
             // Primitive
 
-            writer.WriteLine($"if JsonBody.SelectToken('{serializationName}', SubToken) then");
+            writer.WriteLine($"if JsonBody.SelectToken('{GetSelectTokenPath(serializationName)}', SubToken) then");
             writer.IncreaseIndent();
             if (returnType.Name.Equals("Guid", StringComparison.OrdinalIgnoreCase))
             {
@@ -539,7 +539,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         writer.DecreaseIndent();
         writer.WriteLine("end;");
 
-        writer.WriteLine($"if JsonBody.SelectToken('{serializationName}', SubToken) then");
+        writer.WriteLine($"if JsonBody.SelectToken('{GetSelectTokenPath(serializationName)}', SubToken) then");
         writer.IncreaseIndent();
         writer.WriteLine($"JsonBody.Replace('{serializationName}', JObject.AsToken())");
         writer.DecreaseIndent();
@@ -573,7 +573,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             writer.DecreaseIndent();
         }
 
-        writer.WriteLine($"if JsonBody.SelectToken('{serializationName}', SubToken) then");
+        writer.WriteLine($"if JsonBody.SelectToken('{GetSelectTokenPath(serializationName)}', SubToken) then");
         writer.IncreaseIndent();
         writer.WriteLine($"JsonBody.Replace('{serializationName}', JArray)");
         writer.DecreaseIndent();
@@ -710,6 +710,12 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                 case ALCustomDataKeys.Sources.RequestBuilderConfiguration:
                 case ALCustomDataKeys.Sources.RequestBuilderIdentifier:
                     WriteRawUrlBuilderBody(method, writer);
+                    return;
+                case ALCustomDataKeys.Sources.RequestBuilderWithUrl:
+                    WriteWithUrlBody(method, writer);
+                    return;
+                case ALCustomDataKeys.Sources.RequestBuilderRawConfiguration:
+                    WriteSetConfigurationRawBody(method, writer);
                     return;
                 case ALCustomDataKeys.Sources.ValidateBody:
                     WriteValidateBodyBody(method, writer);
@@ -890,6 +896,21 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         }
     }
 
+    private void WriteWithUrlBody(CodeMethod method, LanguageWriter writer)
+    {
+        var rawUrlName = method.Parameters.FirstOrDefault()?.Name ?? "RawUrl";
+        writer.WriteLine($"Rqst.SetConfigurationRaw(ReqConfig, {rawUrlName});");
+    }
+
+    private static void WriteSetConfigurationRawBody(CodeMethod method, LanguageWriter writer)
+    {
+        var configName = method.Parameters.FirstOrDefault()?.Name ?? "NewReqConfig";
+        var rawUrlName = method.Parameters.Skip(1).FirstOrDefault()?.Name ?? "RawUrl";
+        writer.WriteLine($"ReqConfig := {configName};");
+        writer.WriteLine("ReqConfig.ClearQueryParameters();");
+        writer.WriteLine($"ReqConfig.BaseURL({rawUrlName});");
+    }
+
     private void WriteRequestBuilderGetterBody(CodeMethod method, LanguageWriter writer)
     {
         if (method.Parent is not CodeClass parentClass) return;
@@ -926,6 +947,24 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
         // Fall back to method simple name
         return (method.SimpleName ?? method.Name).ToFirstCharacterLowerCase();
+    }
+
+    /// <summary>
+    /// Builds the path argument for <c>JsonObject.SelectToken</c>. <c>SelectToken</c> parses its
+    /// argument as a JSONPath, where characters such as <c>.</c>, <c>@</c>, <c>[</c>, <c>]</c> and
+    /// <c>$</c> are structural. Serialization names that are not plain identifiers (for example
+    /// <c>@odata.nextLink</c>) must therefore be wrapped in bracket notation so the literal property
+    /// key is matched instead of being traversed as a path. Single quotes are doubled because the
+    /// path is emitted inside an AL single-quoted string literal. Plain identifiers are returned
+    /// unchanged to keep generated output stable.
+    /// </summary>
+    private static string GetSelectTokenPath(string serializationName)
+    {
+        if (!string.IsNullOrEmpty(serializationName) &&
+            serializationName.All(c => char.IsLetterOrDigit(c) || c == '_'))
+            return serializationName;
+
+        return $"$[''{serializationName.Replace("'", "''", StringComparison.Ordinal)}'']";
     }
 
     private static string GetAsMethodForType(string alType)

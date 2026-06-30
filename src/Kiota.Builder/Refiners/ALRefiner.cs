@@ -1058,6 +1058,29 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 AddParameter(setConfig, "NewReqConfig", $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"");
                 codeClass.AddMethod(setConfig);
 
+                // Add SetConfigurationRaw method — used by WithUrl to point a sibling builder at an
+                // arbitrary/absolute URL (e.g. an OData @odata.nextLink): overwrite the base URL and
+                // clear any accumulated query parameters so the raw URL is used verbatim.
+                var setConfigRaw = CreateAlSyntheticMethod("SetConfigurationRaw", ALCustomDataKeys.Sources.RequestBuilderRawConfiguration, codeClass, "void", "3");
+                AddParameter(setConfigRaw, "NewReqConfig", $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"");
+                AddParameter(setConfigRaw, "RawUrl", "Text");
+                codeClass.AddMethod(setConfigRaw);
+
+                // Un-skip the Kiota RawUrlBuilder (WithUrl) method (skipped by default in Step 2) so it is
+                // emitted as a request-builder method that returns a sibling builder configured with the raw
+                // URL (e.g. an OData @odata.nextLink). The method keeps its upstream CodeMethodKind.RawUrlBuilder
+                // and is dispatched by kind in the writer, exactly like the other Kiota language writers.
+                var withUrl = codeClass.Methods.FirstOrDefault(m => m.IsOfKind(CodeMethodKind.RawUrlBuilder));
+                if (withUrl is not null)
+                {
+                    withUrl.SetFlag(ALCustomDataKeys.Skip, false);
+                    withUrl.SetData(ALCustomDataKeys.SortingValue, "5");
+                    withUrl.SetData(ALCustomDataKeys.ReturnVariableName, "Rqst");
+                    var rawUrlParam = withUrl.Parameters.FirstOrDefault();
+                    if (rawUrlParam is not null)
+                        rawUrlParam.Name = "RawUrl";
+                }
+
                 // Handle indexers — check for methods converted from indexers
                 var indexerMethods = codeClass.Methods
                     .Where(m => m.Kind == CodeMethodKind.IndexerBackwardCompatibility && m.OriginalIndexer is not null)

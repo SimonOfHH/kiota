@@ -151,4 +151,73 @@ public sealed class CodeMethodWriterTests : IDisposable
         var result = tw.ToString();
         Assert.Contains("exit(StoredResponse);", result);
     }
+
+    [Fact]
+    public void WritesWithUrlBodyConfiguringSiblingBuilderFromRawUrl()
+    {
+        var method = parentClass.AddMethod(new CodeMethod
+        {
+            Name = "WithUrl",
+            SimpleName = "WithUrl",
+            Kind = CodeMethodKind.RawUrlBuilder,
+            Access = AccessModifier.Public,
+            ReturnType = new CodeType { Name = "SomeClient", TypeDefinition = parentClass },
+        }).First();
+        method.CustomData["return-variable-name"] = "Rqst";
+        method.AddParameter(new CodeParameter { Name = "RawUrl", Type = new CodeType { Name = "string" } });
+        writer.Write(parentClass.Methods.First());
+        var result = tw.ToString();
+        Assert.Contains("procedure WithUrl(RawUrl: Text) Rqst:", result);
+        Assert.Contains("Rqst.SetConfigurationRaw(ReqConfig, RawUrl);", result);
+    }
+
+    [Fact]
+    public void WritesSetConfigurationRawBodyOverwritingBaseUrlAndClearingQueryParameters()
+    {
+        var method = AddMethod(name: "SetConfigurationRaw");
+        method.CustomData["source"] = "request-builder-raw-configuration";
+        method.AddParameter(new CodeParameter { Name = "NewReqConfig", Type = new CodeType { Name = "Codeunit \"Kiota ClientConfig\"", IsExternal = true } });
+        method.AddParameter(new CodeParameter { Name = "RawUrl", Type = new CodeType { Name = "string" } });
+        writer.Write(parentClass.Methods.First());
+        var result = tw.ToString();
+        Assert.Contains("ReqConfig := NewReqConfig;", result);
+        Assert.Contains("ReqConfig.ClearQueryParameters();", result);
+        Assert.Contains("ReqConfig.BaseURL(RawUrl);", result);
+    }
+
+    private CodeMethod AddGetter(string serializationName, string returnTypeName = "string")
+    {
+        var method = parentClass.AddMethod(new CodeMethod
+        {
+            Name = "GetProp",
+            SimpleName = "GetProp",
+            Kind = CodeMethodKind.Getter,
+            Access = AccessModifier.Public,
+            ReturnType = new CodeType { Name = returnTypeName },
+        }).First();
+        method.CustomData["serialization-name"] = serializationName;
+        return method;
+    }
+
+    [Fact]
+    public void EscapesSelectTokenPathForSerializationNameWithSpecialCharacters()
+    {
+        AddGetter("@odata.nextLink");
+        writer.Write(parentClass.Methods.First());
+        var result = tw.ToString();
+        // Bracket notation with doubled single quotes (AL literal) so SelectToken matches the literal key.
+        Assert.Contains("JsonBody.SelectToken('$[''@odata.nextLink'']', SubToken)", result);
+        // It must NOT emit the raw dotted name, which SelectToken would traverse as a JSONPath.
+        Assert.DoesNotContain("JsonBody.SelectToken('@odata.nextLink'", result);
+    }
+
+    [Fact]
+    public void LeavesSelectTokenPathUnescapedForPlainSerializationName()
+    {
+        AddGetter("subject");
+        writer.Write(parentClass.Methods.First());
+        var result = tw.ToString();
+        Assert.Contains("JsonBody.SelectToken('subject', SubToken)", result);
+        Assert.DoesNotContain("$[''", result);
+    }
 }

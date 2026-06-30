@@ -112,8 +112,10 @@ internal static class ALCustomDataKeys
 
         // --- AL synthetic client / request-builder methods ---
         // These are modelled as CodeMethodKind.Custom carrying one of the sources below, rather than
-        // hijacking shared CodeMethodKind values (Constructor/ClientConstructor/Factory/RawUrlBuilder).
-        // This keeps AL behavior off shared refiner semantics (e.g. MarkMethodsToSkip) entirely.
+        // hijacking shared CodeMethodKind values (Constructor/ClientConstructor/Factory) for AL-only
+        // semantics. This keeps AL behavior off shared refiner semantics (e.g. MarkMethodsToSkip) entirely.
+        // Note: the WithUrl method intentionally keeps its upstream CodeMethodKind.RawUrlBuilder (a faithful
+        // reuse, not a hijack) and is dispatched by kind in the writer, matching the other language writers.
         /// <summary>Client codeunit <c>Initialize</c> procedure.</summary>
         public const string ClientInitialize = "client-initialize";
         /// <summary>Client codeunit <c>Configuration</c> getter/setter procedures.</summary>
@@ -124,6 +126,8 @@ internal static class ALCustomDataKeys
         public const string RequestBuilderConfiguration = "request-builder-configuration";
         /// <summary>Request builder <c>SetIdentifier</c> procedure.</summary>
         public const string RequestBuilderIdentifier = "request-builder-identifier";
+        /// <summary>Request builder <c>SetConfigurationRaw</c> procedure (overwrite base URL + clear query parameters).</summary>
+        public const string RequestBuilderRawConfiguration = "request-builder-raw-configuration";
     }
 
     /// <summary>Well-known values for <see cref="MethodType"/>.</summary>

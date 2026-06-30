@@ -124,4 +124,46 @@ public class ALLanguageRefinerTests
             System.IO.Directory.Delete(tempDir, true);
         }
     }
+
+    [Fact]
+    public async Task AddsRawUrlPaginationMethodsToRequestBuilderAsync()
+    {
+        var config = CreateConfiguration();
+        var ns = root.AddNamespace("ApiSdk.users");
+        var requestBuilder = ns.AddClass(new CodeClass
+        {
+            Name = "usersRequestBuilder",
+            Kind = CodeClassKind.RequestBuilder,
+        }).First();
+        var withUrl = new CodeMethod
+        {
+            Name = "WithUrl",
+            Kind = CodeMethodKind.RawUrlBuilder,
+            ReturnType = new CodeType { Name = "usersRequestBuilder", TypeDefinition = requestBuilder },
+        };
+        withUrl.AddParameter(new CodeParameter
+        {
+            Name = "rawUrl",
+            Kind = CodeParameterKind.RawUrl,
+            Type = new CodeType { Name = "string", IsExternal = true },
+        });
+        requestBuilder.AddMethod(withUrl);
+
+        await ILanguageRefiner.RefineAsync(config, root, cancellationToken: TestContext.Current.CancellationToken);
+
+        // WithUrl keeps its upstream RawUrlBuilder kind (dispatched by kind, like the other language writers),
+        // is un-skipped, returns a "Rqst" sibling builder, and has its parameter renamed.
+        Assert.Equal(CodeMethodKind.RawUrlBuilder, withUrl.Kind);
+        Assert.False(withUrl.CustomData.TryGetValue("skip", out var skip) && skip == "true");
+        Assert.True(withUrl.CustomData.TryGetValue("return-variable-name", out var returnVar));
+        Assert.Equal("Rqst", returnVar);
+        Assert.Equal("RawUrl", withUrl.Parameters.First().Name);
+
+        // A SetConfigurationRaw helper is added to back WithUrl.
+        var setConfigRaw = requestBuilder.Methods.FirstOrDefault(m => m.Name.Equals("SetConfigurationRaw", System.StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(setConfigRaw);
+        Assert.True(setConfigRaw!.CustomData.TryGetValue("source", out var rawSource));
+        Assert.Equal("request-builder-raw-configuration", rawSource);
+        Assert.Equal(2, setConfigRaw.Parameters.Count());
+    }
 }
