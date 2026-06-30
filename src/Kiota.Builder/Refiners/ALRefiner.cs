@@ -20,7 +20,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         return Task.Run(() =>
         {
             var alConfig = ALConfiguration.LoadFromDisk(_configuration.OutputPath);
-            var objectIdProvider = new ALObjectIdProvider(alConfig.ObjectIdRangeStart);
+            var objectIdProvider = new ALObjectIdProvider(alConfig.ObjectIdRangeStart, alConfig.ObjectIdRangeEnd);
             var conventionService = new ALConventionService(alConfig);
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -535,7 +535,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     if (!c.HasData(ALCustomDataKeys.OriginalName))
                         c.SetData(ALCustomDataKeys.OriginalName, originalName);
                     // Filename is original, but classname differs -> add pragma to suppress warning about that
-                    c.AppendCsv(ALCustomDataKeys.Pragmas, "AA0215");
+                    c.AppendCsv(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.NamingConvention);
                 }
             }
         });
@@ -677,14 +677,14 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             {
                 if (c.Name.Contains('_', StringComparison.Ordinal))
                 {
-                    c.AppendCsv(ALCustomDataKeys.Pragmas, "AA0215");
+                    c.AppendCsv(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.NamingConvention);
                 }
             }
             else if (element is CodeEnum e)
             {
                 if (e.Name.Contains('_', StringComparison.Ordinal))
                 {
-                    e.AppendCsv(ALCustomDataKeys.Pragmas, "AA0215");
+                    e.AppendCsv(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.NamingConvention);
                 }
             }
         });
@@ -895,9 +895,9 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 }
 
                 // Add global variables as properties
-                AddGlobalVariable(codeClass, "ReqConfig", $"Codeunit \"Kiota ClientConfig\"", "1", "AA0137");
-                AddGlobalVariable(codeClass, "APIAuthorization", $"Codeunit \"Kiota API Authorization\"", "1", "AA0137");
-                AddGlobalVariable(codeClass, "StoredResponse", "Codeunit System.RestClient.\"Http Response Message\"", "1", "AA0137");
+                AddGlobalVariable(codeClass, "ReqConfig", $"Codeunit \"Kiota ClientConfig\"", "1", ALCustomDataKeys.PragmaCodes.UnusedVariable);
+                AddGlobalVariable(codeClass, "APIAuthorization", $"Codeunit \"Kiota API Authorization\"", "1", ALCustomDataKeys.PragmaCodes.UnusedVariable);
+                AddGlobalVariable(codeClass, "StoredResponse", "Codeunit System.RestClient.\"Http Response Message\"", "1", ALCustomDataKeys.PragmaCodes.UnusedVariable);
                 AddLabel(codeClass, "BaseUrlLbl", baseUrl, true, "1");
                 AddGlobalVariable(codeClass, "ConfigSet", "Boolean", "4");
                 AddLabel(codeClass, "AuthorizationNotInitializedErr", "Authorization is uninitialized.", false, "4");
@@ -947,7 +947,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 AddUsing(codeClass, alConfig.DefinitionsNamespace);
 
                 // Add global variables
-                AddGlobalVariable(codeClass, "JSONHelper", $"Codeunit \"JSON Helper\"", "2", "AA0137");
+                AddGlobalVariable(codeClass, "JSONHelper", $"Codeunit \"JSON Helper\"", "2", ALCustomDataKeys.PragmaCodes.UnusedVariable);
                 AddGlobalVariable(codeClass, "DebugCall", "Boolean", "4");
                 AddGlobalVariable(codeClass, "JsonBody", "JsonObject", "3");
                 AddGlobalVariable(codeClass, "SubToken", "JsonToken", "3");
@@ -957,7 +957,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
                 // Add ValidateBody
                 var validateBody = CreateVoidMethod("ValidateBody", CodeMethodKind.Custom, codeClass, AccessModifier.Private);
-                validateBody.SetData(ALCustomDataKeys.PragmasVariables, "AA0202");
+                validateBody.SetData(ALCustomDataKeys.PragmasVariables, ALCustomDataKeys.PragmaCodes.LocalVariableNameClash);
                 // Add local variables; we need to add variables for each property in the class to validate presence of required properties; the properties were previously added as getter- and setter-methods, so we can find them by looking for getter methods with source "from property"
                 var gettersHelper = codeClass.Methods.Where(m => m.IsGetterMethod() && m.GetData(ALCustomDataKeys.Source) is string source && source.Equals(ALCustomDataKeys.Sources.FromProperty, StringComparison.Ordinal)).ToList();
                 foreach (var getter in gettersHelper)
@@ -982,7 +982,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     var toJson2 = CreateMethod("ToJson-overload", CodeMethodKind.Serializer, codeClass, "JsonObject");
                     toJson2.SimpleName = "ToJson";
                     toJson2.SetData(ALCustomDataKeys.SortingValue, "104");
-                    toJson2.SetData(ALCustomDataKeys.Pragmas, "AA0245");
+                    toJson2.SetData(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.ParameterNameClash);
 
                     // Add TargetJson local var
                     AddLocalVariable(toJson2, "TargetJson", "JsonObject");
@@ -1051,7 +1051,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 AddUsing(codeClass, alConfig.ClientNamespace);
 
                 // Add ReqConfig global variable
-                AddGlobalVariable(codeClass, "ReqConfig", $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"", "1", "AA0137");
+                AddGlobalVariable(codeClass, "ReqConfig", $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"", "1", ALCustomDataKeys.PragmaCodes.UnusedVariable);
 
                 // Add SetConfiguration method
                 var setConfig = CreateAlSyntheticMethod("SetConfiguration", ALCustomDataKeys.Sources.RequestBuilderConfiguration, codeClass, "void", "2");
@@ -1326,12 +1326,6 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
                         AddUsing(parentClass, alConfig.DefinitionsNamespace);
                     }
-                }
-                if (parentClass.Documentation?.DescriptionTemplate.Contains(@"\conversion\ava\excel", StringComparison.OrdinalIgnoreCase) == true)
-                {
-                    // just for debugging
-                    int i = 0;
-                    string s = i.ToString(CultureInfo.InvariantCulture);
                 }
                 // Handle return type
                 var returnType = method.ReturnType;

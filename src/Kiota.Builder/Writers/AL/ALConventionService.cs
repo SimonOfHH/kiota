@@ -252,7 +252,7 @@ public class ALConventionService : CommonLanguageConventionService
                 withNs = withNs[..maxLength];
             if (_allNames.Add(withNs))
             {
-                AddPragma(element, "AA0215");
+                AddPragma(element, ALCustomDataKeys.PragmaCodes.NamingConvention);
                 return withNs;
             }
         }
@@ -263,7 +263,7 @@ public class ALConventionService : CommonLanguageConventionService
             abbreviated = abbreviated[..maxLength];
         if (_allNames.Add(abbreviated))
         {
-            AddPragma(element, "AA0215");
+            AddPragma(element, ALCustomDataKeys.PragmaCodes.NamingConvention);
             return abbreviated;
         }
 
@@ -275,12 +275,12 @@ public class ALConventionService : CommonLanguageConventionService
                 candidate = abbreviated[..Math.Max(1, maxLength - i.ToString(CultureInfo.InvariantCulture).Length)] + i.ToString(CultureInfo.InvariantCulture);
             if (_allNames.Add(candidate))
             {
-                AddPragma(element, "AA0215");
+                AddPragma(element, ALCustomDataKeys.PragmaCodes.NamingConvention);
                 return candidate;
             }
         }
 
-        AddPragma(element, "AA0215");
+        AddPragma(element, ALCustomDataKeys.PragmaCodes.NamingConvention);
         return name; // fallback
     }
 

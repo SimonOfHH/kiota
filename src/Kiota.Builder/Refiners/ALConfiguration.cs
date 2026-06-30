@@ -132,8 +132,10 @@ public class ALConfiguration
             {
                 var json = File.ReadAllText(configPath);
 #pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access
-                return JsonSerializer.Deserialize<ALConfiguration>(json, s_jsonOptions) ?? new ALConfiguration();
+                var config = JsonSerializer.Deserialize<ALConfiguration>(json, s_jsonOptions) ?? new ALConfiguration();
 #pragma warning restore IL2026
+                config.Validate();
+                return config;
             }
             catch (JsonException)
             {
@@ -141,5 +143,23 @@ public class ALConfiguration
             }
         }
         return new ALConfiguration();
+    }
+
+    /// <summary>
+    /// Validates the loaded configuration and throws <see cref="InvalidOperationException"/> when a value would
+    /// produce broken AL output (invalid object id range, malformed companion app id, or malformed version strings).
+    /// </summary>
+    public void Validate()
+    {
+        if (ObjectIdRangeStart < 0)
+            throw new InvalidOperationException($"al-config.json: 'objectIdRangeStart' ({ObjectIdRangeStart}) must not be negative.");
+        if (ObjectIdRangeEnd < ObjectIdRangeStart)
+            throw new InvalidOperationException($"al-config.json: 'objectIdRangeEnd' ({ObjectIdRangeEnd}) must be greater than or equal to 'objectIdRangeStart' ({ObjectIdRangeStart}).");
+        if (!string.IsNullOrEmpty(CompanionAppId) && !Guid.TryParse(CompanionAppId, out _))
+            throw new InvalidOperationException($"al-config.json: 'companionAppId' ('{CompanionAppId}') is not a valid GUID.");
+        if (!string.IsNullOrEmpty(AppVersion) && !Version.TryParse(AppVersion, out _))
+            throw new InvalidOperationException($"al-config.json: 'appVersion' ('{AppVersion}') is not a valid version string.");
+        if (!string.IsNullOrEmpty(CompanionAppVersion) && !Version.TryParse(CompanionAppVersion, out _))
+            throw new InvalidOperationException($"al-config.json: 'companionAppVersion' ('{CompanionAppVersion}') is not a valid version string.");
     }
 }

@@ -139,4 +139,26 @@ internal static class ALCustomDataKeys
         public const string Dictionary = "Dictionary";
         public const string List = "List";
     }
+
+    /// <summary>
+    /// AL CodeCop analyzer warning codes that the generator suppresses via <c>#pragma warning disable</c>
+    /// (directly in the writers) or by accumulating them on <see cref="Pragmas"/>/<see cref="PragmasVariables"/>/
+    /// <see cref="DocumentationPragmas"/>. Centralized here so the codes are not scattered as magic strings
+    /// across the refiner and writers.
+    /// </summary>
+    public static class PragmaCodes
+    {
+        /// <summary>AA0137 — Do not declare variables that are unused.</summary>
+        public const string UnusedVariable = "AA0137";
+        /// <summary>AA0202 — Do not give local variables the same name as fields, methods, or actions in the same scope.</summary>
+        public const string LocalVariableNameClash = "AA0202";
+        /// <summary>AA0206 — The value assigned to a variable must be used.</summary>
+        public const string UnusedAssignedValue = "AA0206";
+        /// <summary>AA0215 — Follow the style guide naming best practices (object/file naming).</summary>
+        public const string NamingConvention = "AA0215";
+        /// <summary>AA0217 — Use a text constant or label for the format string in StrSubstNo.</summary>
+        public const string StrSubstNoFormatLiteral = "AA0217";
+        /// <summary>AA0245 — Do not give parameters the same name as fields, methods, or actions in the same scope.</summary>
+        public const string ParameterNameClash = "AA0245";
+    }
 }

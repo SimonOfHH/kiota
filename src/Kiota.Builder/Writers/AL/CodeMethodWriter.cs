@@ -392,10 +392,10 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         writer.DecreaseIndent();
         writer.WriteLine("end;");
         var propertyName = method.SimpleName ?? method.Name;
-        writer.WriteLine($"#pragma warning disable AA0217");
+        writer.WriteLine($"#pragma warning disable {ALCustomDataKeys.PragmaCodes.StrSubstNoFormatLiteral}");
         writer.WriteLine($"// No match found for {serializationName} value");
         writer.WriteLine($"Error(StrSubstNo('Invalid value for {propertyName}: %1', SubToken.AsValue().AsText()));");
-        writer.WriteLine($"#pragma warning restore AA0217");
+        writer.WriteLine($"#pragma warning restore {ALCustomDataKeys.PragmaCodes.StrSubstNoFormatLiteral}");
         writer.DecreaseIndent();
         writer.WriteLine("end;");
     }
@@ -599,9 +599,9 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
             writer.WriteLine("JsonBody := NewJsonBody;");
             writer.WriteLine("if (Debug) then begin");
             writer.IncreaseIndent();
-            writer.WriteLine("#pragma warning disable AA0206", false);
+            writer.WriteLine($"#pragma warning disable {ALCustomDataKeys.PragmaCodes.UnusedAssignedValue}", false);
             writer.WriteLine("DebugCall := true;");
-            writer.WriteLine("#pragma warning restore AA0206", false);
+            writer.WriteLine($"#pragma warning restore {ALCustomDataKeys.PragmaCodes.UnusedAssignedValue}", false);
             writer.WriteLine("ValidateBody();");
             writer.DecreaseIndent();
             writer.WriteLine("end;");
