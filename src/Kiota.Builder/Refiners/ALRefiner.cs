@@ -601,42 +601,14 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 case CodeClass c:
                     {
                         if (alConfig.MarkInternal)
-                        {
-                            var accessProp = new CodeProperty
-                            {
-                                Name = "Access",
-                                Kind = CodePropertyKind.Custom,
-                                Type = new CodeType { Name = "ObjectProperty", IsExternal = true },
-                            };
-                            accessProp.CustomData["object-property"] = "true";
-                            accessProp.CustomData["value"] = "Internal";
-                            accessProp.CustomData["locked"] = "true"; // Mark it as locked to prevent overrides during name modifications
-                            c.AddProperty(accessProp);
-                        }
+                            AddObjectProperty(c, "Access", "Internal");
                         break;
                     }
                 case CodeEnum e:
                     {
                         if (alConfig.MarkInternal)
-                        {
-                            var accessOption = new CodeEnumOption
-                            {
-                                Name = "Access",
-                            };
-                            accessOption.CustomData["object-property"] = "true";
-                            accessOption.CustomData["value"] = "Internal";
-                            accessOption.CustomData["locked"] = "true"; // Mark it as locked to prevent overrides during name modifications
-                            e.AddOption(accessOption);
-                        }
-
-                        var extensibleOption = new CodeEnumOption
-                        {
-                            Name = "Extensible",
-                        };
-                        extensibleOption.CustomData["object-property"] = "true";
-                        extensibleOption.CustomData["value"] = "false";
-                        extensibleOption.CustomData["locked"] = "true"; // Mark it as locked to prevent overrides during name modifications
-                        e.AddOption(extensibleOption);
+                            AddObjectOption(e, "Access", "Internal");
+                        AddObjectOption(e, "Extensible", "false");
                         break;
                     }
             }
@@ -801,75 +773,19 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             method.CustomData["return-variable-name"] = "ReturnDict";
 
             // JObject for iterating the JSON object keys
-            var jObjectParam = new CodeParameter
-            {
-                Name = "JObject",
-                Kind = CodeParameterKind.Custom,
-                Type = new CodeType { Name = "JsonObject", IsExternal = true },
-            };
-            jObjectParam.CustomData["local-variable"] = "true";
-            method.AddParameter(jObjectParam);
-
+            AddLocalVariable(method, "JObject", "JsonObject");
             // JToken for reading each value
-            var jTokenParam = new CodeParameter
-            {
-                Name = "JToken",
-                Kind = CodeParameterKind.Custom,
-                Type = new CodeType { Name = "JsonToken", IsExternal = true },
-            };
-            jTokenParam.CustomData["local-variable"] = "true";
-            method.AddParameter(jTokenParam);
-
+            AddLocalVariable(method, "JToken", "JsonToken");
             // KeyText for the dictionary key
-            var keyTextParam = new CodeParameter
-            {
-                Name = "KeyText",
-                Kind = CodeParameterKind.Custom,
-                Type = new CodeType { Name = "Text", IsExternal = true },
-            };
-            keyTextParam.CustomData["local-variable"] = "true";
-            method.AddParameter(keyTextParam);
+            AddLocalVariable(method, "KeyText", "Text");
 
             // Value-type-specific local variable (without the al-dictionary marker)
             if (isEnum)
-            {
-                var enumType = (CodeTypeBase)property.Type.Clone();
-                if (enumType is CodeType et) et.CustomData.Remove("al-dictionary");
-                var enumValueParam = new CodeParameter
-                {
-                    Name = "EnumValue",
-                    Kind = CodeParameterKind.Custom,
-                    Type = enumType,
-                };
-                enumValueParam.CustomData["local-variable"] = "true";
-                method.AddParameter(enumValueParam);
-            }
+                AddLocalVariable(method, "EnumValue", property, true);
             else if (isCodeunit)
-            {
-                var codeunitType = (CodeTypeBase)property.Type.Clone();
-                if (codeunitType is CodeType ct2) ct2.CustomData.Remove("al-dictionary");
-                var targetParam = new CodeParameter
-                {
-                    Name = "TargetCodeunit",
-                    Kind = CodeParameterKind.Custom,
-                    Type = codeunitType,
-                };
-                targetParam.CustomData["local-variable"] = "true";
-                method.AddParameter(targetParam);
-            }
+                AddLocalVariable(method, "TargetCodeunit", property, true);
             else
-            {
-                var valueType = (CodeTypeBase)property.Type.Clone();
-                if (valueType is CodeType vt) vt.CustomData.Remove("al-dictionary");
-                var valueParam = new CodeParameter
-                {
-                    Name = "Value",
-                    Kind = CodeParameterKind.Custom,
-                    Type = valueType,
-                };
-                valueParam.CustomData["local-variable"] = "true";
-                method.AddParameter(valueParam);
-            }
+                AddLocalVariable(method, "Value", property, true);
         }
         else if (isCollection)
         {
@@ -877,92 +793,23 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             method.CustomData["return-variable-name"] = "ReturnList";
 
             // Add JArray, JToken
-            var jArrayParam = new CodeParameter
-            {
-                Name = "JArray",
-                Kind = CodeParameterKind.Custom,
-                Type = new CodeType { Name = "JsonArray", IsExternal = true },
-            };
-            jArrayParam.CustomData["local-variable"] = "true";
-            method.AddParameter(jArrayParam);
-
-            var jTokenParam = new CodeParameter
-            {
-                Name = "JToken",
-                Kind = CodeParameterKind.Custom,
-                Type = new CodeType { Name = "JsonToken", IsExternal = true },
-            };
-            jTokenParam.CustomData["local-variable"] = "true";
-            method.AddParameter(jTokenParam);
+            AddLocalVariable(method, "JArray", "JsonArray");
+            AddLocalVariable(method, "JToken", "JsonToken");
 
             if (isCodeunit)
-            {
-                var elementType = (CodeTypeBase)property.Type.Clone();
-                elementType.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.None;
-                var targetParam = new CodeParameter
-                {
-                    Name = "TargetCodeunit",
-                    Kind = CodeParameterKind.Custom,
-                    Type = elementType,
-                };
-                targetParam.CustomData["local-variable"] = "true";
-                method.AddParameter(targetParam);
-            }
+                AddLocalVariable(method, "TargetCodeunit", property, true);
             else if (isEnum)
-            {
-                var enumType = (CodeTypeBase)property.Type.Clone();
-                enumType.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.None;
-                var valueParam = new CodeParameter
-                {
-                    Name = "value",
-                    Kind = CodeParameterKind.Custom,
-                    Type = enumType,
-                };
-                valueParam.CustomData["local-variable"] = "true";
-                method.AddParameter(valueParam);
-            }
+                AddLocalVariable(method, "value", property, true);
         }
         else if (isEnum)
         {
-            var enumType = (CodeTypeBase)property.Type.Clone();
-            var enumValueParam = new CodeParameter
-            {
-                Name = "enumValue",
-                Kind = CodeParameterKind.Custom,
-                Type = enumType,
-            };
-            enumValueParam.CustomData["local-variable"] = "true";
-            method.AddParameter(enumValueParam);
-
-            var ordinalsParam = new CodeParameter
-            {
-                Name = "Ordinals",
-                Kind = CodeParameterKind.Custom,
-                Type = new CodeType { Name = "List of [Integer]", IsExternal = true },
-            };
-            ordinalsParam.CustomData["local-variable"] = "true";
-            method.AddParameter(ordinalsParam);
-
-            var ordinalParam = new CodeParameter
-            {
-                Name = "Ordinal",
-                Kind = CodeParameterKind.Custom,
-                Type = new CodeType { Name = "Integer", IsExternal = true },
-            };
-            ordinalParam.CustomData["local-variable"] = "true";
-            method.AddParameter(ordinalParam);
+            AddLocalVariable(method, "enumValue", property, false);
+            AddLocalVariable(method, "Ordinals", "List of [Integer]");
+            AddLocalVariable(method, "Ordinal", "Integer");
         }
         else if (isCodeunit)
         {
-            var codeunitType = (CodeTypeBase)property.Type.Clone();
-            var targetParam = new CodeParameter
-            {
-                Name = "TargetCodeunit",
-                Kind = CodeParameterKind.Custom,
-                Type = codeunitType,
-            };
-            targetParam.CustomData["local-variable"] = "true";
-            method.AddParameter(targetParam);
+            AddLocalVariable(method, "TargetCodeunit", property, false);
         }
     }
 
@@ -1007,85 +854,20 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             var isEnum = property.Type is CodeType { TypeDefinition: CodeEnum };
             var isCodeunit = property.Type is CodeType { TypeDefinition: CodeClass };
 
-            var jObjectParam = new CodeParameter
-            {
-                Name = "JObject",
-                Kind = CodeParameterKind.Custom,
-                Type = new CodeType { Name = "JsonObject", IsExternal = true },
-            };
-            jObjectParam.CustomData["local-variable"] = "true";
-            method.AddParameter(jObjectParam);
-
-            var keyTextParam = new CodeParameter
-            {
-                Name = "KeyText",
-                Kind = CodeParameterKind.Custom,
-                Type = new CodeType { Name = "Text", IsExternal = true },
-            };
-            keyTextParam.CustomData["local-variable"] = "true";
-            method.AddParameter(keyTextParam);
+            AddLocalVariable(method, "JObject", "JsonObject");
+            AddLocalVariable(method, "KeyText", "Text");
 
             if (isEnum)
-            {
-                var enumType = (CodeTypeBase)property.Type.Clone();
-                if (enumType is CodeType et) et.CustomData.Remove("al-dictionary");
-                var enumValueParam = new CodeParameter
-                {
-                    Name = "EnumValue",
-                    Kind = CodeParameterKind.Custom,
-                    Type = enumType,
-                };
-                enumValueParam.CustomData["local-variable"] = "true";
-                method.AddParameter(enumValueParam);
-            }
+                AddLocalVariable(method, "EnumValue", property, true);
             else if (isCodeunit)
-            {
-                var codeunitType = (CodeTypeBase)property.Type.Clone();
-                if (codeunitType is CodeType ct2) ct2.CustomData.Remove("al-dictionary");
-                var targetParam = new CodeParameter
-                {
-                    Name = "TargetCodeunit",
-                    Kind = CodeParameterKind.Custom,
-                    Type = codeunitType,
-                };
-                targetParam.CustomData["local-variable"] = "true";
-                method.AddParameter(targetParam);
-            }
+                AddLocalVariable(method, "TargetCodeunit", property, true);
             else
-            {
-                var valueType = (CodeTypeBase)property.Type.Clone();
-                if (valueType is CodeType vt) vt.CustomData.Remove("al-dictionary");
-                var valueParam2 = new CodeParameter
-                {
-                    Name = "Value",
-                    Kind = CodeParameterKind.Custom,
-                    Type = valueType,
-                };
-                valueParam2.CustomData["local-variable"] = "true";
-                method.AddParameter(valueParam2);
-            }
+                AddLocalVariable(method, "Value", property, true);
         }
         else if (isCollection)
         {
-            var elementType = (CodeTypeBase)property.Type.Clone();
-            elementType.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.None;
-            var vParam = new CodeParameter
-            {
-                Name = "v",
-                Kind = CodeParameterKind.Custom,
-                Type = elementType,
-            };
-            vParam.CustomData["local-variable"] = "true";
-            method.AddParameter(vParam);
-
-            var jArrayParam = new CodeParameter
-            {
-                Name = "JArray",
-                Kind = CodeParameterKind.Custom,
-                Type = new CodeType { Name = "JsonArray", IsExternal = true },
-            };
-            jArrayParam.CustomData["local-variable"] = "true";
-            method.AddParameter(jArrayParam);
+            AddLocalVariable(method, "v", property, true);
+            AddLocalVariable(method, "JArray", "JsonArray");
         }
 
         return method;
@@ -1351,14 +1133,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 {
                     var propName = getter.SimpleName.ToFirstCharacterLowerCase() ?? getter.Name.ToFirstCharacterLowerCase();
                     var varName = $"{propName}";
-                    var localVar = new CodeParameter
-                    {
-                        Name = varName,
-                        Kind = CodeParameterKind.Custom,
-                        Type = (CodeTypeBase)getter.ReturnType.Clone(),
-                    };
-                    localVar.CustomData["local-variable"] = "true";
-                    validateBody.AddParameter(localVar);
+                    AddLocalVariable(validateBody, varName, (CodeTypeBase)getter.ReturnType.Clone());
                 }
                 validateBody.CustomData["sorting-value"] = "6";
                 validateBody.CustomData["source"] = "validate-body";
@@ -1393,14 +1168,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     toJson2.CustomData["pragmas"] = "AA0245";
 
                     // Add TargetJson local var
-                    var targetJsonParam = new CodeParameter
-                    {
-                        Name = "TargetJson",
-                        Kind = CodeParameterKind.Custom,
-                        Type = new CodeType { Name = "JsonObject", IsExternal = true },
-                    };
-                    targetJsonParam.CustomData["local-variable"] = "true";
-                    toJson2.AddParameter(targetJsonParam);
+                    AddLocalVariable(toJson2, "TargetJson", "JsonObject");
 
                     foreach (var getter in getters)
                     {
@@ -1420,34 +1188,13 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                             param.CustomData["value-variable"] = $"{singularName}Value";
                             param.CustomData["object-variable"] = $"{paramName}Object";
 
-                            var keyVariable = new CodeParameter
-                            {
-                                Name = $"{singularName}Key",
-                                Kind = CodeParameterKind.Custom,
-                                Type = new CodeType { Name = "Text", IsExternal = true },
-                            };
-                            keyVariable.CustomData["local-variable"] = "true";
-                            toJson2.AddParameter(keyVariable);
+                            AddLocalVariable(toJson2, $"{singularName}Key", "Text");
 
                             var type = (CodeTypeBase)getter.ReturnType.Clone();
                             if (type is CodeType et) et.CustomData.Remove("al-dictionary");
-                            var valueVariable = new CodeParameter
-                            {
-                                Name = $"{singularName}Value",
-                                Kind = CodeParameterKind.Custom,
-                                Type = type,
-                            };
-                            valueVariable.CustomData["local-variable"] = "true";
-                            toJson2.AddParameter(valueVariable);
+                            AddLocalVariable(toJson2, $"{singularName}Value", type);
 
-                            var objectVariable = new CodeParameter
-                            {
-                                Name = $"{paramName}Object",
-                                Kind = CodeParameterKind.Custom,
-                                Type = new CodeType { Name = "JsonObject", IsExternal = true },
-                            };
-                            objectVariable.CustomData["local-variable"] = "true";
-                            toJson2.AddParameter(objectVariable);
+                            AddLocalVariable(toJson2, $"{paramName}Object", "JsonObject");
                         }
                         // For codeunit collections, add array + foreach vars
                         else if (paramType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None &&
@@ -1459,25 +1206,11 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                             var arrayName = $"{paramName}Array";
                             param.CustomData["corresponding-array"] = arrayName;
 
-                            var arrayParam = new CodeParameter
-                            {
-                                Name = arrayName,
-                                Kind = CodeParameterKind.Custom,
-                                Type = new CodeType { Name = "JsonArray", IsExternal = true },
-                            };
-                            arrayParam.CustomData["local-variable"] = "true";
-                            toJson2.AddParameter(arrayParam);
+                            AddLocalVariable(toJson2, arrayName, "JsonArray");
 
                             var elementType = (CodeTypeBase)paramType.Clone();
                             elementType.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.None;
-                            var foreachParam = new CodeParameter
-                            {
-                                Name = singularName,
-                                Kind = CodeParameterKind.Custom,
-                                Type = elementType,
-                            };
-                            foreachParam.CustomData["local-variable"] = "true";
-                            toJson2.AddParameter(foreachParam);
+                            AddLocalVariable(toJson2, singularName, elementType);
                         }
 
                         toJson2.AddParameter(param);
@@ -1566,14 +1299,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                         setId.AddParameter(idParam);
                         if (idParam.Type is CodeType ct && conventionService.GetTypeString(ct, setId).Equals("Guid", StringComparison.OrdinalIgnoreCase))
                         {
-                            var wrapperParam = new CodeParameter
-                            {
-                                Name = "JsonHelper",
-                                Kind = CodeParameterKind.Custom,
-                                Type = new CodeType { Name = $"Codeunit {alConfig.CompanionNamespace}.Utilities.\"JSON Helper\"", IsExternal = true }
-                            };
-                            wrapperParam.CustomData["local-variable"] = "true";
-                            setId.AddParameter(wrapperParam);
+                            AddLocalVariable(setId, "JsonHelper", CodeTypeBaseExtensions.CreateExternal($"Codeunit {alConfig.CompanionNamespace}.Utilities.\"JSON Helper\""));
                         }
                         indexerTypeAsClass?.AddMethod(setId);
                         // Add Identifier global variable
@@ -1682,14 +1408,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 convenienceSetter.AddParameter(valueParam);
 
                 // Add a local variable for the wrapper codeunit
-                var wrapperParam = new CodeParameter
-                {
-                    Name = "Wrapper",
-                    Kind = CodeParameterKind.Custom,
-                    Type = (CodeTypeBase)getter.ReturnType.Clone(),
-                };
-                wrapperParam.CustomData["local-variable"] = "true";
-                convenienceSetter.AddParameter(wrapperParam);
+                AddLocalVariable(convenienceSetter, "Wrapper", (CodeTypeBase)getter.ReturnType.Clone());
 
                 methodsToAdd.Add(convenienceSetter);
             }
@@ -1800,14 +1519,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     },
                 };
                 overload.AddParameter(fileBodyParam);
-                var bodyLocalVar = new CodeParameter
-                {
-                    Name = "body",
-                    Kind = CodeParameterKind.Custom,
-                    Type = new CodeType { Name = "Codeunit \"Kiota File Body\"", IsExternal = true },
-                };
-                bodyLocalVar.CustomData["local-variable"] = "true";
-                overload.AddParameter(bodyLocalVar);
+                AddLocalVariable(overload, "body", "Codeunit \"Kiota File Body\"");
 
                 methodsToAdd.Add((parentClass, overload));
 
@@ -1842,14 +1554,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     },
                 };
                 overload2.AddParameter(fileBodyParam);
-                bodyLocalVar = new CodeParameter
-                {
-                    Name = "body",
-                    Kind = CodeParameterKind.Custom,
-                    Type = new CodeType { Name = "Codeunit \"Kiota File Body\"", IsExternal = true },
-                };
-                bodyLocalVar.CustomData["local-variable"] = "true";
-                overload2.AddParameter(bodyLocalVar);
+                AddLocalVariable(overload2, "body", "Codeunit \"Kiota File Body\"");
                 methodsToAdd.Add((parentClass, overload2));
             }
         });
@@ -1869,14 +1574,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 !method.IsConvenienceOverload()) // skip multipart overloads since they will be implemented by calling the main executor method
             {
                 // Add RequestHandler local variable
-                var reqHandlerParam = new CodeParameter
-                {
-                    Name = "RequestHandler",
-                    Kind = CodeParameterKind.Custom,
-                    Type = new CodeType { Name = $"Codeunit {alConfig.ClientNamespace}.\"Kiota RequestHandler\"", IsExternal = true },
-                };
-                reqHandlerParam.CustomData["local-variable"] = "true";
-                method.AddParameter(reqHandlerParam);
+                AddLocalVariable(method, "RequestHandler", CodeTypeBaseExtensions.CreateExternal($"Codeunit {alConfig.ClientNamespace}.\"Kiota RequestHandler\""));
 
                 // if the method has a body, that is a collection type of model-codeunits, we need to add 2 additional local variables
                 // BodyElement: Codeunit <model-codeunit>
@@ -1892,26 +1590,17 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                             TypeDefinition = bodyClass,
                             IsExternal = false,
                         };
-                        var bodyElementParam = new CodeParameter
-                        {
-                            Name = "BodyElement",
-                            Kind = CodeParameterKind.Custom,
-                            Type = bodyElementType,
-                        };
-                        bodyElementParam.CustomData["local-variable"] = "true";
-                        method.AddParameter(bodyElementParam);
-
-                        var bodyObjectsParam = new CodeParameter
-                        {
-                            Name = "BodyObjects",
-                            Kind = CodeParameterKind.Custom,
-                            Type = new CodeType { Name = $"List of [Interface \"Kiota IModelClass\"]", IsExternal = true },
-                        };
-                        bodyObjectsParam.CustomData["local-variable"] = "true";
-                        method.AddParameter(bodyObjectsParam);
+                        AddLocalVariable(method, "BodyElement", bodyElementType);
+                        AddLocalVariable(method, "BodyObjects", $"List of [Interface \"Kiota IModelClass\"]");
 
                         AddUsing(parentClass, alConfig.DefinitionsNamespace);
                     }
+                }
+                if (parentClass.Documentation?.DescriptionTemplate.Contains(@"\conversion\ava\excel", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    // just for debugging
+                    int i = 0;
+                    string s = i.ToString(CultureInfo.InvariantCulture);
                 }
                 // Handle return type
                 var returnType = method.ReturnType;
@@ -1925,41 +1614,10 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
                         var elementType = (CodeTypeBase)returnType.Clone();
                         elementType.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.None;
-                        var targetTypeParam = new CodeParameter
-                        {
-                            Name = "TargetType",
-                            Kind = CodeParameterKind.Custom,
-                            Type = elementType,
-                        };
-                        targetTypeParam.CustomData["local-variable"] = "true";
-                        method.AddParameter(targetTypeParam);
-
-                        var subTokenParam = new CodeParameter
-                        {
-                            Name = "SubToken",
-                            Kind = CodeParameterKind.Custom,
-                            Type = new CodeType { Name = "JsonToken", IsExternal = true },
-                        };
-                        subTokenParam.CustomData["local-variable"] = "true";
-                        method.AddParameter(subTokenParam);
-
-                        var responseArrayParam = new CodeParameter
-                        {
-                            Name = "ResponseAsArray",
-                            Kind = CodeParameterKind.Custom,
-                            Type = new CodeType { Name = "JsonArray", IsExternal = true },
-                        };
-                        responseArrayParam.CustomData["local-variable"] = "true";
-                        method.AddParameter(responseArrayParam);
-
-                        var iParam = new CodeParameter
-                        {
-                            Name = "i",
-                            Kind = CodeParameterKind.Custom,
-                            Type = new CodeType { Name = "Integer", IsExternal = true },
-                        };
-                        iParam.CustomData["local-variable"] = "true";
-                        method.AddParameter(iParam);
+                        AddLocalVariable(method, "TargetType", elementType);
+                        AddLocalVariable(method, "SubToken", "JsonToken");
+                        AddLocalVariable(method, "ResponseAsArray", "JsonArray");
+                        AddLocalVariable(method, "i", "Integer");
                     }
                     else if (ct.TypeDefinition is CodeClass)
                     {
@@ -2005,18 +1663,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
                             // Access = Internal object property (SetDefaultObjectProperties ran before this class existed)
                             if (alConfig.MarkInternal)
-                            {
-                                var accessProp = new CodeProperty
-                                {
-                                    Name = "Access",
-                                    Kind = CodePropertyKind.Custom,
-                                    Type = new CodeType { Name = "ObjectProperty", IsExternal = true },
-                                };
-                                accessProp.CustomData["object-property"] = "true";
-                                accessProp.CustomData["value"] = "Internal";
-                                accessProp.CustomData["locked"] = "true";
-                                paramClass.AddProperty(accessProp);
-                            }
+                                AddObjectProperty(paramClass, "Access", "Internal");
 
                             // Global variables
                             AddGlobalVariable(paramClass, "QueryParamFormatter", $"Codeunit {alConfig.ClientNamespace}.\"Kiota Query Param Formatter\"", "1");
@@ -2354,6 +2001,54 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         if (locked)
             prop.CustomData["locked-label"] = "true";
         codeClass.AddProperty(prop);
+    }
+    private static void AddLocalVariable(CodeMethod method, string name, CodeProperty fromProperty, bool clearCollectionInformation)
+    {
+        var genericType = (CodeTypeBase)fromProperty.Type.Clone();
+        if (clearCollectionInformation)
+        {
+            if (genericType is CodeType gt) gt.CustomData.Remove("al-dictionary");
+            genericType.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.None;
+        }
+        AddLocalVariable(method, name, genericType);
+
+    }
+    private static void AddLocalVariable(CodeMethod method, string name, CodeTypeBase type)
+    {
+        var param = new CodeParameter
+        {
+            Name = name,
+            Kind = CodeParameterKind.Custom,
+            Type = type,
+        };
+        param.CustomData["local-variable"] = "true";
+        method.AddParameter(param);
+    }
+
+    private static void AddLocalVariable(CodeMethod method, string name, string externalTypeName)
+        => AddLocalVariable(method, name, CodeTypeBaseExtensions.CreateExternal(externalTypeName));
+
+    private static void AddObjectProperty(CodeClass codeClass, string name, string value)
+    {
+        var prop = new CodeProperty
+        {
+            Name = name,
+            Kind = CodePropertyKind.Custom,
+            Type = CodeTypeBaseExtensions.CreateExternal("ObjectProperty"),
+        };
+        prop.CustomData["object-property"] = "true";
+        prop.CustomData["value"] = value;
+        prop.CustomData["locked"] = "true";
+        codeClass.AddProperty(prop);
+    }
+
+    private static void AddObjectOption(CodeEnum codeEnum, string name, string value)
+    {
+        var option = new CodeEnumOption { Name = name };
+        option.CustomData["object-property"] = "true";
+        option.CustomData["value"] = value;
+        option.CustomData["locked"] = "true";
+        codeEnum.AddOption(option);
     }
     #endregion
 }

@@ -71,4 +71,6 @@ public static class CodeTypeBaseExtensions
         }
         return false;
     }
+
+    public static CodeType CreateExternal(string name) => new CodeType { Name = name, IsExternal = true };
 }
