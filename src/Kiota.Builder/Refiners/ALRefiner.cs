@@ -87,30 +87,27 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     }
 
     #region Step 1: ModifyNamespaces
-    private static void ModifyNamespaces(CodeElement generatedCode)
+    private static void ModifyNamespaces(CodeElement currentElement)
     {
-        var reservedNames = ALReservedNamesProvider.Instance;
-        DeepCrawlTree(generatedCode, element =>
+        if (currentElement is CodeNamespace ns)
         {
-            if (element is CodeNamespace)
+            var reservedNames = ALReservedNamesProvider.Instance;
+            // Replace any namespace segments that start with an underscore, which is not recommended in AL and would trigger warnings. This is done as a first step to ensure we catch any namespaces that start with underscores before we do any other modifications.
+            if (ns.Name.Split('.').Any(s => s.StartsWith('_')))
             {
-                // Replace any namespace segments that start with an underscore, which is not recommended in AL and would trigger warnings. This is done as a first step to ensure we catch any namespaces that start with underscores before we do any other modifications.
-                var ns = (CodeNamespace)element;
-                if (ns.Name.Split('.').Any(s => s.StartsWith('_')))
-                {
-                    ns.Name = string.Join('.', ns.Name.Split('.').Select(s =>
-                        s.StartsWith('_') ? "u" + s.TrimStart('_') : s));
-                }
-                // Also check if any part of the namespace is a reserved name, and if so, append an underscore to it. This is done after the underscore replacement to ensure we catch any namespaces that become reserved names after the first modification.
-                var segments = ns.Name.Split('.');
-                for (int i = 0; i < segments.Length; i++)
-                {
-                    if (reservedNames.ReservedNames.Contains(segments[i]))
-                        segments[i] += "_";
-                }
-                ns.Name = string.Join('.', segments);
+                ns.Name = string.Join('.', ns.Name.Split('.').Select(s =>
+                    s.StartsWith('_') ? "u" + s.TrimStart('_') : s));
             }
-        });
+            // Also check if any part of the namespace is a reserved name, and if so, append an underscore to it. This is done after the underscore replacement to ensure we catch any namespaces that become reserved names after the first modification.
+            var segments = ns.Name.Split('.');
+            for (int i = 0; i < segments.Length; i++)
+            {
+                if (reservedNames.ReservedNames.Contains(segments[i]))
+                    segments[i] += "_";
+            }
+            ns.Name = string.Join('.', segments);
+        }
+        CrawlTree(currentElement, ModifyNamespaces);
     }
     #endregion
 
@@ -124,13 +121,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     {
         // Collect all model classes that have an inheritance relationship
         var classesWithInheritance = new List<CodeClass>();
-        DeepCrawlTree(generatedCode, element =>
-        {
-            if (element is CodeClass c && c.IsOfKind(CodeClassKind.Model) && c.StartBlock.Inherits is not null)
-            {
-                classesWithInheritance.Add(c);
-            }
-        });
+        CollectModelClassesWithInheritance(generatedCode, classesWithInheritance);
 
         foreach (var derivedClass in classesWithInheritance)
         {
@@ -214,11 +205,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     {
         // Collect every enum together with its parent namespace and namespace depth
         var allEnums = new List<(CodeEnum Enum, CodeNamespace Namespace, int Depth)>();
-        DeepCrawlTree(generatedCode, element =>
-        {
-            if (element is CodeEnum e && e.Parent is CodeNamespace ns)
-                allEnums.Add((e, ns, ns.Name.Split('.').Length));
-        });
+        CollectEnumsWithNamespace(generatedCode, allEnums);
 
         // Group by name; only care about groups with more than one member
         var groups = allEnums
@@ -257,13 +244,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     private static void DeduplicateModelClasses(CodeElement generatedCode)
     {
         var allClasses = new List<(CodeClass Class, CodeNamespace Namespace, int Depth)>();
-        DeepCrawlTree(generatedCode, element =>
-        {
-            if (element is CodeClass c &&
-                c.IsOfKind(CodeClassKind.Model) &&
-                c.Parent is CodeNamespace ns)
-                allClasses.Add((c, ns, ns.Name.Split('.').Length));
-        });
+        CollectModelClassesWithNamespace(generatedCode, allClasses);
 
         var groups = allClasses
             .GroupBy(x => x.Class.Name, StringComparer.OrdinalIgnoreCase)
@@ -302,34 +283,32 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     /// that points at <paramref name="oldDef"/> with <paramref name="newDef"/>.
     /// </summary>
     private static void RewriteTypeDefinitionReferences(
-        CodeElement root, CodeElement oldDef, CodeElement newDef)
+        CodeElement currentElement, CodeElement oldDef, CodeElement newDef)
     {
-        DeepCrawlTree(root, element =>
+        switch (currentElement)
         {
-            switch (element)
-            {
-                case CodeMethod m:
-                    RewireCodeTypeBase(m.ReturnType, oldDef, newDef);
-                    foreach (var p in m.Parameters)
-                        RewireCodeTypeBase(p.Type, oldDef, newDef);
-                    break;
+            case CodeMethod m:
+                RewireCodeTypeBase(m.ReturnType, oldDef, newDef);
+                foreach (var p in m.Parameters)
+                    RewireCodeTypeBase(p.Type, oldDef, newDef);
+                break;
 
-                case CodeProperty prop:
-                    RewireCodeTypeBase(prop.Type, oldDef, newDef);
-                    break;
+            case CodeProperty prop:
+                RewireCodeTypeBase(prop.Type, oldDef, newDef);
+                break;
 
-                case CodeParameter param:
-                    RewireCodeTypeBase(param.Type, oldDef, newDef);
-                    break;
+            case CodeParameter param:
+                RewireCodeTypeBase(param.Type, oldDef, newDef);
+                break;
 
-                case CodeClass c:
-                    if (c.StartBlock.Inherits is CodeType inheritType)
-                        RewireCodeTypeBase(inheritType, oldDef, newDef);
-                    foreach (var impl in c.StartBlock.Implements)
-                        RewireCodeTypeBase(impl, oldDef, newDef);
-                    break;
-            }
-        });
+            case CodeClass c:
+                if (c.StartBlock.Inherits is CodeType inheritType)
+                    RewireCodeTypeBase(inheritType, oldDef, newDef);
+                foreach (var impl in c.StartBlock.Implements)
+                    RewireCodeTypeBase(impl, oldDef, newDef);
+                break;
+        }
+        CrawlTree(currentElement, x => RewriteTypeDefinitionReferences(x, oldDef, newDef));
     }
 
     private static void RewireCodeTypeBase(CodeTypeBase? typeBase, CodeElement oldDef, CodeElement newDef)
@@ -354,11 +333,27 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         //   - a Model class with ONLY an AdditionalData property and no
         //     Custom properties is structurally a pure-dict wrapper 
         var pureDictClasses = new List<(CodeClass Class, CodeNamespace Namespace, string ValueTypeName)>();
-        DeepCrawlTree(generatedCode, element =>
-        {
-            if (element is not CodeClass c || c.Parent is not CodeNamespace ns)
-                return;
+        CollectPureDictionaryClasses(generatedCode, pureDictClasses);
 
+        foreach (var (dictClass, ns, valueTypeName) in pureDictClasses)
+        {
+            // Find the actual CodeElement that the additionalProperties $ref resolves to
+            var valueTypeElement = FindTypeDefinitionByName(generatedCode, valueTypeName, dictClass);
+
+            if (valueTypeElement is null) continue; // Cannot resolve — leave as-is
+
+            // Replace every CodeProperty that currently points to this pure-dictionary class
+            RewritePureDictionaryPropertyTypes(generatedCode, dictClass, valueTypeElement);
+
+            // Remove the now-redundant wrapper class
+            ns.RemoveChildElement(dictClass);
+        }
+    }
+
+    private static void CollectPureDictionaryClasses(CodeElement currentElement, List<(CodeClass Class, CodeNamespace Namespace, string ValueTypeName)> collector)
+    {
+        if (currentElement is CodeClass c && c.Parent is CodeNamespace ns)
+        {
             // Structural fallback: Model with only AdditionalData, no Custom properties
             if (c.Kind == CodeClassKind.Model &&
                 c.Properties.Any(p => p.Kind == CodePropertyKind.AdditionalData) &&
@@ -366,154 +361,139 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             {
                 var additionalDataProp = c.Properties.First(p => p.Kind == CodePropertyKind.AdditionalData);
                 var additionalDataPropType = additionalDataProp.Type as CodeType;
-                pureDictClasses.Add((c, ns, additionalDataPropType?.TypeDefinition?.Name ?? string.Empty));
+                collector.Add((c, ns, additionalDataPropType?.TypeDefinition?.Name ?? string.Empty));
             }
-        });
-
-        foreach (var (dictClass, ns, valueTypeName) in pureDictClasses)
-        {
-
-            // Find the actual CodeElement that the additionalProperties $ref resolves to
-            CodeElement? valueTypeElement = null;
-            DeepCrawlTree(generatedCode, element =>
-            {
-                if (valueTypeElement is not null) return;
-                if (element is CodeEnum e && e.Name.Equals(valueTypeName, StringComparison.OrdinalIgnoreCase))
-                    valueTypeElement = e;
-                else if (element is CodeClass c2 &&
-                         !ReferenceEquals(c2, dictClass) &&
-                         c2.Name.Equals(valueTypeName, StringComparison.OrdinalIgnoreCase))
-                    valueTypeElement = c2;
-            });
-
-            if (valueTypeElement is null) continue; // Cannot resolve — leave as-is
-
-            // Replace every CodeProperty that currently points to this pure-dictionary class
-            DeepCrawlTree(generatedCode, element =>
-            {
-                if (element is CodeProperty prop &&
-                    prop.Type is CodeType ct &&
-                    ReferenceEquals(ct.TypeDefinition, dictClass))
-                {
-                    var dictType = new CodeType { TypeDefinition = valueTypeElement };
-                    dictType.SetFlag(ALCustomDataKeys.AlDictionary);
-                    prop.Type = dictType;
-                }
-            });
-
-            // Remove the now-redundant wrapper class
-            ns.RemoveChildElement(dictClass);
         }
+        CrawlTree(currentElement, x => CollectPureDictionaryClasses(x, collector));
+    }
+
+    /// <summary>
+    /// Returns the first enum, or the first non-<paramref name="exclude"/> class, whose name matches
+    /// <paramref name="typeName"/> in the subtree below <paramref name="currentElement"/> (depth-first
+    /// pre-order), or <c>null</c> when none is found.
+    /// </summary>
+    private static CodeElement? FindTypeDefinitionByName(CodeElement currentElement, string typeName, CodeClass exclude)
+    {
+        foreach (var child in currentElement.GetChildElements(true))
+        {
+            if (child is CodeEnum e && e.Name.Equals(typeName, StringComparison.OrdinalIgnoreCase))
+                return e;
+            if (child is CodeClass c2 &&
+                !ReferenceEquals(c2, exclude) &&
+                c2.Name.Equals(typeName, StringComparison.OrdinalIgnoreCase))
+                return c2;
+            if (FindTypeDefinitionByName(child, typeName, exclude) is CodeElement found)
+                return found;
+        }
+        return null;
+    }
+
+    private static void RewritePureDictionaryPropertyTypes(CodeElement currentElement, CodeClass dictClass, CodeElement valueTypeElement)
+    {
+        if (currentElement is CodeProperty prop &&
+            prop.Type is CodeType ct &&
+            ReferenceEquals(ct.TypeDefinition, dictClass))
+        {
+            var dictType = new CodeType { TypeDefinition = valueTypeElement };
+            dictType.SetFlag(ALCustomDataKeys.AlDictionary);
+            prop.Type = dictType;
+        }
+        CrawlTree(currentElement, x => RewritePureDictionaryPropertyTypes(x, dictClass, valueTypeElement));
     }
     #endregion
 
     #region Step 2: Remove/Mark methods
-    private static void RemoveUnusedMethods(CodeElement generatedCode)
+    private static void RemoveUnusedMethods(CodeElement currentElement)
     {
-        DeepCrawlTree(generatedCode, element =>
+        if (currentElement is CodeMethod method &&
+            method.IsOfKind(CodeMethodKind.Serializer, CodeMethodKind.Deserializer) &&
+            method.Parent is CodeClass parentClass)
         {
-            if (element is CodeMethod method &&
-                method.IsOfKind(CodeMethodKind.Serializer, CodeMethodKind.Deserializer) &&
-                method.Parent is CodeClass parentClass)
-            {
-                parentClass.RemoveChildElement(method);
-            }
-        });
+            parentClass.RemoveChildElement(method);
+        }
+        CrawlTree(currentElement, RemoveUnusedMethods);
     }
 
-    private static void RemoveAdditionalDataProperty(CodeElement generatedCode)
+    private static void RemoveAdditionalDataProperty(CodeElement currentElement)
     {
-        DeepCrawlTree(generatedCode, element =>
+        if (currentElement is CodeProperty prop &&
+            prop.Kind == CodePropertyKind.AdditionalData &&
+            prop.Parent is CodeClass parentClass)
         {
-            if (element is CodeProperty prop &&
-                prop.Kind == CodePropertyKind.AdditionalData &&
-                prop.Parent is CodeClass parentClass)
-            {
-                parentClass.RemoveChildElement(prop);
-            }
-        });
+            parentClass.RemoveChildElement(prop);
+        }
+        CrawlTree(currentElement, RemoveAdditionalDataProperty);
     }
 
-    private static void RemoveNotSupportedParameters(CodeElement generatedCode)
+    private static void RemoveNotSupportedParameters(CodeElement currentElement)
     {
-        DeepCrawlTree(generatedCode, element =>
+        if (currentElement is CodeMethod method)
         {
-            if (element is CodeMethod method)
-            {
-                var toRemove = method.Parameters
-                    .Where(p => p.Kind == CodeParameterKind.Cancellation ||
-                                p.Kind == CodeParameterKind.RequestConfiguration)
-                    .ToList();
-                foreach (var param in toRemove)
-                    method.RemoveParametersByKind(param.Kind);
-            }
-        });
+            var toRemove = method.Parameters
+                .Where(p => p.Kind == CodeParameterKind.Cancellation ||
+                            p.Kind == CodeParameterKind.RequestConfiguration)
+                .ToList();
+            foreach (var param in toRemove)
+                method.RemoveParametersByKind(param.Kind);
+        }
+        CrawlTree(currentElement, RemoveNotSupportedParameters);
     }
 
-    private static void MarkMethodsToSkip(CodeElement generatedCode)
+    private static void MarkMethodsToSkip(CodeElement currentElement)
     {
-        DeepCrawlTree(generatedCode, element =>
+        if (currentElement is CodeMethod method &&
+            method.IsOfKind(CodeMethodKind.ClientConstructor, CodeMethodKind.RawUrlBuilder,
+                CodeMethodKind.RawUrlConstructor, CodeMethodKind.RequestGenerator,
+                CodeMethodKind.Constructor, CodeMethodKind.Factory))
         {
-            if (element is CodeMethod method &&
-                method.IsOfKind(CodeMethodKind.ClientConstructor, CodeMethodKind.RawUrlBuilder,
-                    CodeMethodKind.RawUrlConstructor, CodeMethodKind.RequestGenerator,
-                    CodeMethodKind.Constructor, CodeMethodKind.Factory))
-            {
-                method.SetFlag(ALCustomDataKeys.Skip);
-            }
-        });
+            method.SetFlag(ALCustomDataKeys.Skip);
+        }
+        CrawlTree(currentElement, MarkMethodsToSkip);
     }
     #endregion
 
     #region Step 3: Object IDs and Name Management
-    private static void SetObjectIdsOnClassesAndEnums(CodeElement generatedCode, ALObjectIdProvider objectIdProvider)
+    private static void SetObjectIdsOnClassesAndEnums(CodeElement currentElement, ALObjectIdProvider objectIdProvider)
     {
-        DeepCrawlTree(generatedCode, element =>
+        if (currentElement is CodeClass c)
         {
-            if (element is CodeClass c)
-            {
-                var id = objectIdProvider.GetNextCodeunitId().ToString(CultureInfo.InvariantCulture);
-                c.SetData(ALCustomDataKeys.ObjectId, id);
-            }
-            else if (element is CodeEnum e)
-            {
-                var id = objectIdProvider.GetNextEnumId().ToString(CultureInfo.InvariantCulture);
-                e.SetData(ALCustomDataKeys.ObjectId, id);
-            }
-        });
+            var id = objectIdProvider.GetNextCodeunitId().ToString(CultureInfo.InvariantCulture);
+            c.SetData(ALCustomDataKeys.ObjectId, id);
+        }
+        else if (currentElement is CodeEnum e)
+        {
+            var id = objectIdProvider.GetNextEnumId().ToString(CultureInfo.InvariantCulture);
+            e.SetData(ALCustomDataKeys.ObjectId, id);
+        }
+        CrawlTree(currentElement, x => SetObjectIdsOnClassesAndEnums(x, objectIdProvider));
     }
 
     private static void ModifyClassNames(CodeElement generatedCode, ALConfiguration alConfig, ALConventionService conventionService)
     {
         // Collect all class names to detect duplicates
         var classNames = new Dictionary<string, List<CodeClass>>(StringComparer.OrdinalIgnoreCase);
-        DeepCrawlTree(generatedCode, element =>
-        {
-            if (element is CodeClass c)
-            {
-                if (!classNames.ContainsKey(c.Name))
-                    classNames[c.Name] = new List<CodeClass>();
-                classNames[c.Name].Add(c);
-            }
-        });
+        CollectClassNames(generatedCode, classNames);
 
         var maxLength = 30 - alConfig.ObjectPrefix.Length - alConfig.ObjectSuffix.Length;
         if (maxLength <= 0) maxLength = 30;
 
-        DeepCrawlTree(generatedCode, element =>
+        ApplyClassNameChanges(generatedCode, classNames, maxLength, alConfig, conventionService);
+    }
+
+    private static void ApplyClassNameChanges(CodeElement currentElement, Dictionary<string, List<CodeClass>> classNames, int maxLength, ALConfiguration alConfig, ALConventionService conventionService)
+    {
+        if (currentElement is CodeClass c)
         {
-            if (element is CodeClass c)
+            var originalName = c.Name;
+            var hasDuplicate = classNames.TryGetValue(originalName, out var list) && list!.Count > 1;
+
+            if (!hasDuplicate && originalName.Length <= maxLength)
             {
-                var originalName = c.Name;
-                var hasDuplicate = classNames.TryGetValue(originalName, out var list) && list!.Count > 1;
-
-                if (!hasDuplicate && originalName.Length <= maxLength)
-                {
-                    if (!string.IsNullOrEmpty(alConfig.ObjectPrefix) || !string.IsNullOrEmpty(alConfig.ObjectSuffix))
-                        c.Name = $"{alConfig.ObjectPrefix}{c.Name}{alConfig.ObjectSuffix}";
-                    return;
-                }
-
+                if (!string.IsNullOrEmpty(alConfig.ObjectPrefix) || !string.IsNullOrEmpty(alConfig.ObjectSuffix))
+                    c.Name = $"{alConfig.ObjectPrefix}{c.Name}{alConfig.ObjectSuffix}";
+            }
+            else
+            {
                 // Need abbreviation/deduplication
                 var processedName = conventionService.SanitizeName(originalName, c, 30);
 
@@ -538,51 +518,47 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     c.AppendCsv(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.NamingConvention);
                 }
             }
-        });
+        }
+        CrawlTree(currentElement, x => ApplyClassNameChanges(x, classNames, maxLength, alConfig, conventionService));
     }
 
     private static void ModifyEnumNames(CodeElement generatedCode, ALConfiguration alConfig, ALConventionService conventionService)
     {
         var enumNames = new Dictionary<string, List<CodeEnum>>(StringComparer.OrdinalIgnoreCase);
-        DeepCrawlTree(generatedCode, element =>
-        {
-            if (element is CodeEnum e)
-            {
-                if (!enumNames.ContainsKey(e.Name))
-                    enumNames[e.Name] = new List<CodeEnum>();
-                enumNames[e.Name].Add(e);
-            }
-        });
+        CollectEnumNames(generatedCode, enumNames);
 
-        DeepCrawlTree(generatedCode, element =>
-        {
-            if (element is CodeEnum e)
-            {
-                var originalName = e.Name;
-                var hasDuplicate = enumNames.TryGetValue(originalName, out var list) && list!.Count > 1;
+        ApplyEnumNameChanges(generatedCode, enumNames, alConfig, conventionService);
+    }
 
-                if (hasDuplicate)
+    private static void ApplyEnumNameChanges(CodeElement currentElement, Dictionary<string, List<CodeEnum>> enumNames, ALConfiguration alConfig, ALConventionService conventionService)
+    {
+        if (currentElement is CodeEnum e)
+        {
+            var originalName = e.Name;
+            var hasDuplicate = enumNames.TryGetValue(originalName, out var list) && list!.Count > 1;
+
+            if (hasDuplicate)
+            {
+                string? parentSegment = null;
+                try
                 {
-                    string? parentSegment = null;
-                    try
-                    {
-                        var ns = e.GetImmediateParentOfType<CodeNamespace>();
-                        var segments = ns.Name.Split('.');
-                        parentSegment = segments.Length > 0 ? segments[^1] : null;
-                    }
-                    catch (InvalidOperationException) { }
-
-                    if (!string.IsNullOrEmpty(parentSegment))
-                    {
-                        e.Name = parentSegment.ToFirstCharacterUpperCase() + e.Name;
-                        if (!e.HasData(ALCustomDataKeys.OriginalName))
-                            e.SetData(ALCustomDataKeys.OriginalName, originalName);
-                    }
+                    var ns = e.GetImmediateParentOfType<CodeNamespace>();
+                    var segments = ns.Name.Split('.');
+                    parentSegment = segments.Length > 0 ? segments[^1] : null;
                 }
+                catch (InvalidOperationException) { }
 
-                e.Name = $"{alConfig.ObjectPrefix}{e.Name}{alConfig.ObjectSuffix}";
+                if (!string.IsNullOrEmpty(parentSegment))
+                {
+                    e.Name = parentSegment.ToFirstCharacterUpperCase() + e.Name;
+                    if (!e.HasData(ALCustomDataKeys.OriginalName))
+                        e.SetData(ALCustomDataKeys.OriginalName, originalName);
+                }
             }
-        });
+
+            e.Name = $"{alConfig.ObjectPrefix}{e.Name}{alConfig.ObjectSuffix}";
+        }
+        CrawlTree(currentElement, x => ApplyEnumNameChanges(x, enumNames, alConfig, conventionService));
     }
     #endregion
 
@@ -591,27 +567,25 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     /// Adds default AL object properties (e.g., Access = Internal) to all
     /// codeunit classes and enum objects that will be generated.
     /// </summary>
-    private static void SetDefaultObjectProperties(CodeElement generatedCode, ALConfiguration alConfig)
+    private static void SetDefaultObjectProperties(CodeElement currentElement, ALConfiguration alConfig)
     {
-        DeepCrawlTree(generatedCode, element =>
+        switch (currentElement)
         {
-            switch (element)
-            {
-                case CodeClass c:
-                    {
-                        if (alConfig.MarkInternal)
-                            AddObjectProperty(c, "Access", "Internal");
-                        break;
-                    }
-                case CodeEnum e:
-                    {
-                        if (alConfig.MarkInternal)
-                            AddObjectOption(e, "Access", "Internal");
-                        AddObjectOption(e, "Extensible", "false");
-                        break;
-                    }
-            }
-        });
+            case CodeClass c:
+                {
+                    if (alConfig.MarkInternal)
+                        AddObjectProperty(c, "Access", "Internal");
+                    break;
+                }
+            case CodeEnum e:
+                {
+                    if (alConfig.MarkInternal)
+                        AddObjectOption(e, "Access", "Internal");
+                    AddObjectOption(e, "Extensible", "false");
+                    break;
+                }
+        }
+        CrawlTree(currentElement, x => SetDefaultObjectProperties(x, alConfig));
     }
     #endregion
 
@@ -621,44 +595,42 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         AddPragmasForSpecificCharactersInDocumentation(generatedCode, alConfig, conventionService);
         AddPragmasForUnderscoreNames(generatedCode, alConfig, conventionService);
     }
-    private static void AddPragmasForSpecificCharactersInDocumentation(CodeElement generatedCode, ALConfiguration alConfig, ALConventionService conventionService)
+    private static void AddPragmasForSpecificCharactersInDocumentation(CodeElement currentElement, ALConfiguration alConfig, ALConventionService conventionService)
     {
-        DeepCrawlTree(generatedCode, element =>
+        if (currentElement is CodeClass c)
         {
-            if (element is CodeClass c)
+            if (c.Documentation?.DescriptionAvailable == true)
             {
-                if (c.Documentation?.DescriptionAvailable == true)
+                var description = c.Documentation.GetDescription(static t => t.Name);
+                if (!string.IsNullOrEmpty(description) && ContainsNotAllowedCharacters(description))
                 {
-                    var description = c.Documentation.GetDescription(static t => t.Name);
-                    if (!string.IsNullOrEmpty(description) && ContainsNotAllowedCharacters(description))
-                    {
-                        c.AppendCsv(ALCustomDataKeys.DocumentationPragmas, "AL0640");
-                    }
+                    c.AppendCsv(ALCustomDataKeys.DocumentationPragmas, "AL0640");
                 }
             }
-            else if (element is CodeEnum e)
+        }
+        else if (currentElement is CodeEnum e)
+        {
+            if (e.Documentation?.DescriptionAvailable == true)
             {
-                if (e.Documentation?.DescriptionAvailable == true)
+                var description = e.Documentation.GetDescription(static t => t.Name);
+                if (!string.IsNullOrEmpty(description) && ContainsNotAllowedCharacters(description))
                 {
-                    var description = e.Documentation.GetDescription(static t => t.Name);
-                    if (!string.IsNullOrEmpty(description) && ContainsNotAllowedCharacters(description))
-                    {
-                        e.AppendCsv(ALCustomDataKeys.DocumentationPragmas, "AL0640");
-                    }
+                    e.AppendCsv(ALCustomDataKeys.DocumentationPragmas, "AL0640");
                 }
             }
-            else if (element is CodeMethod m)
+        }
+        else if (currentElement is CodeMethod m)
+        {
+            if (m.Documentation?.DescriptionAvailable == true)
             {
-                if (m.Documentation?.DescriptionAvailable == true)
+                var description = m.Documentation.GetDescription(static t => t.Name);
+                if (!string.IsNullOrEmpty(description) && ContainsNotAllowedCharacters(description))
                 {
-                    var description = m.Documentation.GetDescription(static t => t.Name);
-                    if (!string.IsNullOrEmpty(description) && ContainsNotAllowedCharacters(description))
-                    {
-                        m.AppendCsv(ALCustomDataKeys.DocumentationPragmas, "AL0640");
-                    }
+                    m.AppendCsv(ALCustomDataKeys.DocumentationPragmas, "AL0640");
                 }
             }
-        });
+        }
+        CrawlTree(currentElement, x => AddPragmasForSpecificCharactersInDocumentation(x, alConfig, conventionService));
     }
     private static bool ContainsNotAllowedCharacters(string input)
     {
@@ -669,50 +641,46 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     /// <summary>
     /// Adds necessary pragmas to classes that have names with underscores, which are not recommended in AL and would trigger warnings. This is done as a last step in name management to ensure we catch any classes that end up with underscores after all modifications.
     /// </summary>
-    private static void AddPragmasForUnderscoreNames(CodeElement generatedCode, ALConfiguration alConfig, ALConventionService conventionService)
+    private static void AddPragmasForUnderscoreNames(CodeElement currentElement, ALConfiguration alConfig, ALConventionService conventionService)
     {
-        DeepCrawlTree(generatedCode, element =>
+        if (currentElement is CodeClass c)
         {
-            if (element is CodeClass c)
+            if (c.Name.Contains('_', StringComparison.Ordinal))
             {
-                if (c.Name.Contains('_', StringComparison.Ordinal))
-                {
-                    c.AppendCsv(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.NamingConvention);
-                }
+                c.AppendCsv(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.NamingConvention);
             }
-            else if (element is CodeEnum e)
+        }
+        else if (currentElement is CodeEnum e)
+        {
+            if (e.Name.Contains('_', StringComparison.Ordinal))
             {
-                if (e.Name.Contains('_', StringComparison.Ordinal))
-                {
-                    e.AppendCsv(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.NamingConvention);
-                }
+                e.AppendCsv(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.NamingConvention);
             }
-        });
+        }
+        CrawlTree(currentElement, x => AddPragmasForUnderscoreNames(x, alConfig, conventionService));
     }
     #endregion
 
     #region Step 4: Property → Method Conversion
-    private static void MovePropertiesToMethods(CodeElement generatedCode, ALConfiguration alConfig)
+    private static void MovePropertiesToMethods(CodeElement currentElement, ALConfiguration alConfig)
     {
-        DeepCrawlTree(generatedCode, element =>
+        if (currentElement is CodeClass codeClass)
         {
-            if (element is CodeClass codeClass)
-            {
-                var properties = codeClass.Properties
-                    .Where(p => p.Kind == CodePropertyKind.Custom &&
-                                !p.GetFlag(ALCustomDataKeys.Locked))
-                    .ToList();
+            var properties = codeClass.Properties
+                .Where(p => p.Kind == CodePropertyKind.Custom &&
+                            !p.GetFlag(ALCustomDataKeys.Locked))
+                .ToList();
 
-                foreach (var prop in properties)
-                {
-                    codeClass.RemoveChildElement(prop);
-                    var getter = ToGetterCodeMethod(prop, alConfig);
-                    var setter = ToSetterCodeMethod(prop, alConfig);
-                    codeClass.AddMethod(getter);
-                    codeClass.AddMethod(setter);
-                }
+            foreach (var prop in properties)
+            {
+                codeClass.RemoveChildElement(prop);
+                var getter = ToGetterCodeMethod(prop, alConfig);
+                var setter = ToSetterCodeMethod(prop, alConfig);
+                codeClass.AddMethod(getter);
+                codeClass.AddMethod(setter);
             }
-        });
+        }
+        CrawlTree(currentElement, x => MovePropertiesToMethods(x, alConfig));
     }
 
     private static CodeMethod ToGetterCodeMethod(CodeProperty property, ALConfiguration alConfig)
@@ -845,287 +813,279 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         return method;
     }
 
-    private static void ModifyGetterSetterMethodName(CodeElement generatedCode)
+    private static void ModifyGetterSetterMethodName(CodeElement currentElement)
     {
-        DeepCrawlTree(generatedCode, element =>
+        if (currentElement is CodeMethod method)
         {
-            if (element is CodeMethod method)
-            {
-                if (method.Name.StartsWith("Get-", StringComparison.Ordinal))
-                    method.Name = method.Name[4..];
-                else if (method.Name.StartsWith("Set-", StringComparison.Ordinal))
-                    method.Name = method.Name[4..];
-            }
-        });
+            if (method.Name.StartsWith("Get-", StringComparison.Ordinal))
+                method.Name = method.Name[4..];
+            else if (method.Name.StartsWith("Set-", StringComparison.Ordinal))
+                method.Name = method.Name[4..];
+        }
+        CrawlTree(currentElement, ModifyGetterSetterMethodName);
     }
     #endregion
 
     #region Step 5: Class Augmentation
-    private static void UpdateApiClientClass(CodeElement generatedCode, ALConfiguration alConfig, ALConventionService conventionService, GenerationConfiguration configuration)
+    private static void UpdateApiClientClass(CodeElement currentElement, ALConfiguration alConfig, ALConventionService conventionService, GenerationConfiguration configuration)
     {
-        DeepCrawlTree(generatedCode, element =>
+        if (currentElement is CodeClass codeClass &&
+            codeClass.Name.Equals(configuration.ClientClassName, StringComparison.OrdinalIgnoreCase))
         {
-            if (element is CodeClass codeClass &&
-                codeClass.Name.Equals(configuration.ClientClassName, StringComparison.OrdinalIgnoreCase))
+            codeClass.SetFlag(ALCustomDataKeys.ClientClass);
+
+            // Add usings
+            AddUsing(codeClass, alConfig.ClientNamespace);
+            AddUsing(codeClass, alConfig.DefinitionsNamespace);
+
+            // Add implements
+            codeClass.StartBlock.AddImplements(new CodeType
             {
-                codeClass.SetFlag(ALCustomDataKeys.ClientClass);
+                Name = "Kiota IApiClient",
+                IsExternal = true,
+            });
 
-                // Add usings
-                AddUsing(codeClass, alConfig.ClientNamespace);
-                AddUsing(codeClass, alConfig.DefinitionsNamespace);
-
-                // Add implements
-                codeClass.StartBlock.AddImplements(new CodeType
+            // Extract base URL from existing ClientConstructor
+            var baseUrl = string.Empty;
+            foreach (var method in codeClass.Methods)
+            {
+                if (method.Kind == CodeMethodKind.ClientConstructor && !string.IsNullOrEmpty(method.BaseUrl))
                 {
-                    Name = "Kiota IApiClient",
-                    IsExternal = true,
-                });
-
-                // Extract base URL from existing ClientConstructor
-                var baseUrl = string.Empty;
-                foreach (var method in codeClass.Methods)
-                {
-                    if (method.Kind == CodeMethodKind.ClientConstructor && !string.IsNullOrEmpty(method.BaseUrl))
-                    {
-                        baseUrl = method.BaseUrl;
-                        break;
-                    }
-                }
-
-                // Add global variables as properties
-                AddGlobalVariable(codeClass, "ReqConfig", $"Codeunit \"Kiota ClientConfig\"", "1", ALCustomDataKeys.PragmaCodes.UnusedVariable);
-                AddGlobalVariable(codeClass, "APIAuthorization", $"Codeunit \"Kiota API Authorization\"", "1", ALCustomDataKeys.PragmaCodes.UnusedVariable);
-                AddGlobalVariable(codeClass, "StoredResponse", "Codeunit System.RestClient.\"Http Response Message\"", "1", ALCustomDataKeys.PragmaCodes.UnusedVariable);
-                AddLabel(codeClass, "BaseUrlLbl", baseUrl, true, "1");
-                AddGlobalVariable(codeClass, "ConfigSet", "Boolean", "4");
-                AddLabel(codeClass, "AuthorizationNotInitializedErr", "Authorization is uninitialized.", false, "4");
-
-                // Add Initialize method
-                codeClass.AddMethod(CreateDefaultInitMethod(codeClass));
-
-                // Add Configuration getter, setter and DefaultConfiguration
-                AddConfigurationMethods(codeClass);
-
-                // Add Response getter and setter
-                codeClass.AddMethod(CreateResponseGetterMethod(codeClass));
-                codeClass.AddMethod(CreateResponseSetterMethod(codeClass));
-
-                foreach (var property in codeClass.Properties.Where(p => p.IsOfKind(CodePropertyKind.RequestBuilder)))
-                {
-                    codeClass.RemoveChildElement(property);
-                    codeClass.AddMethod(ToGetterCodeMethod(property, alConfig));
+                    baseUrl = method.BaseUrl;
+                    break;
                 }
             }
-        });
+
+            // Add global variables as properties
+            AddGlobalVariable(codeClass, "ReqConfig", $"Codeunit \"Kiota ClientConfig\"", "1", ALCustomDataKeys.PragmaCodes.UnusedVariable);
+            AddGlobalVariable(codeClass, "APIAuthorization", $"Codeunit \"Kiota API Authorization\"", "1", ALCustomDataKeys.PragmaCodes.UnusedVariable);
+            AddGlobalVariable(codeClass, "StoredResponse", "Codeunit System.RestClient.\"Http Response Message\"", "1", ALCustomDataKeys.PragmaCodes.UnusedVariable);
+            AddLabel(codeClass, "BaseUrlLbl", baseUrl, true, "1");
+            AddGlobalVariable(codeClass, "ConfigSet", "Boolean", "4");
+            AddLabel(codeClass, "AuthorizationNotInitializedErr", "Authorization is uninitialized.", false, "4");
+
+            // Add Initialize method
+            codeClass.AddMethod(CreateDefaultInitMethod(codeClass));
+
+            // Add Configuration getter, setter and DefaultConfiguration
+            AddConfigurationMethods(codeClass);
+
+            // Add Response getter and setter
+            codeClass.AddMethod(CreateResponseGetterMethod(codeClass));
+            codeClass.AddMethod(CreateResponseSetterMethod(codeClass));
+
+            foreach (var property in codeClass.Properties.Where(p => p.IsOfKind(CodePropertyKind.RequestBuilder)))
+            {
+                codeClass.RemoveChildElement(property);
+                codeClass.AddMethod(ToGetterCodeMethod(property, alConfig));
+            }
+        }
+        CrawlTree(currentElement, x => UpdateApiClientClass(x, alConfig, conventionService, configuration));
     }
 
-    private static void UpdateModelClasses(CodeElement generatedCode, ALConfiguration alConfig, ALConventionService conventionService)
+    private static void UpdateModelClasses(CodeElement currentElement, ALConfiguration alConfig, ALConventionService conventionService)
     {
-        DeepCrawlTree(generatedCode, element =>
+        if (currentElement is CodeClass codeClass && codeClass.IsOfKind(CodeClassKind.Model))
         {
-            if (element is CodeClass codeClass && codeClass.IsOfKind(CodeClassKind.Model))
+            // Remove existing implements and replace with IModelClass
+            foreach (var impl in codeClass.StartBlock.Implements.ToList())
+                codeClass.StartBlock.RemoveImplements(impl);
+            codeClass.StartBlock.AddImplements(new CodeType
             {
-                // Remove existing implements and replace with IModelClass
-                foreach (var impl in codeClass.StartBlock.Implements.ToList())
-                    codeClass.StartBlock.RemoveImplements(impl);
-                codeClass.StartBlock.AddImplements(new CodeType
+                Name = "Kiota IModelClass",
+                IsExternal = true,
+            });
+
+            // Remove inheritance
+            if (codeClass.StartBlock.Inherits is not null)
+            {
+                codeClass.StartBlock.Inherits = null;
+            }
+
+            // Add usings
+            AddUsing(codeClass, alConfig.UtilitiesNamespace);
+            AddUsing(codeClass, alConfig.DefinitionsNamespace);
+
+            // Add global variables
+            AddGlobalVariable(codeClass, "JSONHelper", $"Codeunit \"JSON Helper\"", "2", ALCustomDataKeys.PragmaCodes.UnusedVariable);
+            AddGlobalVariable(codeClass, "DebugCall", "Boolean", "4");
+            AddGlobalVariable(codeClass, "JsonBody", "JsonObject", "3");
+            AddGlobalVariable(codeClass, "SubToken", "JsonToken", "3");
+
+            // Add SetBody overloads
+            AddSetBodyMethods(codeClass);
+
+            // Add ValidateBody
+            var validateBody = CreateVoidMethod("ValidateBody", CodeMethodKind.Custom, codeClass, AccessModifier.Private);
+            validateBody.SetData(ALCustomDataKeys.PragmasVariables, ALCustomDataKeys.PragmaCodes.LocalVariableNameClash);
+            // Add local variables; we need to add variables for each property in the class to validate presence of required properties; the properties were previously added as getter- and setter-methods, so we can find them by looking for getter methods with source "from property"
+            var gettersHelper = codeClass.Methods.Where(m => m.IsGetterMethod() && m.GetCategory() == ALMethodCategory.FromProperty).ToList();
+            foreach (var getter in gettersHelper)
+            {
+                var propName = getter.SimpleName.ToFirstCharacterLowerCase() ?? getter.Name.ToFirstCharacterLowerCase();
+                var varName = $"{propName}";
+                AddLocalVariable(validateBody, varName, (CodeTypeBase)getter.ReturnType.Clone());
+            }
+            validateBody.SetData(ALCustomDataKeys.SortingValue, "6");
+            validateBody.SetCategory(ALMethodCategory.ValidateBody);
+            codeClass.AddMethod(validateBody);
+
+            // Add ToJson (simple)
+            var toJson1 = CreateMethod("ToJson", CodeMethodKind.Serializer, codeClass, "JsonObject");
+            toJson1.SetData(ALCustomDataKeys.SortingValue, "103");
+            codeClass.AddMethod(toJson1);
+
+            // Add ToJson (with parameters - overload)
+            var getters = codeClass.Methods.Where(m => m.IsGetterMethod()).ToList();
+            if (getters.Count != 0)
+            {
+                var toJson2 = CreateMethod("ToJson-overload", CodeMethodKind.Serializer, codeClass, "JsonObject");
+                toJson2.SimpleName = "ToJson";
+                toJson2.OriginalMethod = toJson1;
+                toJson2.SetData(ALCustomDataKeys.SortingValue, "104");
+                toJson2.SetData(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.ParameterNameClash);
+
+                // Add TargetJson local var
+                AddLocalVariable(toJson2, "TargetJson", "JsonObject");
+
+                foreach (var getter in getters)
                 {
-                    Name = "Kiota IModelClass",
-                    IsExternal = true,
-                });
-
-                // Remove inheritance
-                if (codeClass.StartBlock.Inherits is not null)
-                {
-                    codeClass.StartBlock.Inherits = null;
-                }
-
-                // Add usings
-                AddUsing(codeClass, alConfig.UtilitiesNamespace);
-                AddUsing(codeClass, alConfig.DefinitionsNamespace);
-
-                // Add global variables
-                AddGlobalVariable(codeClass, "JSONHelper", $"Codeunit \"JSON Helper\"", "2", ALCustomDataKeys.PragmaCodes.UnusedVariable);
-                AddGlobalVariable(codeClass, "DebugCall", "Boolean", "4");
-                AddGlobalVariable(codeClass, "JsonBody", "JsonObject", "3");
-                AddGlobalVariable(codeClass, "SubToken", "JsonToken", "3");
-
-                // Add SetBody overloads
-                AddSetBodyMethods(codeClass);
-
-                // Add ValidateBody
-                var validateBody = CreateVoidMethod("ValidateBody", CodeMethodKind.Custom, codeClass, AccessModifier.Private);
-                validateBody.SetData(ALCustomDataKeys.PragmasVariables, ALCustomDataKeys.PragmaCodes.LocalVariableNameClash);
-                // Add local variables; we need to add variables for each property in the class to validate presence of required properties; the properties were previously added as getter- and setter-methods, so we can find them by looking for getter methods with source "from property"
-                var gettersHelper = codeClass.Methods.Where(m => m.IsGetterMethod() && m.GetCategory() == ALMethodCategory.FromProperty).ToList();
-                foreach (var getter in gettersHelper)
-                {
-                    var propName = getter.SimpleName.ToFirstCharacterLowerCase() ?? getter.Name.ToFirstCharacterLowerCase();
-                    var varName = $"{propName}";
-                    AddLocalVariable(validateBody, varName, (CodeTypeBase)getter.ReturnType.Clone());
-                }
-                validateBody.SetData(ALCustomDataKeys.SortingValue, "6");
-                validateBody.SetCategory(ALMethodCategory.ValidateBody);
-                codeClass.AddMethod(validateBody);
-
-                // Add ToJson (simple)
-                var toJson1 = CreateMethod("ToJson", CodeMethodKind.Serializer, codeClass, "JsonObject");
-                toJson1.SetData(ALCustomDataKeys.SortingValue, "103");
-                codeClass.AddMethod(toJson1);
-
-                // Add ToJson (with parameters - overload)
-                var getters = codeClass.Methods.Where(m => m.IsGetterMethod()).ToList();
-                if (getters.Count != 0)
-                {
-                    var toJson2 = CreateMethod("ToJson-overload", CodeMethodKind.Serializer, codeClass, "JsonObject");
-                    toJson2.SimpleName = "ToJson";
-                    toJson2.OriginalMethod = toJson1;
-                    toJson2.SetData(ALCustomDataKeys.SortingValue, "104");
-                    toJson2.SetData(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.ParameterNameClash);
-
-                    // Add TargetJson local var
-                    AddLocalVariable(toJson2, "TargetJson", "JsonObject");
-
-                    foreach (var getter in getters)
+                    var paramType = (CodeTypeBase)getter.ReturnType.Clone();
+                    var paramName = getter.SimpleName.ToFirstCharacterLowerCase() ?? getter.Name.ToFirstCharacterLowerCase();
+                    var param = new CodeParameter
                     {
-                        var paramType = (CodeTypeBase)getter.ReturnType.Clone();
-                        var paramName = getter.SimpleName.ToFirstCharacterLowerCase() ?? getter.Name.ToFirstCharacterLowerCase();
-                        var param = new CodeParameter
-                        {
-                            Name = paramName,
-                            Kind = CodeParameterKind.Custom,
-                            Type = paramType,
-                        };
-                        param.SetData(ALCustomDataKeys.PropertyName, getter.GetData(ALCustomDataKeys.PropertyName, string.Empty));
-                        if (paramType.IsDictionaryType())
-                        {
-                            var singularName = CodeMethodExtensions.GetSingularName(paramName, toJson2.Parameters);
-                            param.SetData(ALCustomDataKeys.KeyVariable, $"{singularName}Key");
-                            param.SetData(ALCustomDataKeys.ValueVariable, $"{singularName}Value");
-                            param.SetData(ALCustomDataKeys.ObjectVariable, $"{paramName}Object");
+                        Name = paramName,
+                        Kind = CodeParameterKind.Custom,
+                        Type = paramType,
+                    };
+                    param.SetData(ALCustomDataKeys.PropertyName, getter.GetData(ALCustomDataKeys.PropertyName, string.Empty));
+                    if (paramType.IsDictionaryType())
+                    {
+                        var singularName = CodeMethodExtensions.GetSingularName(paramName, toJson2.Parameters);
+                        param.SetData(ALCustomDataKeys.KeyVariable, $"{singularName}Key");
+                        param.SetData(ALCustomDataKeys.ValueVariable, $"{singularName}Value");
+                        param.SetData(ALCustomDataKeys.ObjectVariable, $"{paramName}Object");
 
-                            AddLocalVariable(toJson2, $"{singularName}Key", "Text");
+                        AddLocalVariable(toJson2, $"{singularName}Key", "Text");
 
-                            var type = (CodeTypeBase)getter.ReturnType.Clone();
-                            if (type is CodeType et) et.RemoveData(ALCustomDataKeys.AlDictionary);
-                            AddLocalVariable(toJson2, $"{singularName}Value", type);
+                        var type = (CodeTypeBase)getter.ReturnType.Clone();
+                        if (type is CodeType et) et.RemoveData(ALCustomDataKeys.AlDictionary);
+                        AddLocalVariable(toJson2, $"{singularName}Value", type);
 
-                            AddLocalVariable(toJson2, $"{paramName}Object", "JsonObject");
-                        }
-                        // For codeunit collections, add array + foreach vars
-                        else if (paramType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None &&
-                            paramType is CodeType pt && pt.TypeDefinition is CodeClass)
-                        {
-                            var singularName = CodeMethodExtensions.GetSingularName(paramName, toJson2.Parameters);
-                            param.SetData(ALCustomDataKeys.ForeachVariable, singularName);
+                        AddLocalVariable(toJson2, $"{paramName}Object", "JsonObject");
+                    }
+                    // For codeunit collections, add array + foreach vars
+                    else if (paramType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None &&
+                        paramType is CodeType pt && pt.TypeDefinition is CodeClass)
+                    {
+                        var singularName = CodeMethodExtensions.GetSingularName(paramName, toJson2.Parameters);
+                        param.SetData(ALCustomDataKeys.ForeachVariable, singularName);
 
-                            var arrayName = $"{paramName}Array";
-                            param.SetData(ALCustomDataKeys.CorrespondingArray, arrayName);
+                        var arrayName = $"{paramName}Array";
+                        param.SetData(ALCustomDataKeys.CorrespondingArray, arrayName);
 
-                            AddLocalVariable(toJson2, arrayName, "JsonArray");
+                        AddLocalVariable(toJson2, arrayName, "JsonArray");
 
-                            var elementType = (CodeTypeBase)paramType.Clone();
-                            elementType.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.None;
-                            AddLocalVariable(toJson2, singularName, elementType);
-                        }
-
-                        toJson2.AddParameter(param);
+                        var elementType = (CodeTypeBase)paramType.Clone();
+                        elementType.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.None;
+                        AddLocalVariable(toJson2, singularName, elementType);
                     }
 
-                    codeClass.AddMethod(toJson2);
+                    toJson2.AddParameter(param);
                 }
+
+                codeClass.AddMethod(toJson2);
             }
-        });
+        }
+        CrawlTree(currentElement, x => UpdateModelClasses(x, alConfig, conventionService));
     }
 
-    private static void UpdateRequestBuilderClasses(CodeElement generatedCode, ALConfiguration alConfig, ALConventionService conventionService)
+    private static void UpdateRequestBuilderClasses(CodeElement currentElement, ALConfiguration alConfig, ALConventionService conventionService)
     {
-        DeepCrawlTree(generatedCode, element =>
+        if (currentElement is CodeClass codeClass &&
+            codeClass.IsOfKind(CodeClassKind.RequestBuilder) &&
+            !codeClass.HasData(ALCustomDataKeys.ClientClass))
         {
-            if (element is CodeClass codeClass &&
-                codeClass.IsOfKind(CodeClassKind.RequestBuilder) &&
-                !codeClass.HasData(ALCustomDataKeys.ClientClass))
+            // Add usings
+            AddUsing(codeClass, alConfig.ClientNamespace);
+
+            // Add ReqConfig global variable
+            AddGlobalVariable(codeClass, "ReqConfig", $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"", "1", ALCustomDataKeys.PragmaCodes.UnusedVariable);
+
+            // Add SetConfiguration method
+            var setConfig = CreateAlSyntheticMethod("SetConfiguration", ALMethodCategory.RequestBuilderConfiguration, codeClass, "void", "2");
+            AddParameter(setConfig, "NewReqConfig", $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"");
+            codeClass.AddMethod(setConfig);
+
+            // Add SetConfigurationRaw method — used by WithUrl to point a sibling builder at an
+            // arbitrary/absolute URL (e.g. an OData @odata.nextLink): overwrite the base URL and
+            // clear any accumulated query parameters so the raw URL is used verbatim.
+            var setConfigRaw = CreateAlSyntheticMethod("SetConfigurationRaw", ALMethodCategory.RequestBuilderRawConfiguration, codeClass, "void", "3");
+            AddParameter(setConfigRaw, "NewReqConfig", $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"");
+            AddParameter(setConfigRaw, "RawUrl", "Text");
+            codeClass.AddMethod(setConfigRaw);
+
+            // Un-skip the Kiota RawUrlBuilder (WithUrl) method (skipped by default in Step 2) so it is
+            // emitted as a request-builder method that returns a sibling builder configured with the raw
+            // URL (e.g. an OData @odata.nextLink). The method keeps its upstream CodeMethodKind.RawUrlBuilder
+            // and is dispatched by kind in the writer, exactly like the other Kiota language writers.
+            var withUrl = codeClass.Methods.FirstOrDefault(m => m.IsOfKind(CodeMethodKind.RawUrlBuilder));
+            if (withUrl is not null)
             {
-                // Add usings
-                AddUsing(codeClass, alConfig.ClientNamespace);
+                withUrl.SetFlag(ALCustomDataKeys.Skip, false);
+                withUrl.SetData(ALCustomDataKeys.SortingValue, "5");
+                withUrl.SetData(ALCustomDataKeys.ReturnVariableName, "Rqst");
+                var rawUrlParam = withUrl.Parameters.FirstOrDefault();
+                if (rawUrlParam is not null)
+                    rawUrlParam.Name = "RawUrl";
+            }
 
-                // Add ReqConfig global variable
-                AddGlobalVariable(codeClass, "ReqConfig", $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"", "1", ALCustomDataKeys.PragmaCodes.UnusedVariable);
+            // Handle indexers — check for methods converted from indexers
+            var indexerMethods = codeClass.Methods
+                .Where(m => m.Kind == CodeMethodKind.IndexerBackwardCompatibility && m.OriginalIndexer is not null)
+                .ToList();
 
-                // Add SetConfiguration method
-                var setConfig = CreateAlSyntheticMethod("SetConfiguration", ALMethodCategory.RequestBuilderConfiguration, codeClass, "void", "2");
-                AddParameter(setConfig, "NewReqConfig", $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"");
-                codeClass.AddMethod(setConfig);
+            foreach (var property in codeClass.Properties.Where(p => p.IsOfKind(CodePropertyKind.RequestBuilder)))
+            {
+                var propertyTypeNamespace = ((CodeType)property.Type).TypeDefinition?.GetImmediateParentOfType<CodeNamespace>();
+                ArgumentNullException.ThrowIfNull(propertyTypeNamespace);
+                if (!codeClass.Usings.Any(x => x.Name.Equals(propertyTypeNamespace.Name, StringComparison.OrdinalIgnoreCase)))
+                    codeClass.AddUsing(new CodeUsing { Name = propertyTypeNamespace.Name });
+                codeClass.RemoveChildElement(property);
+                codeClass.AddMethod(ToGetterCodeMethod(property, alConfig));
+            }
 
-                // Add SetConfigurationRaw method — used by WithUrl to point a sibling builder at an
-                // arbitrary/absolute URL (e.g. an OData @odata.nextLink): overwrite the base URL and
-                // clear any accumulated query parameters so the raw URL is used verbatim.
-                var setConfigRaw = CreateAlSyntheticMethod("SetConfigurationRaw", ALMethodCategory.RequestBuilderRawConfiguration, codeClass, "void", "3");
-                AddParameter(setConfigRaw, "NewReqConfig", $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"");
-                AddParameter(setConfigRaw, "RawUrl", "Text");
-                codeClass.AddMethod(setConfigRaw);
+            if (indexerMethods.Count != 0)
+            {
+                var indexerMethod = indexerMethods[0];
+                var indexerParamType = indexerMethod.Parameters.FirstOrDefault()?.Type;
+                var indexerTypeAsClass = ((Kiota.Builder.CodeDOM.CodeType)indexerMethod.ReturnType).TypeDefinition as CodeClass;
 
-                // Un-skip the Kiota RawUrlBuilder (WithUrl) method (skipped by default in Step 2) so it is
-                // emitted as a request-builder method that returns a sibling builder configured with the raw
-                // URL (e.g. an OData @odata.nextLink). The method keeps its upstream CodeMethodKind.RawUrlBuilder
-                // and is dispatched by kind in the writer, exactly like the other Kiota language writers.
-                var withUrl = codeClass.Methods.FirstOrDefault(m => m.IsOfKind(CodeMethodKind.RawUrlBuilder));
-                if (withUrl is not null)
+                if (indexerParamType is not null)
                 {
-                    withUrl.SetFlag(ALCustomDataKeys.Skip, false);
-                    withUrl.SetData(ALCustomDataKeys.SortingValue, "5");
-                    withUrl.SetData(ALCustomDataKeys.ReturnVariableName, "Rqst");
-                    var rawUrlParam = withUrl.Parameters.FirstOrDefault();
-                    if (rawUrlParam is not null)
-                        rawUrlParam.Name = "RawUrl";
-                }
-
-                // Handle indexers — check for methods converted from indexers
-                var indexerMethods = codeClass.Methods
-                    .Where(m => m.Kind == CodeMethodKind.IndexerBackwardCompatibility && m.OriginalIndexer is not null)
-                    .ToList();
-
-                foreach (var property in codeClass.Properties.Where(p => p.IsOfKind(CodePropertyKind.RequestBuilder)))
-                {
-                    var propertyTypeNamespace = ((CodeType)property.Type).TypeDefinition?.GetImmediateParentOfType<CodeNamespace>();
-                    ArgumentNullException.ThrowIfNull(propertyTypeNamespace);
-                    if (!codeClass.Usings.Any(x => x.Name.Equals(propertyTypeNamespace.Name, StringComparison.OrdinalIgnoreCase)))
-                        codeClass.AddUsing(new CodeUsing { Name = propertyTypeNamespace.Name });
-                    codeClass.RemoveChildElement(property);
-                    codeClass.AddMethod(ToGetterCodeMethod(property, alConfig));
-                }
-
-                if (indexerMethods.Count != 0)
-                {
-                    var indexerMethod = indexerMethods[0];
-                    var indexerParamType = indexerMethod.Parameters.FirstOrDefault()?.Type;
-                    var indexerTypeAsClass = ((Kiota.Builder.CodeDOM.CodeType)indexerMethod.ReturnType).TypeDefinition as CodeClass;
-
-                    if (indexerParamType is not null)
+                    // Add SetIdentifier method
+                    var setId = CreateAlSyntheticMethod("SetIdentifier", ALMethodCategory.RequestBuilderIdentifier, codeClass, "void", "3");
+                    AddParameter(setId, "NewIdentifier", (CodeTypeBase)indexerParamType.Clone());
+                    var idParam = setId.Parameters.First(p => p.Name == "NewIdentifier");
+                    if (idParam.Type is CodeType ct && conventionService.GetTypeString(ct, setId).Equals("Guid", StringComparison.OrdinalIgnoreCase))
                     {
-                        // Add SetIdentifier method
-                        var setId = CreateAlSyntheticMethod("SetIdentifier", ALMethodCategory.RequestBuilderIdentifier, codeClass, "void", "3");
-                        AddParameter(setId, "NewIdentifier", (CodeTypeBase)indexerParamType.Clone());
-                        var idParam = setId.Parameters.First(p => p.Name == "NewIdentifier");
-                        if (idParam.Type is CodeType ct && conventionService.GetTypeString(ct, setId).Equals("Guid", StringComparison.OrdinalIgnoreCase))
-                        {
-                            AddLocalVariable(setId, "JsonHelper", CodeTypeBaseExtensions.CreateExternal($"Codeunit {alConfig.CompanionNamespace}.Utilities.\"JSON Helper\""));
-                        }
-                        indexerTypeAsClass?.AddMethod(setId);
-                        // Add Identifier global variable
-                        if (indexerTypeAsClass != null)
-                            AddGlobalVariable(indexerTypeAsClass, "Identifier", indexerParamType.Name, "2");
-
-                        // Update the indexer method to be Item_Idx
-                        indexerMethod.Name = "Item_Idx";
-                        indexerMethod.Kind = CodeMethodKind.Custom;
-                        indexerMethod.SetCategory(ALMethodCategory.FromIndexer);
-                        indexerMethod.SetData(ALCustomDataKeys.SortingValue, "4");
-                        indexerMethod.SetData(ALCustomDataKeys.ReturnVariableName, "Rqst");
+                        AddLocalVariable(setId, "JsonHelper", CodeTypeBaseExtensions.CreateExternal($"Codeunit {alConfig.CompanionNamespace}.Utilities.\"JSON Helper\""));
                     }
+                    indexerTypeAsClass?.AddMethod(setId);
+                    // Add Identifier global variable
+                    if (indexerTypeAsClass != null)
+                        AddGlobalVariable(indexerTypeAsClass, "Identifier", indexerParamType.Name, "2");
+
+                    // Update the indexer method to be Item_Idx
+                    indexerMethod.Name = "Item_Idx";
+                    indexerMethod.Kind = CodeMethodKind.Custom;
+                    indexerMethod.SetCategory(ALMethodCategory.FromIndexer);
+                    indexerMethod.SetData(ALCustomDataKeys.SortingValue, "4");
+                    indexerMethod.SetData(ALCustomDataKeys.ReturnVariableName, "Rqst");
                 }
             }
-        });
+        }
+        CrawlTree(currentElement, x => UpdateRequestBuilderClasses(x, alConfig, conventionService));
     }
     #endregion
 
@@ -1139,20 +1099,25 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     {
         // Phase 1: Collect all value-wrapper classes
         var wrapperClasses = new HashSet<CodeClass>();
-        DeepCrawlTree(generatedCode, element =>
-        {
-            if (element is CodeClass c && IsValueWrapperClass(c))
-                wrapperClasses.Add(c);
-        });
+        CollectValueWrapperClasses(generatedCode, wrapperClasses);
 
         if (wrapperClasses.Count == 0) return;
 
         // Phase 2: For each model class, find getters/setters that return a wrapper and add convenience overloads
-        DeepCrawlTree(generatedCode, element =>
-        {
-            if (element is not CodeClass parentClass || !parentClass.IsOfKind(CodeClassKind.Model))
-                return;
+        AddValueWrapperOverloadsToModelClasses(generatedCode, wrapperClasses);
+    }
 
+    private static void CollectValueWrapperClasses(CodeElement currentElement, HashSet<CodeClass> collector)
+    {
+        if (currentElement is CodeClass c && IsValueWrapperClass(c))
+            collector.Add(c);
+        CrawlTree(currentElement, x => CollectValueWrapperClasses(x, collector));
+    }
+
+    private static void AddValueWrapperOverloadsToModelClasses(CodeElement currentElement, HashSet<CodeClass> wrapperClasses)
+    {
+        if (currentElement is CodeClass parentClass && parentClass.IsOfKind(CodeClassKind.Model))
+        {
             var methodsToAdd = new List<CodeMethod>();
 
             foreach (var getter in parentClass.Methods.Where(m => m.IsGetterMethod()).ToList())
@@ -1203,7 +1168,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
             foreach (var m in methodsToAdd)
                 parentClass.AddMethod(m);
-        });
+        }
+        CrawlTree(currentElement, x => AddValueWrapperOverloadsToModelClasses(x, wrapperClasses));
     }
 
     /// <summary>
@@ -1245,29 +1211,28 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     {
         var methodsToAdd = new List<(CodeClass Parent, CodeMethod Method)>();
 
-        DeepCrawlTree(generatedCode, element =>
-        {
-            if (element is not CodeMethod executor || executor.Kind != CodeMethodKind.RequestExecutor)
-                return;
-            if (executor.Parent is not CodeClass parentClass)
-                return;
-            var bodyParam = executor.Parameters.OfKind(CodeParameterKind.RequestBody);
-            if (bodyParam is null) return;
-            if (!executor.Parameters.Any(p => p.Type is CodeType ct && ct.IsKiotaFileBodyType()))
-                return;
-            if (!bodyParam.TryGetData(ALCustomDataKeys.MultipartFileFields, out var fieldsCsv) ||
-                string.IsNullOrEmpty(fieldsCsv))
-                return;
-
-            foreach (var fieldName in fieldsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries))
-            {
-                methodsToAdd.Add((parentClass, CreateMultipartOverload(executor, fieldName, 1, "InStream")));
-                methodsToAdd.Add((parentClass, CreateMultipartOverload(executor, fieldName, 2, "Text")));
-            }
-        });
+        CollectMultipartOverloads(generatedCode, methodsToAdd);
 
         foreach (var (parent, method) in methodsToAdd)
             parent.AddMethod(method);
+    }
+
+    private static void CollectMultipartOverloads(CodeElement currentElement, List<(CodeClass Parent, CodeMethod Method)> collector)
+    {
+        if (currentElement is CodeMethod executor && executor.Kind == CodeMethodKind.RequestExecutor &&
+            executor.Parent is CodeClass parentClass &&
+            executor.Parameters.OfKind(CodeParameterKind.RequestBody) is CodeParameter bodyParam &&
+            executor.Parameters.Any(p => p.Type is CodeType ct && ct.IsKiotaFileBodyType()) &&
+            bodyParam.TryGetData(ALCustomDataKeys.MultipartFileFields, out var fieldsCsv) &&
+            !string.IsNullOrEmpty(fieldsCsv))
+        {
+            foreach (var fieldName in fieldsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                collector.Add((parentClass, CreateMultipartOverload(executor, fieldName, 1, "InStream")));
+                collector.Add((parentClass, CreateMultipartOverload(executor, fieldName, 2, "Text")));
+            }
+        }
+        CrawlTree(currentElement, x => CollectMultipartOverloads(x, collector));
     }
 
     /// <summary>
@@ -1321,174 +1286,172 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     #endregion
 
     #region Step 6: Request Executor Enhancement
-    private static void UpdateRequestExecutorMethods(CodeElement generatedCode, ALConfiguration alConfig, ALConventionService conventionService, ALObjectIdProvider objectIdProvider)
+    private static void UpdateRequestExecutorMethods(CodeElement currentElement, ALConfiguration alConfig, ALConventionService conventionService, ALObjectIdProvider objectIdProvider)
     {
-        DeepCrawlTree(generatedCode, element =>
+        if (currentElement is CodeMethod method && method.Kind == CodeMethodKind.RequestExecutor &&
+            method.Parent is CodeClass parentClass &&
+            !method.IsConvenienceOverload()) // skip multipart overloads since they will be implemented by calling the main executor method
         {
-            if (element is CodeMethod method && method.Kind == CodeMethodKind.RequestExecutor &&
-                method.Parent is CodeClass parentClass &&
-                !method.IsConvenienceOverload()) // skip multipart overloads since they will be implemented by calling the main executor method
+            // Add RequestHandler local variable
+            AddLocalVariable(method, "RequestHandler", CodeTypeBaseExtensions.CreateExternal($"Codeunit {alConfig.ClientNamespace}.\"Kiota RequestHandler\""));
+
+            // if the method has a body, that is a collection type of model-codeunits, we need to add 2 additional local variables
+            // BodyElement: Codeunit <model-codeunit>
+            // BodyObjects: List of [Interface SimonOfHH.Kiota.Definitions."Kiota IModelClass"]
+            if (method.Parameters.Any(p => p.Kind == CodeParameterKind.RequestBody))
             {
-                // Add RequestHandler local variable
-                AddLocalVariable(method, "RequestHandler", CodeTypeBaseExtensions.CreateExternal($"Codeunit {alConfig.ClientNamespace}.\"Kiota RequestHandler\""));
-
-                // if the method has a body, that is a collection type of model-codeunits, we need to add 2 additional local variables
-                // BodyElement: Codeunit <model-codeunit>
-                // BodyObjects: List of [Interface SimonOfHH.Kiota.Definitions."Kiota IModelClass"]
-                if (method.Parameters.Any(p => p.Kind == CodeParameterKind.RequestBody))
+                var bodyParam = method.Parameters.First(p => p.Kind == CodeParameterKind.RequestBody);
+                if (bodyParam.Type.IsCollection && bodyParam.Type is CodeType bodyType && bodyType.TypeDefinition is CodeClass bodyClass && bodyClass.IsOfKind(CodeClassKind.Model))
                 {
-                    var bodyParam = method.Parameters.First(p => p.Kind == CodeParameterKind.RequestBody);
-                    if (bodyParam.Type.IsCollection && bodyParam.Type is CodeType bodyType && bodyType.TypeDefinition is CodeClass bodyClass && bodyClass.IsOfKind(CodeClassKind.Model))
+                    var bodyElementType = new CodeType
                     {
-                        var bodyElementType = new CodeType
-                        {
-                            Name = bodyClass.Name,
-                            TypeDefinition = bodyClass,
-                            IsExternal = false,
-                        };
-                        AddLocalVariable(method, "BodyElement", bodyElementType);
-                        AddLocalVariable(method, "BodyObjects", $"List of [Interface \"Kiota IModelClass\"]");
+                        Name = bodyClass.Name,
+                        TypeDefinition = bodyClass,
+                        IsExternal = false,
+                    };
+                    AddLocalVariable(method, "BodyElement", bodyElementType);
+                    AddLocalVariable(method, "BodyObjects", $"List of [Interface \"Kiota IModelClass\"]");
 
-                        AddUsing(parentClass, alConfig.DefinitionsNamespace);
-                    }
-                }
-                // Handle return type
-                var returnType = method.ReturnType;
-                if (returnType is CodeType ct)
-                {
-                    if (returnType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None)
-                    {
-                        // Collection return
-                        method.SetData(ALCustomDataKeys.ReturnVariableName, "Target");
-                        method.SetData(ALCustomDataKeys.SourceType, ALCustomDataKeys.SourceTypes.List);
-
-                        var elementType = (CodeTypeBase)returnType.Clone();
-                        elementType.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.None;
-                        AddLocalVariable(method, "TargetType", elementType);
-                        AddLocalVariable(method, "SubToken", "JsonToken");
-                        AddLocalVariable(method, "ResponseAsArray", "JsonArray");
-                        AddLocalVariable(method, "i", "Integer");
-                    }
-                    else if (ct.TypeDefinition is CodeClass)
-                    {
-                        // Single codeunit return
-                        method.SetData(ALCustomDataKeys.ReturnVariableName, "Target");
-                    }
-                    else if (conventionService.GetTypeString(ct, method).Equals("InStream", StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Stream return
-                        method.SetData(ALCustomDataKeys.ReturnVariableName, "InStr");
-                    }
-                }
-
-                // Handle query parameters → parameter codeunit
-                var queryParamsClass = parentClass.InnerClasses.FirstOrDefault(c => c.IsOfKind(CodeClassKind.QueryParameters));
-
-                if (queryParamsClass is not null)
-                {
-                    var queryParamProperties = queryParamsClass.Properties
-                        .Where(p => p.Kind == CodePropertyKind.QueryParameter)
-                        .ToList();
-
-                    if (queryParamProperties.Count > 0)
-                    {
-                        // Create parameter codeunit class
-                        var paramClassName = $"{parentClass.Name}{method.Name}Parameters";
-                        paramClassName = conventionService.SanitizeName(paramClassName, null, 30);
-
-                        try
-                        {
-                            var parentNs = parentClass.GetImmediateParentOfType<CodeNamespace>();
-                            var paramClass = new CodeClass
-                            {
-                                Name = paramClassName,
-                                Kind = CodeClassKind.QueryParameters,
-                            };
-                            paramClass.SetFlag(ALCustomDataKeys.ParameterCodeunit);
-                            paramClass.SetData(ALCustomDataKeys.ObjectId, objectIdProvider.GetNextCodeunitId().ToString(CultureInfo.InvariantCulture));
-                            parentNs.AddClass(paramClass);
-
-                            // Using for the client namespace (where Kiota Query Param Formatter lives)
-                            AddUsing(paramClass, alConfig.ClientNamespace);
-
-                            // Access = Internal object property (SetDefaultObjectProperties ran before this class existed)
-                            if (alConfig.MarkInternal)
-                                AddObjectProperty(paramClass, "Access", "Internal");
-
-                            // Global variables
-                            AddGlobalVariable(paramClass, "QueryParamFormatter", $"Codeunit {alConfig.ClientNamespace}.\"Kiota Query Param Formatter\"", "1");
-                            AddGlobalVariable(paramClass, "QueryParameters", "Dictionary of [Text, Text]", "2");
-
-                            // SetQueryParameter(QueryKey: Text; QueryValue: Text) method
-                            var setQueryParamMethod = CreateVoidMethod("SetQueryParameter", CodeMethodKind.Custom, paramClass);
-                            setQueryParamMethod.SetCategory(ALMethodCategory.QueryParamGenericSetter);
-                            setQueryParamMethod.SetData(ALCustomDataKeys.SortingValue, "1");
-                            AddParameter(setQueryParamMethod, "QueryKey", "Text");
-                            AddParameter(setQueryParamMethod, "QueryValue", "Text");
-                            paramClass.AddMethod(setQueryParamMethod);
-
-                            // Add usings for any referenced types (e.g. deduplicated enums) whose
-                            // TypeDefinition lives in a namespace different from the one this
-                            // parameter codeunit is being placed in.
-                            // Also add one typed Set{Name}(Value: <type>) method per query parameter.
-                            foreach (var qp in queryParamProperties)
-                            {
-                                if (qp.Type is CodeType qpType && qpType.TypeDefinition is not null)
-                                {
-                                    try
-                                    {
-                                        var typeNs = qpType.TypeDefinition.GetImmediateParentOfType<CodeNamespace>();
-                                        if (!typeNs.Name.Equals(parentNs.Name, StringComparison.OrdinalIgnoreCase))
-                                            AddUsing(paramClass, typeNs.Name);
-                                    }
-                                    catch (InvalidOperationException) { }
-                                }
-
-                                // Determine type category for writer formatting
-                                string typeCategory;
-                                var alTypeName = conventionService.GetTypeString(qp.Type, qp);
-                                if (alTypeName.Equals("Text", StringComparison.OrdinalIgnoreCase))
-                                    typeCategory = "text";
-                                else if (qp.Type is CodeType { TypeDefinition: CodeEnum })
-                                    typeCategory = "enum";
-                                else
-                                    typeCategory = "primitive";
-
-                                var typedSetterMethod = CreateVoidMethod($"Set{qp.Name.ToFirstCharacterUpperCase()}", CodeMethodKind.Custom, paramClass);
-                                typedSetterMethod.SetCategory(ALMethodCategory.QueryParamTypedSetter);
-                                typedSetterMethod.SetData(ALCustomDataKeys.SortingValue, "2");
-                                typedSetterMethod.SetData(ALCustomDataKeys.QueryParamName, qp.Name);
-                                typedSetterMethod.SetData(ALCustomDataKeys.QueryParamTypeCategory, typeCategory);
-                                AddParameter(typedSetterMethod, "Value", (CodeTypeBase)qp.Type.Clone());
-                                paramClass.AddMethod(typedSetterMethod);
-                            }
-
-                            // GetQueryParameters(): Dictionary of [Text, Text] method
-                            var getQueryParamsMethod = CreateMethod("GetQueryParameters", CodeMethodKind.Custom, paramClass, "Dictionary of [Text, Text]");
-                            getQueryParamsMethod.SetCategory(ALMethodCategory.QueryParamGetter);
-                            getQueryParamsMethod.SetData(ALCustomDataKeys.SortingValue, "3");
-                            paramClass.AddMethod(getQueryParamsMethod);
-
-                            // Add parameter to executor method
-                            var paramsParam = new CodeParameter
-                            {
-                                Name = "Parameters",
-                                Kind = CodeParameterKind.Custom,
-                                Type = new CodeType
-                                {
-                                    Name = paramClassName,
-                                    TypeDefinition = paramClass,
-                                    IsExternal = false,
-                                },
-                            };
-                            method.AddParameter(paramsParam);
-                            method.SetFlag(ALCustomDataKeys.UseParameterCodeunit);
-                        }
-                        catch (InvalidOperationException) { }
-                    }
+                    AddUsing(parentClass, alConfig.DefinitionsNamespace);
                 }
             }
-        });
+            // Handle return type
+            var returnType = method.ReturnType;
+            if (returnType is CodeType ct)
+            {
+                if (returnType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None)
+                {
+                    // Collection return
+                    method.SetData(ALCustomDataKeys.ReturnVariableName, "Target");
+                    method.SetData(ALCustomDataKeys.SourceType, ALCustomDataKeys.SourceTypes.List);
+
+                    var elementType = (CodeTypeBase)returnType.Clone();
+                    elementType.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.None;
+                    AddLocalVariable(method, "TargetType", elementType);
+                    AddLocalVariable(method, "SubToken", "JsonToken");
+                    AddLocalVariable(method, "ResponseAsArray", "JsonArray");
+                    AddLocalVariable(method, "i", "Integer");
+                }
+                else if (ct.TypeDefinition is CodeClass)
+                {
+                    // Single codeunit return
+                    method.SetData(ALCustomDataKeys.ReturnVariableName, "Target");
+                }
+                else if (conventionService.GetTypeString(ct, method).Equals("InStream", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Stream return
+                    method.SetData(ALCustomDataKeys.ReturnVariableName, "InStr");
+                }
+            }
+
+            // Handle query parameters → parameter codeunit
+            var queryParamsClass = parentClass.InnerClasses.FirstOrDefault(c => c.IsOfKind(CodeClassKind.QueryParameters));
+
+            if (queryParamsClass is not null)
+            {
+                var queryParamProperties = queryParamsClass.Properties
+                    .Where(p => p.Kind == CodePropertyKind.QueryParameter)
+                    .ToList();
+
+                if (queryParamProperties.Count > 0)
+                {
+                    // Create parameter codeunit class
+                    var paramClassName = $"{parentClass.Name}{method.Name}Parameters";
+                    paramClassName = conventionService.SanitizeName(paramClassName, null, 30);
+
+                    try
+                    {
+                        var parentNs = parentClass.GetImmediateParentOfType<CodeNamespace>();
+                        var paramClass = new CodeClass
+                        {
+                            Name = paramClassName,
+                            Kind = CodeClassKind.QueryParameters,
+                        };
+                        paramClass.SetFlag(ALCustomDataKeys.ParameterCodeunit);
+                        paramClass.SetData(ALCustomDataKeys.ObjectId, objectIdProvider.GetNextCodeunitId().ToString(CultureInfo.InvariantCulture));
+                        parentNs.AddClass(paramClass);
+
+                        // Using for the client namespace (where Kiota Query Param Formatter lives)
+                        AddUsing(paramClass, alConfig.ClientNamespace);
+
+                        // Access = Internal object property (SetDefaultObjectProperties ran before this class existed)
+                        if (alConfig.MarkInternal)
+                            AddObjectProperty(paramClass, "Access", "Internal");
+
+                        // Global variables
+                        AddGlobalVariable(paramClass, "QueryParamFormatter", $"Codeunit {alConfig.ClientNamespace}.\"Kiota Query Param Formatter\"", "1");
+                        AddGlobalVariable(paramClass, "QueryParameters", "Dictionary of [Text, Text]", "2");
+
+                        // SetQueryParameter(QueryKey: Text; QueryValue: Text) method
+                        var setQueryParamMethod = CreateVoidMethod("SetQueryParameter", CodeMethodKind.Custom, paramClass);
+                        setQueryParamMethod.SetCategory(ALMethodCategory.QueryParamGenericSetter);
+                        setQueryParamMethod.SetData(ALCustomDataKeys.SortingValue, "1");
+                        AddParameter(setQueryParamMethod, "QueryKey", "Text");
+                        AddParameter(setQueryParamMethod, "QueryValue", "Text");
+                        paramClass.AddMethod(setQueryParamMethod);
+
+                        // Add usings for any referenced types (e.g. deduplicated enums) whose
+                        // TypeDefinition lives in a namespace different from the one this
+                        // parameter codeunit is being placed in.
+                        // Also add one typed Set{Name}(Value: <type>) method per query parameter.
+                        foreach (var qp in queryParamProperties)
+                        {
+                            if (qp.Type is CodeType qpType && qpType.TypeDefinition is not null)
+                            {
+                                try
+                                {
+                                    var typeNs = qpType.TypeDefinition.GetImmediateParentOfType<CodeNamespace>();
+                                    if (!typeNs.Name.Equals(parentNs.Name, StringComparison.OrdinalIgnoreCase))
+                                        AddUsing(paramClass, typeNs.Name);
+                                }
+                                catch (InvalidOperationException) { }
+                            }
+
+                            // Determine type category for writer formatting
+                            string typeCategory;
+                            var alTypeName = conventionService.GetTypeString(qp.Type, qp);
+                            if (alTypeName.Equals("Text", StringComparison.OrdinalIgnoreCase))
+                                typeCategory = "text";
+                            else if (qp.Type is CodeType { TypeDefinition: CodeEnum })
+                                typeCategory = "enum";
+                            else
+                                typeCategory = "primitive";
+
+                            var typedSetterMethod = CreateVoidMethod($"Set{qp.Name.ToFirstCharacterUpperCase()}", CodeMethodKind.Custom, paramClass);
+                            typedSetterMethod.SetCategory(ALMethodCategory.QueryParamTypedSetter);
+                            typedSetterMethod.SetData(ALCustomDataKeys.SortingValue, "2");
+                            typedSetterMethod.SetData(ALCustomDataKeys.QueryParamName, qp.Name);
+                            typedSetterMethod.SetData(ALCustomDataKeys.QueryParamTypeCategory, typeCategory);
+                            AddParameter(typedSetterMethod, "Value", (CodeTypeBase)qp.Type.Clone());
+                            paramClass.AddMethod(typedSetterMethod);
+                        }
+
+                        // GetQueryParameters(): Dictionary of [Text, Text] method
+                        var getQueryParamsMethod = CreateMethod("GetQueryParameters", CodeMethodKind.Custom, paramClass, "Dictionary of [Text, Text]");
+                        getQueryParamsMethod.SetCategory(ALMethodCategory.QueryParamGetter);
+                        getQueryParamsMethod.SetData(ALCustomDataKeys.SortingValue, "3");
+                        paramClass.AddMethod(getQueryParamsMethod);
+
+                        // Add parameter to executor method
+                        var paramsParam = new CodeParameter
+                        {
+                            Name = "Parameters",
+                            Kind = CodeParameterKind.Custom,
+                            Type = new CodeType
+                            {
+                                Name = paramClassName,
+                                TypeDefinition = paramClass,
+                                IsExternal = false,
+                            },
+                        };
+                        method.AddParameter(paramsParam);
+                        method.SetFlag(ALCustomDataKeys.UseParameterCodeunit);
+                    }
+                    catch (InvalidOperationException) { }
+                }
+            }
+        }
+        CrawlTree(currentElement, x => UpdateRequestExecutorMethods(x, alConfig, conventionService, objectIdProvider));
     }
     #endregion
 
@@ -1498,30 +1461,33 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         if (!alConfig.GenerateInterfaces)
             return;
         // For model classes with DiscriminatorInformation, create interfaces
-        DeepCrawlTree(generatedCode, element =>
+        AddCodeInterfacesForInheritedTypesRecursive(generatedCode, alConfig);
+    }
+
+    private static void AddCodeInterfacesForInheritedTypesRecursive(CodeElement currentElement, ALConfiguration alConfig)
+    {
+        if (currentElement is CodeClass codeClass &&
+            codeClass.IsOfKind(CodeClassKind.Model) &&
+            codeClass.DiscriminatorInformation?.DiscriminatorPropertyName is not null)
         {
-            if (element is CodeClass codeClass &&
-                codeClass.IsOfKind(CodeClassKind.Model) &&
-                codeClass.DiscriminatorInformation?.DiscriminatorPropertyName is not null)
+            try
             {
-                try
+                var parentNs = codeClass.GetImmediateParentOfType<CodeNamespace>();
+                var interfaceName = $"I{codeClass.Name}";
+
+                var iface = new CodeInterface
                 {
-                    var parentNs = codeClass.GetImmediateParentOfType<CodeNamespace>();
-                    var interfaceName = $"I{codeClass.Name}";
+                    Name = interfaceName,
+                    OriginalClass = codeClass,
+                };
+                parentNs.AddInterface(iface);
 
-                    var iface = new CodeInterface
-                    {
-                        Name = interfaceName,
-                        OriginalClass = codeClass,
-                    };
-                    parentNs.AddInterface(iface);
-
-                    // Add discriminator method signatures
-                    // This is a placeholder for future extension
-                }
-                catch (InvalidOperationException) { }
+                // Add discriminator method signatures
+                // This is a placeholder for future extension
             }
-        });
+            catch (InvalidOperationException) { }
+        }
+        CrawlTree(currentElement, x => AddCodeInterfacesForInheritedTypesRecursive(x, alConfig));
     }
     #endregion
 
@@ -1623,55 +1589,80 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         });
     }
 
-    private static void NormalizeOverloadMethodNames(CodeElement generatedCode)
+    private static void NormalizeOverloadMethodNames(CodeElement currentElement)
     {
         // Overloads are added with a uniquified Name so they can coexist with their original method
         // in the parent block's name-keyed child collection. Once the tree is fully built, collapse
         // each overload's Name back onto the emit name carried by SimpleName so the writer applies AL
         // naming conventions (e.g. PascalCase) to the shared procedure name. Overloads are identified
         // via the typed CodeMethod.IsOverload/OriginalMethod contract rather than a name suffix.
-        DeepCrawlTree(generatedCode, element =>
-        {
-            if (element is CodeMethod { IsOverload: true, SimpleName.Length: > 0 } method)
-                method.Name = method.SimpleName;
-        });
+        if (currentElement is CodeMethod { IsOverload: true, SimpleName.Length: > 0 } method)
+            method.Name = method.SimpleName;
+        CrawlTree(currentElement, NormalizeOverloadMethodNames);
     }
 
-    private static void UpdateMethodParameters(CodeElement generatedCode)
+    private static void UpdateMethodParameters(CodeElement currentElement)
     {
-        var reservedNames = ALReservedNamesProvider.Instance;
-        DeepCrawlTree(generatedCode, element =>
+        if (currentElement is CodeMethod method)
         {
-            if (element is CodeMethod method)
+            var reservedNames = ALReservedNamesProvider.Instance;
+            foreach (var param in method.Parameters)
             {
-                foreach (var param in method.Parameters)
+                if (reservedNames.ReservedNames.Contains(param.Name))
                 {
-                    if (reservedNames.ReservedNames.Contains(param.Name))
-                    {
-                        param.SetData(ALCustomDataKeys.PropertyName, param.Name);
-                        param.Name += "_";
-                    }
+                    param.SetData(ALCustomDataKeys.PropertyName, param.Name);
+                    param.Name += "_";
                 }
             }
-        });
+        }
+        CrawlTree(currentElement, UpdateMethodParameters);
     }
     #endregion
 
     #region Helpers
-    /// <summary>
-    /// Recursively walks the entire CodeDOM tree, invoking the callback on every descendant element.
-    /// Unlike CrawlTree (which only visits direct children), this reaches all nested elements.
-    /// </summary>
-    private static void DeepCrawlTree(CodeElement currentElement, Action<CodeElement> function)
+    private static void CollectModelClassesWithInheritance(CodeElement currentElement, List<CodeClass> collector)
     {
-        ArgumentNullException.ThrowIfNull(currentElement);
-        ArgumentNullException.ThrowIfNull(function);
-        var children = currentElement.GetChildElements(true).ToArray();
-        foreach (var childElement in children)
+        if (currentElement is CodeClass c && c.IsOfKind(CodeClassKind.Model) && c.StartBlock.Inherits is not null)
+            collector.Add(c);
+        CrawlTree(currentElement, x => CollectModelClassesWithInheritance(x, collector));
+    }
+
+    private static void CollectEnumsWithNamespace(CodeElement currentElement, List<(CodeEnum Enum, CodeNamespace Namespace, int Depth)> collector)
+    {
+        if (currentElement is CodeEnum e && e.Parent is CodeNamespace ns)
+            collector.Add((e, ns, ns.Name.Split('.').Length));
+        CrawlTree(currentElement, x => CollectEnumsWithNamespace(x, collector));
+    }
+
+    private static void CollectModelClassesWithNamespace(CodeElement currentElement, List<(CodeClass Class, CodeNamespace Namespace, int Depth)> collector)
+    {
+        if (currentElement is CodeClass c &&
+            c.IsOfKind(CodeClassKind.Model) &&
+            c.Parent is CodeNamespace ns)
+            collector.Add((c, ns, ns.Name.Split('.').Length));
+        CrawlTree(currentElement, x => CollectModelClassesWithNamespace(x, collector));
+    }
+
+    private static void CollectClassNames(CodeElement currentElement, Dictionary<string, List<CodeClass>> collector)
+    {
+        if (currentElement is CodeClass c)
         {
-            function.Invoke(childElement);
-            DeepCrawlTree(childElement, function);
+            if (!collector.ContainsKey(c.Name))
+                collector[c.Name] = new List<CodeClass>();
+            collector[c.Name].Add(c);
         }
+        CrawlTree(currentElement, x => CollectClassNames(x, collector));
+    }
+
+    private static void CollectEnumNames(CodeElement currentElement, Dictionary<string, List<CodeEnum>> collector)
+    {
+        if (currentElement is CodeEnum e)
+        {
+            if (!collector.ContainsKey(e.Name))
+                collector[e.Name] = new List<CodeEnum>();
+            collector[e.Name].Add(e);
+        }
+        CrawlTree(currentElement, x => CollectEnumNames(x, collector));
     }
 
     private static void AddUsing(CodeClass codeClass, string namespaceName)
