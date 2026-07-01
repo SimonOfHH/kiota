@@ -121,6 +121,15 @@ public class ALConventionService : CommonLanguageConventionService
     private readonly HashSet<string> _allNames = new(StringComparer.OrdinalIgnoreCase);
     #endregion
 
+    /// <summary>
+    /// Maps special Kiota abstraction type names to their fixed AL external counterparts.
+    /// Centralizes the type mapping instead of inlining name comparisons in <see cref="GetTypeString"/>.
+    /// </summary>
+    private static readonly Dictionary<string, string> SpecialExternalTypeNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["MultipartBody"] = "Codeunit \"Kiota File Body\"",
+    };
+
     public override string TranslateType(CodeType type)
     {
         ArgumentNullException.ThrowIfNull(type);
@@ -151,8 +160,8 @@ public class ALConventionService : CommonLanguageConventionService
 
         if (code is CodeType codeType)
         {
-            if (codeType.Name.Equals("MultipartBody", StringComparison.OrdinalIgnoreCase))
-                codeType = new CodeType { Name = $"Codeunit \"Kiota File Body\"", IsExternal = true };
+            if (SpecialExternalTypeNames.TryGetValue(codeType.Name, out var mappedExternalName))
+                codeType = new CodeType { Name = mappedExternalName, IsExternal = true };
             string typeName;
             if (codeType.TypeDefinition is CodeClass or CodeEnum)
                 typeName = codeType.TypeDefinition.GetFullALName();
