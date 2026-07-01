@@ -1255,28 +1255,9 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             overload.AddParameter((CodeParameter)param.Clone());
         }
 
-        overload.AddParameter(new CodeParameter
-        {
-            Name = "FieldName",
-            Kind = CodeParameterKind.Custom,
-            Type = new CodeType { Name = "Text", IsExternal = true },
-            Documentation = new CodeDocumentation { DescriptionTemplate = "The multipart form-field name for the file content." },
-        });
-        overload.AddParameter(new CodeParameter
-        {
-            Name = "Filename",
-            Kind = CodeParameterKind.Custom,
-            Type = new CodeType { Name = "Text", IsExternal = true },
-            Documentation = new CodeDocumentation { DescriptionTemplate = "The filename for the multipart form field." },
-        });
-        overload.AddParameter(new CodeParameter
-        {
-            Name = "FileBody",
-            Kind = CodeParameterKind.RequestBody,
-            Optional = false,
-            Type = new CodeType { Name = fileBodyTypeName, IsExternal = true },
-            Documentation = new CodeDocumentation { DescriptionTemplate = "The file content for the multipart form field." },
-        });
+        AddParameter(overload, "FieldName", new CodeType { Name = "Text", IsExternal = true }, new CodeDocumentation { DescriptionTemplate = "The multipart form-field name for the file content." });
+        AddParameter(overload, "Filename", new CodeType { Name = "Text", IsExternal = true }, new CodeDocumentation { DescriptionTemplate = "The filename for the multipart form field." });
+        AddParameter(overload, "FileBody", new CodeType { Name = fileBodyTypeName, IsExternal = true }, new CodeDocumentation { DescriptionTemplate = "The file content for the multipart form field." });
         AddLocalVariable(overload, "body", "Codeunit \"Kiota File Body\"");
 
         return overload;
@@ -1830,12 +1811,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         method.SimpleName = "Response";
         method.SetData(ALCustomDataKeys.SortingValue, "51");
         method.SetCategory(ALMethodCategory.ResponseSetter);
-        method.AddParameter(new CodeParameter
-        {
-            Name = "var ApiResponse", // 'var' to pass it by reference in AL
-            Kind = CodeParameterKind.Custom,
-            Type = new CodeType { Name = "Codeunit System.RestClient.\"Http Response Message\"", IsExternal = true },
-        });
+        AddParameter(method, "var ApiResponse", $"Codeunit System.RestClient.\"Http Response Message\"");
         return method;
     }
 
@@ -1859,21 +1835,21 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     }
     private static void AddParameter(CodeMethod method, string name, string externalTypeName)
     {
-        method.AddParameter(new CodeParameter
-        {
-            Name = name,
-            Kind = CodeParameterKind.Custom,
-            Type = CodeTypeBaseExtensions.CreateExternal(externalTypeName),
-        });
+        AddParameter(method, name, CodeTypeBaseExtensions.CreateExternal(externalTypeName));
     }
 
     private static void AddParameter(CodeMethod method, string name, CodeTypeBase type)
+    {
+        AddParameter(method, name, type, new CodeDocumentation() { DescriptionTemplate = "" });
+    }
+    private static void AddParameter(CodeMethod method, string name, CodeTypeBase type, CodeDocumentation documentation)
     {
         method.AddParameter(new CodeParameter
         {
             Name = name,
             Kind = CodeParameterKind.Custom,
             Type = type,
+            Documentation = documentation
         });
     }
     #endregion
