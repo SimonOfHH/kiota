@@ -2129,6 +2129,22 @@ public partial class KiotaBuilder
         if (inheritsFrom != null)
             newClassStub.StartBlock.Inherits = new CodeType { TypeDefinition = inheritsFrom };
 
+        // Record the referenced type of a typed "additionalProperties" schema (e.g. a dictionary whose
+        // values are all of a specific enum/class) so that language refiners which special-case such
+        // pure map schemas (no other properties) can resolve the value type without needing to walk the
+        // OpenAPI schema again. The generic AdditionalData property added below is intentionally untyped
+        // (IDictionary<string, object>), so it cannot be used to recover this information later.
+        // Additionally, since such a value schema is otherwise only ever reached through "additionalProperties"
+        // (never through a regular property or operation), nothing else in the pipeline would visit it, so its
+        // own declaration (e.g. the enum) must be created explicitly here or it would never be generated at all.
+        if (schema.AdditionalProperties is { } additionalPropertiesSchema && additionalPropertiesSchema.IsReferencedSchema())
+        {
+            var additionalPropertiesValueTypeName = additionalPropertiesSchema.GetSchemaName().CleanupSymbolName();
+            newClassStub.CustomData["AdditionalPropertiesValueTypeName"] = additionalPropertiesValueTypeName;
+            var additionalPropertiesValueTypeNamespace = GetShortestNamespace(currentNamespace, additionalPropertiesSchema);
+            AddModelDeclarationIfDoesntExist(currentNode, currentOperation, additionalPropertiesSchema, additionalPropertiesValueTypeName, additionalPropertiesValueTypeNamespace);
+        }
+
         // Add the class to the namespace after the serialization members
         // as other threads looking for the existence of the class may find the class but the additional data/backing store properties may not be fully populated causing duplication
         var includeAdditionalDataProperties = config.IncludeAdditionalData && (schema.AdditionalPropertiesAllowed || schema.AdditionalProperties is not null);
@@ -2238,6 +2254,21 @@ public partial class KiotaBuilder
         var reusableClassesDerivationIndex = GetDerivationIndex(reusableModels.OfType<CodeClass>());
         var reusableClassesInheritanceIndex = GetInheritanceIndex(allModelClassesIndex);
         var relatedModels = classesInUse.SelectMany(x => GetRelatedDefinitions(x, reusableClassesDerivationIndex, reusableClassesInheritanceIndex)).Union(modelsDirectlyInUse.OfType<CodeEnum>()).ToHashSet();// re-including models directly in use for enums
+        // Keep alive the value type referenced by a typed "additionalProperties" schema (see KiotaBuilder.AddModelClass
+        // and its "AdditionalPropertiesValueTypeName" CustomData tag). Nothing else in the CodeDOM holds an actual
+        // CodeType reference to that value type (the generic AdditionalData bag property is untyped), so without this
+        // it would incorrectly look unused and be removed below, even though language refiners (e.g. AL) rely on it.
+        // The tagged wrapper classes themselves are only reachable via relatedModels/classesInUse combined (they are
+        // typically nested property types of a directly-in-use class, not directly in use themselves).
+        foreach (var valueTypeName in relatedModels.Union(classesInUse)
+            .OfType<CodeClass>()
+            .Where(static c => c.CustomData.ContainsKey("AdditionalPropertiesValueTypeName"))
+            .Select(static c => c.CustomData["AdditionalPropertiesValueTypeName"])
+            .ToArray())
+        {
+            if (reusableModels.FirstOrDefault(m => m.Name.Equals(valueTypeName, StringComparison.OrdinalIgnoreCase)) is { } valueTypeModel)
+                relatedModels.Add(valueTypeModel);
+        }
         Parallel.ForEach(reusableModels, parallelOptions, x =>
         {
             if (relatedModels.Contains(x) || classesInUse.Contains(x)) return;

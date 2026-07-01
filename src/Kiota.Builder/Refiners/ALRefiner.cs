@@ -359,9 +359,16 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 c.Properties.Any(p => p.Kind == CodePropertyKind.AdditionalData) &&
                 !c.Properties.Any(p => p.Kind == CodePropertyKind.Custom))
             {
+                // The generic AdditionalData property is always untyped (IDictionary<string, object>),
+                // so it never carries the actual dictionary value type. That type is instead recorded
+                // by KiotaBuilder.AddModelClass on the class itself when the schema's additionalProperties
+                // is a reference to an enum/class (see "AdditionalPropertiesValueTypeName").
                 var additionalDataProp = c.Properties.First(p => p.Kind == CodePropertyKind.AdditionalData);
                 var additionalDataPropType = additionalDataProp.Type as CodeType;
-                collector.Add((c, ns, additionalDataPropType?.TypeDefinition?.Name ?? string.Empty));
+                var valueTypeName = c.CustomData.TryGetValue("AdditionalPropertiesValueTypeName", out var taggedValueTypeName)
+                    ? taggedValueTypeName
+                    : additionalDataPropType?.TypeDefinition?.Name ?? string.Empty;
+                collector.Add((c, ns, valueTypeName));
             }
         }
         CrawlTree(currentElement, x => CollectPureDictionaryClasses(x, collector));

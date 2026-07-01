@@ -2766,6 +2766,84 @@ paths:
         Assert.Contains(weatherType.Properties, x => x.IsOfKind(CodePropertyKind.AdditionalData));
     }
     [Fact]
+    public void KeepsEnumReferencedOnlyThroughAdditionalPropertiesSchema()
+    {
+        var priceComponentTypeSchema = new OpenApiSchema
+        {
+            Type = JsonSchemaType.String,
+            Enum = new List<JsonNode>
+            {
+                "Unknown",
+                "Wages",
+            },
+        };
+        var weatherForecastSchema = new OpenApiSchema
+        {
+            Type = JsonSchemaType.Object,
+            Properties = new Dictionary<string, IOpenApiSchema> {
+                {
+                    "date", new OpenApiSchema {
+                        Type = JsonSchemaType.String,
+                        Format = "date-time"
+                    }
+                },
+                {
+                    "priceComponentTypes", new OpenApiSchema {
+                        Type = JsonSchemaType.Object,
+                        AdditionalProperties = new OpenApiSchemaReference("PriceComponentType"),
+                    }
+                }
+            },
+        };
+        var weatherForecastResponse = new OpenApiResponse
+        {
+            Content = new Dictionary<string, IOpenApiMediaType>()
+            {
+                ["application/json"] = new OpenApiMediaType
+                {
+                    Schema = new OpenApiSchemaReference("weatherForecast")
+                }
+            },
+        };
+        var document = new OpenApiDocument
+        {
+            Paths = new OpenApiPaths
+            {
+                ["weatherforecast"] = new OpenApiPathItem
+                {
+                    Operations = new()
+                    {
+                        [NetHttpMethod.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["200"] = new OpenApiResponseReference("weatherForecastResponse")
+                            }
+                        }
+                    }
+                }
+            },
+        };
+        document.AddComponent("PriceComponentType", priceComponentTypeSchema);
+        document.AddComponent("weatherForecast", weatherForecastSchema);
+        document.AddComponent("weatherForecastResponse", weatherForecastResponse);
+        document.SetReferenceHostDocument();
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", ApiRootUrl = "https://localhost" }, _httpClient);
+        builder.SetOpenApiDocument(document);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        // The enum is only ever referenced via additionalProperties on an inline dictionary schema; it must
+        // still be generated and must survive TrimInheritedModels even though no CodeType in the tree points
+        // to it directly (regression test: previously it was silently dropped as "unused").
+        var priceComponentTypeEnum = codeModel.FindChildByName<CodeEnum>("PriceComponentType");
+        Assert.NotNull(priceComponentTypeEnum);
+        var dictionaryWrapperClass = codeModel.FindChildByName<CodeClass>("WeatherForecast_priceComponentTypes");
+        Assert.NotNull(dictionaryWrapperClass);
+        Assert.True(dictionaryWrapperClass.CustomData.TryGetValue("AdditionalPropertiesValueTypeName", out var taggedValueTypeName));
+        Assert.Equal("PriceComponentType", taggedValueTypeName);
+    }
+    [Fact]
     public void SquishesLonelyNullables()
     {
         var uploadSessionSchema = new OpenApiSchema
