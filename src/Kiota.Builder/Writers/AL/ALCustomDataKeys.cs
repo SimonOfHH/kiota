@@ -49,14 +49,14 @@ internal static class ALCustomDataKeys
     public const string AlDictionary = "al-dictionary";
 
     // --- Methods ---
-    /// <summary>High level origin of a generated method (see <see cref="Sources"/>).</summary>
-    public const string Source = "source";
+    /// <summary>Strongly-typed AL method category (see <see cref="ALMethodCategory"/>), stored as the enum name.</summary>
+    public const string MethodCategory = "method-category";
     /// <summary>Backing collection kind of a generated method (see <see cref="SourceTypes"/>).</summary>
     public const string SourceType = "source-type";
-    /// <summary>Whether a property method is a Getter or Setter (see <see cref="MethodTypes"/>).</summary>
-    public const string MethodType = "method-type";
     /// <summary>Stable ordering hint used by the AL order comparer.</summary>
     public const string SortingValue = "sorting-value";
+    /// <summary>Explicit parameter ordering index (lower sorts first; absent means insertion order).</summary>
+    public const string OrderIndex = "order-index";
     /// <summary>Explicit AL return variable name for a method.</summary>
     public const string ReturnVariableName = "return-variable-name";
     /// <summary>Original property name for a getter/setter or a renamed parameter.</summary>
@@ -92,49 +92,6 @@ internal static class ALCustomDataKeys
     {
         public const string True = "true";
         public const string False = "false";
-    }
-
-    /// <summary>Well-known values for <see cref="Source"/>.</summary>
-    public static class Sources
-    {
-        public const string FromProperty = "from property";
-        public const string FromRequestBuilder = "from request-builder";
-        public const string FromIndexer = "from indexer";
-        public const string ValueWrapperGetter = "value-wrapper-getter";
-        public const string ValueWrapperSetter = "value-wrapper-setter";
-        public const string MultipartOverload = "multipart-overload";
-        public const string QueryParamGenericSetter = "query-param-generic-setter";
-        public const string QueryParamTypedSetter = "query-param-typed-setter";
-        public const string QueryParamGetter = "query-param-getter";
-        public const string ResponseGetter = "response-getter";
-        public const string ResponseSetter = "response-setter";
-        public const string ValidateBody = "validate-body";
-
-        // --- AL synthetic client / request-builder methods ---
-        // These are modelled as CodeMethodKind.Custom carrying one of the sources below, rather than
-        // hijacking shared CodeMethodKind values (Constructor/ClientConstructor/Factory) for AL-only
-        // semantics. This keeps AL behavior off shared refiner semantics (e.g. MarkMethodsToSkip) entirely.
-        // Note: the WithUrl method intentionally keeps its upstream CodeMethodKind.RawUrlBuilder (a faithful
-        // reuse, not a hijack) and is dispatched by kind in the writer, matching the other language writers.
-        /// <summary>Client codeunit <c>Initialize</c> procedure.</summary>
-        public const string ClientInitialize = "client-initialize";
-        /// <summary>Client codeunit <c>Configuration</c> getter/setter procedures.</summary>
-        public const string ClientConfiguration = "client-configuration";
-        /// <summary>Client codeunit <c>DefaultConfiguration</c> factory procedure.</summary>
-        public const string ClientDefaultConfiguration = "client-default-configuration";
-        /// <summary>Request builder <c>SetConfiguration</c> procedure.</summary>
-        public const string RequestBuilderConfiguration = "request-builder-configuration";
-        /// <summary>Request builder <c>SetIdentifier</c> procedure.</summary>
-        public const string RequestBuilderIdentifier = "request-builder-identifier";
-        /// <summary>Request builder <c>SetConfigurationRaw</c> procedure (overwrite base URL + clear query parameters).</summary>
-        public const string RequestBuilderRawConfiguration = "request-builder-raw-configuration";
-    }
-
-    /// <summary>Well-known values for <see cref="MethodType"/>.</summary>
-    public static class MethodTypes
-    {
-        public const string Getter = "Getter";
-        public const string Setter = "Setter";
     }
 
     /// <summary>Well-known values for <see cref="SourceType"/>.</summary>

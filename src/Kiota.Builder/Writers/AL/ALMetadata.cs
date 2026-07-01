@@ -80,13 +80,26 @@ internal static class ALMetadata
             : defaultValue;
     }
 
-    /// <summary>Returns true when the <see cref="ALCustomDataKeys.Source"/> entry equals the supplied value (case-insensitive).</summary>
-    public static bool SourceIs(this CodeElement element, string source)
+    /// <summary>Stores the strongly-typed AL method category under <see cref="ALCustomDataKeys.MethodCategory"/>.</summary>
+    public static void SetCategory(this CodeElement element, ALMethodCategory category)
     {
         ArgumentNullException.ThrowIfNull(element);
-        return element.CustomData.TryGetValue(ALCustomDataKeys.Source, out var value) &&
-               value.Equals(source, StringComparison.OrdinalIgnoreCase);
+        element.CustomData[ALCustomDataKeys.MethodCategory] = category.ToString();
     }
+
+    /// <summary>Reads the strongly-typed AL method category, or <see cref="ALMethodCategory.None"/> when absent/unrecognized.</summary>
+    public static ALMethodCategory GetCategory(this CodeElement element)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        return element.CustomData.TryGetValue(ALCustomDataKeys.MethodCategory, out var value) &&
+               Enum.TryParse<ALMethodCategory>(value, out var category)
+            ? category
+            : ALMethodCategory.None;
+    }
+
+    /// <summary>Returns true when the element's AL method category equals <paramref name="category"/>.</summary>
+    public static bool IsCategory(this CodeElement element, ALMethodCategory category)
+        => element.GetCategory() == category;
 
     /// <summary>Appends a comma-separated token to a metadata entry (used for pragma accumulation), creating it when absent.</summary>
     public static void AppendCsv(this CodeElement element, string key, string token)

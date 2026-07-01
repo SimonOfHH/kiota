@@ -79,7 +79,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             // Step 8: Manifest and finalization
             AddAppJsonAsCodeFunction(generatedCode, alConfig, _configuration);
             AddReadmeAsCodeFunction(generatedCode, alConfig, _configuration);
-            ModifyOverloadMethodNames(generatedCode);
+            NormalizeOverloadMethodNames(generatedCode);
             UpdateMethodParameters(generatedCode);
 
             AddDefaultPragmas(generatedCode, alConfig, conventionService);
@@ -89,7 +89,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     #region Step 1: ModifyNamespaces
     private static void ModifyNamespaces(CodeElement generatedCode)
     {
-        var reservedNames = new ALReservedNamesProvider();
+        var reservedNames = ALReservedNamesProvider.Instance;
         DeepCrawlTree(generatedCode, element =>
         {
             if (element is CodeNamespace)
@@ -718,14 +718,13 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     private static CodeMethod ToGetterCodeMethod(CodeProperty property, ALConfiguration alConfig)
     {
         var usedName = property.Name;
-        var reservedNames = new ALReservedNamesProvider();
+        var reservedNames = ALReservedNamesProvider.Instance;
         if (reservedNames.ReservedNames.Contains(usedName))
             usedName += "_";
         var method = CreateMethod($"Get-{usedName.ToFirstCharacterUpperCase()}", CodeMethodKind.Getter, (CodeClass)property.Parent!, (CodeTypeBase)property.Type.Clone());
         method.Documentation = (CodeDocumentation)property.Documentation.Clone();
         method.SimpleName = usedName.ToFirstCharacterUpperCase();
-        method.SetData(ALCustomDataKeys.MethodType, ALCustomDataKeys.MethodTypes.Getter);
-        method.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.FromProperty);
+        method.SetCategory(ALMethodCategory.FromProperty);
         method.SetData(ALCustomDataKeys.PropertyName, property.Name);
         if (!string.IsNullOrEmpty(property.SerializationName))
             method.SetData(ALCustomDataKeys.SerializationName, property.SerializationName);
@@ -735,7 +734,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             targetClass.IsOfKind(CodeClassKind.RequestBuilder))
         {
             method.Kind = CodeMethodKind.RequestBuilderBackwardCompatibility;
-            method.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.FromRequestBuilder);
+            method.SetCategory(ALMethodCategory.FromRequestBuilder);
             method.SetData(ALCustomDataKeys.SortingValue, "99");
             method.SetData(ALCustomDataKeys.ReturnVariableName, "Rqst");
             return method;
@@ -803,14 +802,13 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     private static CodeMethod ToSetterCodeMethod(CodeProperty property, ALConfiguration alConfig)
     {
         var usedName = property.Name;
-        var reservedNames = new ALReservedNamesProvider();
+        var reservedNames = ALReservedNamesProvider.Instance;
         if (reservedNames.ReservedNames.Contains(usedName))
             usedName += "_";
         var method = CreateVoidMethod($"Set-{usedName.ToFirstCharacterUpperCase()}", CodeMethodKind.Setter, (CodeClass)property.Parent!);
         method.Documentation = (CodeDocumentation)property.Documentation.Clone();
         method.SimpleName = usedName.ToFirstCharacterUpperCase();
-        method.SetData(ALCustomDataKeys.MethodType, ALCustomDataKeys.MethodTypes.Setter);
-        method.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.FromProperty);
+        method.SetCategory(ALMethodCategory.FromProperty);
         method.SetData(ALCustomDataKeys.PropertyName, property.Name);
         if (!string.IsNullOrEmpty(property.SerializationName))
             method.SetData(ALCustomDataKeys.SerializationName, property.SerializationName);
@@ -959,7 +957,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 var validateBody = CreateVoidMethod("ValidateBody", CodeMethodKind.Custom, codeClass, AccessModifier.Private);
                 validateBody.SetData(ALCustomDataKeys.PragmasVariables, ALCustomDataKeys.PragmaCodes.LocalVariableNameClash);
                 // Add local variables; we need to add variables for each property in the class to validate presence of required properties; the properties were previously added as getter- and setter-methods, so we can find them by looking for getter methods with source "from property"
-                var gettersHelper = codeClass.Methods.Where(m => m.IsGetterMethod() && m.GetData(ALCustomDataKeys.Source) is string source && source.Equals(ALCustomDataKeys.Sources.FromProperty, StringComparison.Ordinal)).ToList();
+                var gettersHelper = codeClass.Methods.Where(m => m.IsGetterMethod() && m.GetCategory() == ALMethodCategory.FromProperty).ToList();
                 foreach (var getter in gettersHelper)
                 {
                     var propName = getter.SimpleName.ToFirstCharacterLowerCase() ?? getter.Name.ToFirstCharacterLowerCase();
@@ -967,7 +965,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     AddLocalVariable(validateBody, varName, (CodeTypeBase)getter.ReturnType.Clone());
                 }
                 validateBody.SetData(ALCustomDataKeys.SortingValue, "6");
-                validateBody.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.ValidateBody);
+                validateBody.SetCategory(ALMethodCategory.ValidateBody);
                 codeClass.AddMethod(validateBody);
 
                 // Add ToJson (simple)
@@ -981,6 +979,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 {
                     var toJson2 = CreateMethod("ToJson-overload", CodeMethodKind.Serializer, codeClass, "JsonObject");
                     toJson2.SimpleName = "ToJson";
+                    toJson2.OriginalMethod = toJson1;
                     toJson2.SetData(ALCustomDataKeys.SortingValue, "104");
                     toJson2.SetData(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.ParameterNameClash);
 
@@ -1054,14 +1053,14 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 AddGlobalVariable(codeClass, "ReqConfig", $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"", "1", ALCustomDataKeys.PragmaCodes.UnusedVariable);
 
                 // Add SetConfiguration method
-                var setConfig = CreateAlSyntheticMethod("SetConfiguration", ALCustomDataKeys.Sources.RequestBuilderConfiguration, codeClass, "void", "2");
+                var setConfig = CreateAlSyntheticMethod("SetConfiguration", ALMethodCategory.RequestBuilderConfiguration, codeClass, "void", "2");
                 AddParameter(setConfig, "NewReqConfig", $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"");
                 codeClass.AddMethod(setConfig);
 
                 // Add SetConfigurationRaw method — used by WithUrl to point a sibling builder at an
                 // arbitrary/absolute URL (e.g. an OData @odata.nextLink): overwrite the base URL and
                 // clear any accumulated query parameters so the raw URL is used verbatim.
-                var setConfigRaw = CreateAlSyntheticMethod("SetConfigurationRaw", ALCustomDataKeys.Sources.RequestBuilderRawConfiguration, codeClass, "void", "3");
+                var setConfigRaw = CreateAlSyntheticMethod("SetConfigurationRaw", ALMethodCategory.RequestBuilderRawConfiguration, codeClass, "void", "3");
                 AddParameter(setConfigRaw, "NewReqConfig", $"Codeunit {alConfig.ClientNamespace}.\"Kiota ClientConfig\"");
                 AddParameter(setConfigRaw, "RawUrl", "Text");
                 codeClass.AddMethod(setConfigRaw);
@@ -1105,7 +1104,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     if (indexerParamType is not null)
                     {
                         // Add SetIdentifier method
-                        var setId = CreateAlSyntheticMethod("SetIdentifier", ALCustomDataKeys.Sources.RequestBuilderIdentifier, codeClass, "void", "3");
+                        var setId = CreateAlSyntheticMethod("SetIdentifier", ALMethodCategory.RequestBuilderIdentifier, codeClass, "void", "3");
                         AddParameter(setId, "NewIdentifier", (CodeTypeBase)indexerParamType.Clone());
                         var idParam = setId.Parameters.First(p => p.Name == "NewIdentifier");
                         if (idParam.Type is CodeType ct && conventionService.GetTypeString(ct, setId).Equals("Guid", StringComparison.OrdinalIgnoreCase))
@@ -1120,7 +1119,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                         // Update the indexer method to be Item_Idx
                         indexerMethod.Name = "Item_Idx";
                         indexerMethod.Kind = CodeMethodKind.Custom;
-                        indexerMethod.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.FromIndexer);
+                        indexerMethod.SetCategory(ALMethodCategory.FromIndexer);
                         indexerMethod.SetData(ALCustomDataKeys.SortingValue, "4");
                         indexerMethod.SetData(ALCustomDataKeys.ReturnVariableName, "Rqst");
                     }
@@ -1177,8 +1176,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     DescriptionTemplate = $"Convenience helper that unwraps the value from the {methodBaseName} wrapper object.",
                 };
                 convenienceGetter.SimpleName = $"{methodBaseName}_Value";
-                convenienceGetter.SetData(ALCustomDataKeys.MethodType, ALCustomDataKeys.MethodTypes.Getter);
-                convenienceGetter.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.ValueWrapperGetter);
+                convenienceGetter.SetCategory(ALMethodCategory.ValueWrapperGetter);
                 convenienceGetter.SetData(ALCustomDataKeys.WrapperGetterName, methodBaseName);
                 if (getter.TryGetData(ALCustomDataKeys.SerializationName, out var serName))
                     convenienceGetter.SetData(ALCustomDataKeys.SerializationName, serName);
@@ -1191,8 +1189,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     DescriptionTemplate = $"Convenience helper that wraps the value into a {methodBaseName} wrapper object.",
                 };
                 convenienceSetter.SimpleName = $"{methodBaseName}";
-                convenienceSetter.SetData(ALCustomDataKeys.MethodType, ALCustomDataKeys.MethodTypes.Setter);
-                convenienceSetter.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.ValueWrapperSetter);
+                convenienceSetter.SetCategory(ALMethodCategory.ValueWrapperSetter);
                 convenienceSetter.SetData(ALCustomDataKeys.WrapperGetterName, methodBaseName);
                 convenienceSetter.SetData(ALCustomDataKeys.WrapperClassName, wrapperClass.Name);
 
@@ -1234,13 +1231,14 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     /// <c>Codeunit "Kiota File Body"</c> parameter with a <c>InStream</c> parameter so callers
     /// can pass a stream directly without having to construct the wrapper manually.
     ///
-    /// The overloads are named with a <c>-overload</c> suffix (stripped by
-    /// <see cref="ModifyOverloadMethodNames"/> in Step 8) and carry two pieces of
-    /// <see cref="CodeElement.CustomData"/>:
+    /// The overloads are marked as overloads via <see cref="CodeMethod.OriginalMethod"/> (their Name is
+    /// uniquified until <see cref="NormalizeOverloadMethodNames"/> collapses it onto the shared emit name)
+    /// and carry two pieces of metadata:
     /// <list type="bullet">
     ///   <item><c>multipart-field-name</c> — the exact form-field name from the OpenAPI spec
     ///         (e.g. <c>rebFile</c>) that the AL writer should pass to <c>SetFileBody</c>.</item>
-    ///   <item><c>source</c> — <c>multipart-overload</c>, used by the writer to emit the correct body.</item>
+    ///   <item>method category <see cref="ALMethodCategory.MultipartOverload"/>, used by the writer to
+    ///         emit the correct body.</item>
     /// </list>
     /// </summary>
     private static void AddMultipartBodyConvenienceOverloads(CodeElement generatedCode)
@@ -1281,9 +1279,13 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         CodeMethod executor, string fieldName, int overloadIndex, string fileBodyTypeName)
     {
         var overload = (executor.Clone() as CodeMethod)!;
+        // SimpleName carries the emit name (shared with the base executor); Name is uniquified so the
+        // overload can coexist with the executor in the parent's name-keyed child collection until
+        // NormalizeOverloadMethodNames collapses it back onto SimpleName.
         overload.SimpleName = overload.Name;
         overload.Name += $"-overload-{overloadIndex}";
-        overload.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.MultipartOverload);
+        overload.OriginalMethod = executor;
+        overload.SetCategory(ALMethodCategory.MultipartOverload);
         overload.SetData(ALCustomDataKeys.MultipartFieldName, fieldName);
 
         // Rebuild the parameter list: drop the original body and all local variables,
@@ -1419,7 +1421,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
                             // SetQueryParameter(QueryKey: Text; QueryValue: Text) method
                             var setQueryParamMethod = CreateVoidMethod("SetQueryParameter", CodeMethodKind.Custom, paramClass);
-                            setQueryParamMethod.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.QueryParamGenericSetter);
+                            setQueryParamMethod.SetCategory(ALMethodCategory.QueryParamGenericSetter);
                             setQueryParamMethod.SetData(ALCustomDataKeys.SortingValue, "1");
                             AddParameter(setQueryParamMethod, "QueryKey", "Text");
                             AddParameter(setQueryParamMethod, "QueryValue", "Text");
@@ -1453,7 +1455,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                                     typeCategory = "primitive";
 
                                 var typedSetterMethod = CreateVoidMethod($"Set{qp.Name.ToFirstCharacterUpperCase()}", CodeMethodKind.Custom, paramClass);
-                                typedSetterMethod.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.QueryParamTypedSetter);
+                                typedSetterMethod.SetCategory(ALMethodCategory.QueryParamTypedSetter);
                                 typedSetterMethod.SetData(ALCustomDataKeys.SortingValue, "2");
                                 typedSetterMethod.SetData(ALCustomDataKeys.QueryParamName, qp.Name);
                                 typedSetterMethod.SetData(ALCustomDataKeys.QueryParamTypeCategory, typeCategory);
@@ -1463,7 +1465,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
                             // GetQueryParameters(): Dictionary of [Text, Text] method
                             var getQueryParamsMethod = CreateMethod("GetQueryParameters", CodeMethodKind.Custom, paramClass, "Dictionary of [Text, Text]");
-                            getQueryParamsMethod.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.QueryParamGetter);
+                            getQueryParamsMethod.SetCategory(ALMethodCategory.QueryParamGetter);
                             getQueryParamsMethod.SetData(ALCustomDataKeys.SortingValue, "3");
                             paramClass.AddMethod(getQueryParamsMethod);
 
@@ -1621,22 +1623,23 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         });
     }
 
-    private static void ModifyOverloadMethodNames(CodeElement generatedCode)
+    private static void NormalizeOverloadMethodNames(CodeElement generatedCode)
     {
+        // Overloads are added with a uniquified Name so they can coexist with their original method
+        // in the parent block's name-keyed child collection. Once the tree is fully built, collapse
+        // each overload's Name back onto the emit name carried by SimpleName so the writer applies AL
+        // naming conventions (e.g. PascalCase) to the shared procedure name. Overloads are identified
+        // via the typed CodeMethod.IsOverload/OriginalMethod contract rather than a name suffix.
         DeepCrawlTree(generatedCode, element =>
         {
-            if (element is CodeMethod method && method.Name.Contains("-overload", StringComparison.OrdinalIgnoreCase))
-            {
-                method.Name = method.Name.Replace("-overload", string.Empty, StringComparison.OrdinalIgnoreCase);
-                if (method.SimpleName != null)
-                    method.Name = method.SimpleName; // reset to original name so that the writer can apply AL naming conventions (e.g. PascalCase)
-            }
+            if (element is CodeMethod { IsOverload: true, SimpleName.Length: > 0 } method)
+                method.Name = method.SimpleName;
         });
     }
 
     private static void UpdateMethodParameters(CodeElement generatedCode)
     {
-        var reservedNames = new ALReservedNamesProvider();
+        var reservedNames = ALReservedNamesProvider.Instance;
         DeepCrawlTree(generatedCode, element =>
         {
             if (element is CodeMethod method)
@@ -1794,33 +1797,33 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         => CreateMethod(name, kind, parent, "void", access);
 
     private static CodeMethod CreateAlSyntheticMethod(
-        string name, string source, CodeClass parent,
+        string name, ALMethodCategory category, CodeClass parent,
         string returnTypeName, string sortingValue,
         AccessModifier access = AccessModifier.Public)
     {
         var method = CreateMethod(name, CodeMethodKind.Custom, parent, returnTypeName, access);
-        method.SetData(ALCustomDataKeys.Source, source);
+        method.SetCategory(category);
         method.SetData(ALCustomDataKeys.SortingValue, sortingValue);
         return method;
     }
     private static CodeMethod CreateDefaultInitMethod(CodeClass parent)
     {
-        var initMethod = CreateAlSyntheticMethod("Initialize", ALCustomDataKeys.Sources.ClientInitialize, parent, "void", "1");
+        var initMethod = CreateAlSyntheticMethod("Initialize", ALMethodCategory.ClientInitialize, parent, "void", "1");
         AddParameter(initMethod, "NewAPIAuthorization", $"Codeunit \"Kiota API Authorization\"");
         return initMethod;
     }
 
     private static void AddConfigurationMethods(CodeClass parent)
     {
-        var configGetter = CreateAlSyntheticMethod("Configuration", ALCustomDataKeys.Sources.ClientConfiguration, parent, $"Codeunit \"Kiota ClientConfig\"", "27");
+        var configGetter = CreateAlSyntheticMethod("Configuration", ALMethodCategory.ClientConfiguration, parent, $"Codeunit \"Kiota ClientConfig\"", "27");
         parent.AddMethod(configGetter);
 
-        var configSetter = CreateAlSyntheticMethod("Configuration-overload", ALCustomDataKeys.Sources.ClientConfiguration, parent, "void", "28");
+        var configSetter = CreateAlSyntheticMethod("Configuration-overload", ALMethodCategory.ClientConfiguration, parent, "void", "28");
         configSetter.SimpleName = "Configuration";
         AddParameter(configSetter, "config", $"Codeunit \"Kiota ClientConfig\"");
         parent.AddMethod(configSetter);
 
-        var defaultConfig = CreateAlSyntheticMethod("DefaultConfiguration", ALCustomDataKeys.Sources.ClientDefaultConfiguration, parent, $"Codeunit \"Kiota ClientConfig\"", "29", AccessModifier.Private);
+        var defaultConfig = CreateAlSyntheticMethod("DefaultConfiguration", ALMethodCategory.ClientDefaultConfiguration, parent, $"Codeunit \"Kiota ClientConfig\"", "29", AccessModifier.Private);
         parent.AddMethod(defaultConfig);
     }
 
@@ -1828,7 +1831,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     {
         var method = CreateMethod("Response", CodeMethodKind.Custom, parent, "Codeunit System.RestClient.\"Http Response Message\"");
         method.SetData(ALCustomDataKeys.SortingValue, "50");
-        method.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.ResponseGetter);
+        method.SetCategory(ALMethodCategory.ResponseGetter);
         return method;
     }
 
@@ -1837,7 +1840,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         var method = CreateVoidMethod("Response-overload", CodeMethodKind.Custom, parent);
         method.SimpleName = "Response";
         method.SetData(ALCustomDataKeys.SortingValue, "51");
-        method.SetData(ALCustomDataKeys.Source, ALCustomDataKeys.Sources.ResponseSetter);
+        method.SetCategory(ALMethodCategory.ResponseSetter);
         method.AddParameter(new CodeParameter
         {
             Name = "var ApiResponse", // 'var' to pass it by reference in AL
@@ -1857,8 +1860,12 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         var setBody2 = CreateVoidMethod("SetBody-overload", CodeMethodKind.Deserializer, parent);
         setBody2.SimpleName = "SetBody";
         setBody2.SetData(ALCustomDataKeys.SortingValue, "101");
-        setBody2.AddParameter(new CodeParameter { Name = "NewJsonBody", Kind = CodeParameterKind.Custom, Type = new CodeType { Name = "JsonObject", IsExternal = true }, DefaultValue = "1" });
-        setBody2.AddParameter(new CodeParameter { Name = "Debug", Kind = CodeParameterKind.Custom, Type = new CodeType { Name = "Boolean", IsExternal = true }, DefaultValue = "2" });
+        var setBody2JsonParam = new CodeParameter { Name = "NewJsonBody", Kind = CodeParameterKind.Custom, Type = new CodeType { Name = "JsonObject", IsExternal = true } };
+        setBody2JsonParam.SetData(ALCustomDataKeys.OrderIndex, "1");
+        setBody2.AddParameter(setBody2JsonParam);
+        var setBody2DebugParam = new CodeParameter { Name = "Debug", Kind = CodeParameterKind.Custom, Type = new CodeType { Name = "Boolean", IsExternal = true } };
+        setBody2DebugParam.SetData(ALCustomDataKeys.OrderIndex, "2");
+        setBody2.AddParameter(setBody2DebugParam);
         parent.AddMethod(setBody2);
     }
     private static void AddParameter(CodeMethod method, string name, string externalTypeName)

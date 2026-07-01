@@ -4,6 +4,7 @@ using System.Linq;
 
 using Kiota.Builder.CodeDOM;
 using Kiota.Builder.Writers;
+using Kiota.Builder.Writers.AL;
 
 using Xunit;
 
@@ -146,7 +147,7 @@ public sealed class CodeMethodWriterTests : IDisposable
     public void DispatchesResponseGetterBodyFromSourceCustomData()
     {
         var method = AddMethod(name: "GetResponse");
-        method.CustomData["source"] = "response-getter";
+        method.SetCategory(ALMethodCategory.ResponseGetter);
         writer.Write(parentClass.Methods.First());
         var result = tw.ToString();
         Assert.Contains("exit(StoredResponse);", result);
@@ -175,7 +176,7 @@ public sealed class CodeMethodWriterTests : IDisposable
     public void WritesSetConfigurationRawBodyOverwritingBaseUrlAndClearingQueryParameters()
     {
         var method = AddMethod(name: "SetConfigurationRaw");
-        method.CustomData["source"] = "request-builder-raw-configuration";
+        method.SetCategory(ALMethodCategory.RequestBuilderRawConfiguration);
         method.AddParameter(new CodeParameter { Name = "NewReqConfig", Type = new CodeType { Name = "Codeunit \"Kiota ClientConfig\"", IsExternal = true } });
         method.AddParameter(new CodeParameter { Name = "RawUrl", Type = new CodeType { Name = "string" } });
         writer.Write(parentClass.Methods.First());

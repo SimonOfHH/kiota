@@ -60,27 +60,25 @@ public static class CodeMethodExtensions
         ArgumentNullException.ThrowIfNull(method);
         return method.Parameters
             .Where(p => !p.GetFlag(ALCustomDataKeys.LocalVariable))
-            .OrderBy(p => p.DefaultValue ?? string.Empty, StringComparer.OrdinalIgnoreCase);
+            .OrderBy(p => p.GetInt(ALCustomDataKeys.OrderIndex, 0));
     }
 
     public static bool IsPropertyMethod(this CodeMethod method)
     {
         ArgumentNullException.ThrowIfNull(method);
-        return method.GetData(ALCustomDataKeys.Source)?.Contains(ALCustomDataKeys.Sources.FromProperty, StringComparison.OrdinalIgnoreCase) == true;
+        return method.GetCategory() == ALMethodCategory.FromProperty;
     }
 
     public static bool IsGetterMethod(this CodeMethod method)
     {
         return method.IsPropertyMethod() &&
-               method.IsOfKind(CodeMethodKind.Getter) &&
-               method.GetData(ALCustomDataKeys.MethodType)?.Equals(ALCustomDataKeys.MethodTypes.Getter, StringComparison.OrdinalIgnoreCase) == true;
+               method.IsOfKind(CodeMethodKind.Getter);
     }
 
     public static bool IsSetterMethod(this CodeMethod method)
     {
         return method.IsPropertyMethod() &&
-               method.IsOfKind(CodeMethodKind.Setter) &&
-               method.GetData(ALCustomDataKeys.MethodType)?.Equals(ALCustomDataKeys.MethodTypes.Setter, StringComparison.OrdinalIgnoreCase) == true;
+               method.IsOfKind(CodeMethodKind.Setter);
     }
 
     public static int GetSortingValue(this CodeMethod method, int defaultValue = 0)
@@ -99,6 +97,6 @@ public static class CodeMethodExtensions
     public static bool IsConvenienceOverload(this CodeMethod method)
     {
         ArgumentNullException.ThrowIfNull(method);
-        return method.GetData(ALCustomDataKeys.Source)?.Contains(ALCustomDataKeys.Sources.MultipartOverload, StringComparison.OrdinalIgnoreCase) == true;
+        return method.GetCategory() == ALMethodCategory.MultipartOverload;
     }
 }

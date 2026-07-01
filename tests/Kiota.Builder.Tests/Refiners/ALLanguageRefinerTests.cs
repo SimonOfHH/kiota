@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Kiota.Builder.CodeDOM;
 using Kiota.Builder.Configuration;
 using Kiota.Builder.Refiners;
+using Kiota.Builder.Writers.AL;
 
 using Xunit;
 
@@ -162,8 +163,7 @@ public class ALLanguageRefinerTests
         // A SetConfigurationRaw helper is added to back WithUrl.
         var setConfigRaw = requestBuilder.Methods.FirstOrDefault(m => m.Name.Equals("SetConfigurationRaw", System.StringComparison.OrdinalIgnoreCase));
         Assert.NotNull(setConfigRaw);
-        Assert.True(setConfigRaw!.CustomData.TryGetValue("source", out var rawSource));
-        Assert.Equal("request-builder-raw-configuration", rawSource);
+        Assert.Equal(ALMethodCategory.RequestBuilderRawConfiguration, setConfigRaw!.GetCategory());
         Assert.Equal(2, setConfigRaw.Parameters.Count());
     }
 }

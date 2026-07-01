@@ -5,7 +5,10 @@ namespace Kiota.Builder.Refiners;
 
 public class ALReservedNamesProvider : IReservedNamesProvider
 {
-    private readonly Lazy<HashSet<string>> _reservedNames = new(() => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    /// <summary>Shared singleton instance so the reserved-name set is built once and reused.</summary>
+    public static readonly ALReservedNamesProvider Instance = new();
+
+    private static readonly HashSet<string> _reservedNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "area", "action", "actions", "any", "auditcategory",
         "begin", "biginteger", "bigtext", "blob", "boolean", "break", "byte",
@@ -50,14 +53,13 @@ public class ALReservedNamesProvider : IReservedNamesProvider
         "xmlmport", "xmlnamespacemanager", "xmlnametable", "xmlnode",
         "xmlnodelist", "xmlport", "xmlprocessinginstruction", "xmlreadoptions",
         "xmltext", "xmlwriteoptions",
-    });
+    };
 
-    public HashSet<string> ReservedNames => _reservedNames.Value;
+    public HashSet<string> ReservedNames => _reservedNames;
 
     public static string GetSafeName(string name)
     {
-        var provider = new ALReservedNamesProvider();
-        if (provider.ReservedNames.Contains(name))
+        if (_reservedNames.Contains(name))
             return name + "_";
         return name;
     }

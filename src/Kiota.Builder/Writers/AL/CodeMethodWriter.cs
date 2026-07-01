@@ -164,7 +164,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var generatorMethod = parentClass?.Methods
             .FirstOrDefault(m => m.IsOfKind(CodeMethodKind.RequestGenerator) && m.HttpMethod == method.HttpMethod);
 
-        if (method.SourceIs(ALCustomDataKeys.Sources.MultipartOverload))
+        if (method.IsCategory(ALMethodCategory.MultipartOverload))
         {
             var fieldName = method.GetData(ALCustomDataKeys.MultipartFieldName, "file");
             writer.WriteLine($"body.Initialize(Filename);");
@@ -299,7 +299,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var isCollection = returnType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None;
         var isEnum = returnType is CodeType { TypeDefinition: CodeEnum };
         var isCodeunit = returnType is CodeType { TypeDefinition: CodeClass };
-        var isWrapperGetter = method.SourceIs(ALCustomDataKeys.Sources.ValueWrapperGetter);
+        var isWrapperGetter = method.IsCategory(ALMethodCategory.ValueWrapperGetter);
         if (isWrapperGetter)
         {
             WriteValueWrapperGetterBody(method, writer);
@@ -454,7 +454,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var isEnum = returnType is CodeType { TypeDefinition: CodeEnum };
         var isCodeunit = returnType is CodeType { TypeDefinition: CodeClass };
 #pragma warning restore CA1508
-        var isWrapperSetter = method.SourceIs(ALCustomDataKeys.Sources.ValueWrapperSetter);
+        var isWrapperSetter = method.IsCategory(ALMethodCategory.ValueWrapperSetter);
         if (isWrapperSetter)
         {
             WriteValueWrapperSetterBody(method, writer);
@@ -697,48 +697,45 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
     private void WriteCustomMethodBody(CodeMethod method, LanguageWriter writer)
     {
-        if (method.TryGetData(ALCustomDataKeys.Source, out var source))
+        switch (method.GetCategory())
         {
-            switch (source)
-            {
-                case ALCustomDataKeys.Sources.ClientInitialize:
-                    WriteInitializeBody(method, writer);
-                    return;
-                case ALCustomDataKeys.Sources.ClientConfiguration:
-                    WriteConfigurationBody(method, writer);
-                    return;
-                case ALCustomDataKeys.Sources.ClientDefaultConfiguration:
-                    WriteDefaultConfigurationBody(method, writer);
-                    return;
-                case ALCustomDataKeys.Sources.RequestBuilderConfiguration:
-                case ALCustomDataKeys.Sources.RequestBuilderIdentifier:
-                    WriteRawUrlBuilderBody(method, writer);
-                    return;
-                case ALCustomDataKeys.Sources.RequestBuilderRawConfiguration:
-                    WriteSetConfigurationRawBody(method, writer);
-                    return;
-                case ALCustomDataKeys.Sources.ValidateBody:
-                    WriteValidateBodyBody(method, writer);
-                    return;
-                case ALCustomDataKeys.Sources.FromIndexer:
-                    WriteItemIdxBody(method, writer);
-                    return;
-                case ALCustomDataKeys.Sources.ResponseGetter:
-                    writer.WriteLine("exit(StoredResponse);");
-                    return;
-                case ALCustomDataKeys.Sources.ResponseSetter:
-                    writer.WriteLine("StoredResponse := ApiResponse;");
-                    return;
-                case ALCustomDataKeys.Sources.QueryParamGenericSetter:
-                    WriteQueryParamGenericSetterBody(writer);
-                    return;
-                case ALCustomDataKeys.Sources.QueryParamTypedSetter:
-                    WriteQueryParamTypedSetterBody(method, writer);
-                    return;
-                case ALCustomDataKeys.Sources.QueryParamGetter:
-                    writer.WriteLine("exit(QueryParameters);");
-                    return;
-            }
+            case ALMethodCategory.ClientInitialize:
+                WriteInitializeBody(method, writer);
+                return;
+            case ALMethodCategory.ClientConfiguration:
+                WriteConfigurationBody(method, writer);
+                return;
+            case ALMethodCategory.ClientDefaultConfiguration:
+                WriteDefaultConfigurationBody(method, writer);
+                return;
+            case ALMethodCategory.RequestBuilderConfiguration:
+            case ALMethodCategory.RequestBuilderIdentifier:
+                WriteRawUrlBuilderBody(method, writer);
+                return;
+            case ALMethodCategory.RequestBuilderRawConfiguration:
+                WriteSetConfigurationRawBody(method, writer);
+                return;
+            case ALMethodCategory.ValidateBody:
+                WriteValidateBodyBody(method, writer);
+                return;
+            case ALMethodCategory.FromIndexer:
+                WriteItemIdxBody(method, writer);
+                return;
+            case ALMethodCategory.ResponseGetter:
+                writer.WriteLine("exit(StoredResponse);");
+                return;
+            case ALMethodCategory.ResponseSetter:
+                writer.WriteLine("StoredResponse := ApiResponse;");
+                return;
+            case ALMethodCategory.QueryParamGenericSetter:
+                WriteQueryParamGenericSetterBody(writer);
+                return;
+            case ALMethodCategory.QueryParamTypedSetter:
+                WriteQueryParamTypedSetterBody(method, writer);
+                return;
+            case ALMethodCategory.QueryParamGetter:
+                writer.WriteLine("exit(QueryParameters);");
+                return;
         }
 
         // Default custom method - might be unused
@@ -1057,9 +1054,9 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         var hasExternalDocs = documentation.ExternalDocumentationAvailable;
         var hasReturnType = method.ReturnType is not null
                            && !"void".Equals(method.ReturnType.Name, StringComparison.OrdinalIgnoreCase)
-                           && !method.SourceIs(ALCustomDataKeys.Sources.ClientInitialize)
-                           && !method.SourceIs(ALCustomDataKeys.Sources.ClientConfiguration)
-                           && !method.SourceIs(ALCustomDataKeys.Sources.ClientDefaultConfiguration);
+                           && !method.IsCategory(ALMethodCategory.ClientInitialize)
+                           && !method.IsCategory(ALMethodCategory.ClientConfiguration)
+                           && !method.IsCategory(ALMethodCategory.ClientDefaultConfiguration);
         var paramsWithDocs = method.Parameters
             .Where(static p => p.Documentation.DescriptionAvailable)
             .OrderBy(static p => p.Name, StringComparer.OrdinalIgnoreCase)
