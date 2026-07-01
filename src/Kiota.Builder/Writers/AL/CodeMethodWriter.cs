@@ -257,7 +257,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                             writer.WriteLine($"exit(ReqConfig.Client().Response().GetContent().AsBlob());");
                             break;
                         case "InStream":
-                            writer.WriteLine($"exit(ReqConfig.Client().Response().GetContent().AsInStream());");
+                            writer.WriteLine($"ReqConfig.Client().Response().GetContent().GetHttpContent().ReadAs(InStr);");
                             break;
                         case "Json":
                             writer.WriteLine($"exit(ReqConfig.Client().Response().GetContent().AsJson());");
