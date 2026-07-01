@@ -166,9 +166,8 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
         if (method.IsCategory(ALMethodCategory.MultipartOverload))
         {
-            var fieldName = method.GetData(ALCustomDataKeys.MultipartFieldName, "file");
             writer.WriteLine($"body.Initialize(Filename);");
-            writer.WriteLine($"body.WriteMultipartContent(FileBody, '{fieldName}');");
+            writer.WriteLine($"body.WriteMultipartContent(FileBody, FieldName);");
             if (method.Parameters.Any(p => p.Name.Equals("Parameters", StringComparison.OrdinalIgnoreCase)))
                 writer.WriteLine($"exit(this.{method.Name}(body, Parameters));");
             else

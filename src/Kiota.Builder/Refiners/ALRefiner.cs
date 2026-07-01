@@ -1191,21 +1191,18 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
     #region Step 5.6: Multipart body convenience overloads
     /// <summary>
-    /// For every <see cref="CodeMethodKind.RequestExecutor"/> with a matching 
-    /// <c>multipart-file-fields</c> entry on the request-body parameter, this step adds one
-    /// additional overload per file field.  Each overload replaces the generic
-    /// <c>Codeunit "Kiota File Body"</c> parameter with a <c>InStream</c> parameter so callers
-    /// can pass a stream directly without having to construct the wrapper manually.
+    /// For every <see cref="CodeMethodKind.RequestExecutor"/> whose request body is a multipart
+    /// file body (<c>Codeunit "Kiota File Body"</c> / <c>MultipartBody</c>), this step adds two
+    /// convenience overloads that let callers pass the file content directly — one taking an
+    /// <c>InStream</c> and one taking <c>Text</c> — instead of constructing the wrapper codeunit
+    /// themselves.
     ///
-    /// The overloads are marked as overloads via <see cref="CodeMethod.OriginalMethod"/> (their Name is
-    /// uniquified until <see cref="NormalizeOverloadMethodNames"/> collapses it onto the shared emit name)
-    /// and carry two pieces of metadata:
-    /// <list type="bullet">
-    ///   <item><c>multipart-field-name</c> — the exact form-field name from the OpenAPI spec
-    ///         (e.g. <c>rebFile</c>) that the AL writer should pass to <c>SetFileBody</c>.</item>
-    ///   <item>method category <see cref="ALMethodCategory.MultipartOverload"/>, used by the writer to
-    ///         emit the correct body.</item>
-    /// </list>
+    /// Each overload exposes a <c>FieldName</c> parameter so the caller supplies the multipart
+    /// form-field name at runtime (mirroring how the native Kiota abstractions expect the caller to
+    /// name the part). The overloads are marked via <see cref="CodeMethod.OriginalMethod"/> (their
+    /// Name is uniquified until <see cref="NormalizeOverloadMethodNames"/> collapses it onto the
+    /// shared emit name) and carry the <see cref="ALMethodCategory.MultipartOverload"/> category used
+    /// by the writer to emit the correct body.
     /// </summary>
     private static void AddMultipartBodyConvenienceOverloads(CodeElement generatedCode)
     {
@@ -1222,26 +1219,21 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         if (currentElement is CodeMethod executor && executor.Kind == CodeMethodKind.RequestExecutor &&
             executor.Parent is CodeClass parentClass &&
             executor.Parameters.OfKind(CodeParameterKind.RequestBody) is CodeParameter bodyParam &&
-            executor.Parameters.Any(p => p.Type is CodeType ct && ct.IsKiotaFileBodyType()) &&
-            bodyParam.TryGetData(ALCustomDataKeys.MultipartFileFields, out var fieldsCsv) &&
-            !string.IsNullOrEmpty(fieldsCsv))
+            bodyParam.Type is CodeType bodyType && bodyType.IsKiotaFileBodyType())
         {
-            foreach (var fieldName in fieldsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries))
-            {
-                collector.Add((parentClass, CreateMultipartOverload(executor, fieldName, 1, "InStream")));
-                collector.Add((parentClass, CreateMultipartOverload(executor, fieldName, 2, "Text")));
-            }
+            collector.Add((parentClass, CreateMultipartOverload(executor, 1, "InStream")));
+            collector.Add((parentClass, CreateMultipartOverload(executor, 2, "Text")));
         }
         CrawlTree(currentElement, x => CollectMultipartOverloads(x, collector));
     }
 
     /// <summary>
     /// Clones <paramref name="executor"/>, strips its body/local parameters, then appends a
-    /// <c>Filename</c> parameter and a <c>FileBody</c> parameter of type
-    /// <paramref name="fileBodyTypeName"/> for the given multipart <paramref name="fieldName"/>.
+    /// caller-supplied <c>FieldName</c> parameter (the multipart form-field name), a <c>Filename</c>
+    /// parameter and a <c>FileBody</c> parameter of type <paramref name="fileBodyTypeName"/>.
     /// </summary>
     private static CodeMethod CreateMultipartOverload(
-        CodeMethod executor, string fieldName, int overloadIndex, string fileBodyTypeName)
+        CodeMethod executor, int overloadIndex, string fileBodyTypeName)
     {
         var overload = (executor.Clone() as CodeMethod)!;
         // SimpleName carries the emit name (shared with the base executor); Name is uniquified so the
@@ -1251,10 +1243,9 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         overload.Name += $"-overload-{overloadIndex}";
         overload.OriginalMethod = executor;
         overload.SetCategory(ALMethodCategory.MultipartOverload);
-        overload.SetData(ALCustomDataKeys.MultipartFieldName, fieldName);
 
         // Rebuild the parameter list: drop the original body and all local variables,
-        // then append the field-specific Filename + FileBody parameters.
+        // then append the caller-supplied FieldName + Filename + FileBody parameters.
         var originalParams = overload.Parameters;
         overload.ClearParameters();
         foreach (var param in originalParams)
@@ -1266,10 +1257,17 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
         overload.AddParameter(new CodeParameter
         {
+            Name = "FieldName",
+            Kind = CodeParameterKind.Custom,
+            Type = new CodeType { Name = "Text", IsExternal = true },
+            Documentation = new CodeDocumentation { DescriptionTemplate = "The multipart form-field name for the file content." },
+        });
+        overload.AddParameter(new CodeParameter
+        {
             Name = "Filename",
             Kind = CodeParameterKind.Custom,
             Type = new CodeType { Name = "Text", IsExternal = true },
-            Documentation = new CodeDocumentation { DescriptionTemplate = $"The filename for form field '{fieldName}'." },
+            Documentation = new CodeDocumentation { DescriptionTemplate = "The filename for the multipart form field." },
         });
         overload.AddParameter(new CodeParameter
         {
@@ -1277,7 +1275,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             Kind = CodeParameterKind.RequestBody,
             Optional = false,
             Type = new CodeType { Name = fileBodyTypeName, IsExternal = true },
-            Documentation = new CodeDocumentation { DescriptionTemplate = $"The file content for form field '{fieldName}'." },
+            Documentation = new CodeDocumentation { DescriptionTemplate = "The file content for the multipart form field." },
         });
         AddLocalVariable(overload, "body", "Codeunit \"Kiota File Body\"");
 

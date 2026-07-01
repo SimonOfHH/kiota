@@ -83,10 +83,6 @@ internal static class ALCustomDataKeys
     public const string ParameterCodeunit = "parameter-codeunit";
     public const string UseParameterCodeunit = "use-parameter-codeunit";
 
-    // --- Multipart ---
-    public const string MultipartFieldName = "multipart-field-name";
-    public const string MultipartFileFields = "multipart-file-fields";
-
     /// <summary>Boolean flag values stored as strings.</summary>
     public static class Flags
     {
