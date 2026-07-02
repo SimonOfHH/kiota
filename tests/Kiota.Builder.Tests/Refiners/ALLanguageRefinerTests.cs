@@ -1,4 +1,5 @@
-﻿using System.Globalization;
+﻿using System;
+using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -351,6 +352,71 @@ public class ALLanguageRefinerTests
             var betaEntry = Assert.Single(savedMap.Objects.Values, e => e.AssignedName == beta1.Name);
             Assert.True(betaEntry.Tombstoned);
             Assert.Equal(int.Parse(betaId1, CultureInfo.InvariantCulture), betaEntry.ObjectId);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task PersistedObjectMapKeepsNamingConventionPragmaOnARenamedClassAsync()
+    {
+        var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tempDir);
+        try
+        {
+            System.IO.File.WriteAllText(
+                System.IO.Path.Combine(tempDir, "al-config.json"),
+                "{\"objectMapPath\":\"obj-map.json\"}");
+
+            GenerationConfiguration CreateConfig() => new()
+            {
+                Language = GenerationLanguage.AL,
+                OutputPath = System.IO.Path.Combine(tempDir, "output"),
+                ClientClassName = "ApiClient",
+                ClientNamespaceName = "ApiSdk",
+            };
+
+            // Two colliding class names ("Widget" in two different, structurally-different modules)
+            // force ApplyClassNameChanges into its dedup branch, which renames one of them and tags
+            // it with the AA0215 naming-convention pragma so the object/file name mismatch doesn't
+            // trigger a warning.
+            static (CodeClass a, CodeClass b) CreateWidgets(CodeNamespace root)
+            {
+                var moduleA = root.AddNamespace("ApiSdk.moduleA");
+                var widgetA = moduleA.AddClass(new CodeClass { Name = "Widget", Kind = CodeClassKind.Model }).First();
+                widgetA.AddProperty(new CodeProperty { Name = "foo", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+                var moduleB = root.AddNamespace("ApiSdk.moduleB");
+                var widgetB = moduleB.AddClass(new CodeClass { Name = "Widget", Kind = CodeClassKind.Model }).First();
+                widgetB.AddProperty(new CodeProperty { Name = "bar", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+                return (widgetA, widgetB);
+            }
+
+            // Run 1: two colliding "Widget" classes across two modules - one gets renamed + pragma-tagged.
+            var run1Root = CodeNamespace.InitRootNamespace();
+            var config1 = CreateConfig();
+            var (widgetA1, widgetB1) = CreateWidgets(run1Root);
+            await ILanguageRefiner.RefineAsync(config1, run1Root, cancellationToken: TestContext.Current.CancellationToken);
+
+            var renamed1 = widgetA1.Name != "Widget" ? widgetA1 : widgetB1;
+            Assert.NotEqual("Widget", renamed1.Name);
+            renamed1.CustomData.TryGetValue(ALCustomDataKeys.Pragmas, out var pragmas1);
+            Assert.NotNull(pragmas1);
+            Assert.Contains(ALCustomDataKeys.PragmaCodes.NamingConvention, (string)pragmas1!, StringComparison.Ordinal);
+
+            // Run 2: same two classes again - the renamed one should hit the persisted map, reuse the
+            // exact same (still-differing) name, and still carry the pragma.
+            var run2Root = CodeNamespace.InitRootNamespace();
+            var config2 = CreateConfig();
+            var (widgetA2, widgetB2) = CreateWidgets(run2Root);
+            await ILanguageRefiner.RefineAsync(config2, run2Root, cancellationToken: TestContext.Current.CancellationToken);
+
+            var renamed2 = renamed1 == widgetA1 ? widgetA2 : widgetB2;
+            Assert.Equal(renamed1.Name, renamed2.Name);
+            renamed2.CustomData.TryGetValue(ALCustomDataKeys.Pragmas, out var pragmas2);
+            Assert.NotNull(pragmas2);
+            Assert.Contains(ALCustomDataKeys.PragmaCodes.NamingConvention, (string)pragmas2!, StringComparison.Ordinal);
         }
         finally
         {

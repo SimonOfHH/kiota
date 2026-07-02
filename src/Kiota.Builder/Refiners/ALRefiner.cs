@@ -599,6 +599,14 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             if (existingName is not null)
             {
                 c.Name = existingName;
+                if (!c.Name.Equals($"{alConfig.ObjectPrefix}{originalName}{alConfig.ObjectSuffix}", StringComparison.Ordinal))
+                {
+                    if (!c.HasData(ALCustomDataKeys.OriginalName))
+                        c.SetData(ALCustomDataKeys.OriginalName, originalName);
+                    // Reused name (from a prior run's map entry) still differs from the file/schema
+                    // name -> keep suppressing the naming-convention warning, same as a fresh mint.
+                    c.AppendCsv(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.NamingConvention);
+                }
                 CrawlTreeOrdered(currentElement, x => ApplyClassNameChanges(x, classNames, maxLength, alConfig, conventionService));
                 return;
             }
