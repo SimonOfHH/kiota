@@ -394,10 +394,10 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         writer.DecreaseIndent();
         writer.WriteLine("end;");
         var propertyName = method.SimpleName ?? method.Name;
-        writer.WriteLine($"#pragma warning disable {ALCustomDataKeys.PragmaCodes.StrSubstNoFormatLiteral}");
+        writer.WriteLine($"#pragma warning disable {ALCustomDataKeys.PragmaCodes.StrSubstNoFormatLiteral},{ALCustomDataKeys.PragmaCodes.ErrorMethodFormatLiteral}");
         writer.WriteLine($"// No match found for {serializationName} value");
         writer.WriteLine($"Error(StrSubstNo('Invalid value for {propertyName}: %1', SubToken.AsValue().AsText()));");
-        writer.WriteLine($"#pragma warning restore {ALCustomDataKeys.PragmaCodes.StrSubstNoFormatLiteral}");
+        writer.WriteLine($"#pragma warning restore {ALCustomDataKeys.PragmaCodes.StrSubstNoFormatLiteral},{ALCustomDataKeys.PragmaCodes.ErrorMethodFormatLiteral}");
         writer.DecreaseIndent();
         writer.WriteLine("end;");
     }

@@ -117,5 +117,7 @@ internal static class ALCustomDataKeys
         public const string StrSubstNoFormatLiteral = "AA0217";
         /// <summary>AA0245 — Do not give parameters the same name as fields, methods, or actions in the same scope.</summary>
         public const string ParameterNameClash = "AA0245";
+        /// <summary>AA0231 — StrSubstNo or string concatenation must not be used as a parameter in the Error method.</summary>
+        public const string ErrorMethodFormatLiteral = "AA0231";
     }
 }

@@ -166,4 +166,65 @@ public class ALLanguageRefinerTests
         Assert.Equal(ALMethodCategory.RequestBuilderRawConfiguration, setConfigRaw!.GetCategory());
         Assert.Equal(2, setConfigRaw.Parameters.Count());
     }
+
+    [Fact]
+    public async Task DoesNotAssignObjectIdToInnerQueryParametersClassAsync()
+    {
+        // Mirrors KiotaBuilder.CreateOperationParameterClass: the built-in "QueryParameters" class is
+        // added as an inner class of the request builder, not as a top-level namespace member. The AL
+        // renderer never emits inner classes as separate objects (ALRefiner creates its own top-level
+        // parameter codeunit later), so this inner class must not consume an object id - otherwise the
+        // allocated id range has gaps that never appear in the generated output.
+        var config = CreateConfiguration();
+        var ns = root.AddNamespace("ApiSdk.users");
+        var requestBuilder = ns.AddClass(new CodeClass
+        {
+            Name = "usersRequestBuilder",
+            Kind = CodeClassKind.RequestBuilder,
+        }).First();
+
+        var queryParametersClass = requestBuilder.AddInnerClass(new CodeClass
+        {
+            Name = "usersRequestBuilderGetQueryParameters",
+            Kind = CodeClassKind.QueryParameters,
+        }).First();
+        queryParametersClass.AddProperty(new CodeProperty
+        {
+            Name = "filter",
+            Kind = CodePropertyKind.QueryParameter,
+            Type = new CodeType { Name = "string", IsExternal = true },
+        });
+
+        var executor = new CodeMethod
+        {
+            Name = "Get",
+            Kind = CodeMethodKind.RequestExecutor,
+            ReturnType = new CodeType { Name = "void", IsExternal = true },
+        };
+        executor.AddParameter(new CodeParameter
+        {
+            Name = "requestConfiguration",
+            Kind = CodeParameterKind.RequestConfiguration,
+            Type = new CodeType { Name = "usersRequestBuilderGetQueryParameters", TypeDefinition = queryParametersClass },
+        });
+        requestBuilder.AddMethod(executor);
+
+        // Another top-level model class right after, to detect a gap in the allocated ids.
+        var modelClass = TestHelper.CreateModelClassInModelsNamespace(config, root, "widget");
+
+        await ILanguageRefiner.RefineAsync(config, root, cancellationToken: TestContext.Current.CancellationToken);
+
+        // The inner QueryParameters class must not have received an object id.
+        Assert.False(queryParametersClass.CustomData.TryGetValue("object-id", out _));
+
+        // The request builder and the model class must have received two DISTINCT ids that are
+        // adjacent as a set (no id was reserved-and-wasted for the inner class in between). Traversal
+        // order across sibling namespaces is not guaranteed, so don't assume which one comes first.
+        Assert.True(requestBuilder.CustomData.TryGetValue("object-id", out var requestBuilderId));
+        Assert.True(modelClass.CustomData.TryGetValue("object-id", out var modelClassId));
+        Assert.True(int.TryParse(requestBuilderId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var requestBuilderIdValue));
+        Assert.True(int.TryParse(modelClassId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var modelClassIdValue));
+        Assert.NotEqual(requestBuilderIdValue, modelClassIdValue);
+        Assert.Equal(1, System.Math.Abs(requestBuilderIdValue - modelClassIdValue));
+    }
 }

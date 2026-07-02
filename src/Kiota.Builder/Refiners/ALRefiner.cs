@@ -460,14 +460,26 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     #endregion
 
     #region Step 3: Object IDs and Name Management
+    /// <summary>
+    /// Assigns AL object IDs only to classes/enums that are direct members of a namespace.
+    /// The AL renderer (<see cref="Kiota.Builder.CodeRenderers.CodeRenderer.RenderCodeNamespaceToFilePerClassAsync"/>)
+    /// only emits objects that live directly under a <see cref="CodeNamespace"/>; it never recurses into
+    /// a class's <see cref="CodeClass.InnerClasses"/>. Built-in Kiota constructs such as the per-operation
+    /// "QueryParameters" class are added as inner classes of their request-builder class
+    /// (see KiotaBuilder.CreateOperationParameterClass) and are superseded in AL by a separate top-level
+    /// parameter codeunit created later in <see cref="UpdateRequestExecutorMethods"/>. If those inner
+    /// classes were also given IDs here, the IDs would be reserved but never emitted, producing gaps in
+    /// the generated object ID range. Restricting assignment to namespace-level elements keeps every
+    /// allocated ID mapped to an object that is actually written to disk.
+    /// </summary>
     private static void SetObjectIdsOnClassesAndEnums(CodeElement currentElement, ALObjectIdProvider objectIdProvider)
     {
-        if (currentElement is CodeClass c)
+        if (currentElement is CodeClass { Parent: CodeNamespace } c)
         {
             var id = objectIdProvider.GetNextCodeunitId().ToString(CultureInfo.InvariantCulture);
             c.SetData(ALCustomDataKeys.ObjectId, id);
         }
-        else if (currentElement is CodeEnum e)
+        else if (currentElement is CodeEnum { Parent: CodeNamespace } e)
         {
             var id = objectIdProvider.GetNextEnumId().ToString(CultureInfo.InvariantCulture);
             e.SetData(ALCustomDataKeys.ObjectId, id);
