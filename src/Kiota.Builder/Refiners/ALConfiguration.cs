@@ -70,6 +70,43 @@ public class ALConfiguration
     [JsonPropertyName("markInternal")]
     public bool MarkInternal { get; set; } = false;
 
+    /// <summary>
+    /// Optional path to a persisted object-id/name map (see <see cref="ALObjectMap"/>) used to keep
+    /// AL object ids and names stable across regenerations of an evolving spec, not just an
+    /// unchanged one. Empty/absent (the default) fully disables the feature - no file is read or
+    /// written. A relative path is resolved against the directory containing the al-config.json
+    /// that declared it (see <see cref="GetResolvedObjectMapPath"/>), not the CLI's working
+    /// directory or the generation output path.
+    /// </summary>
+    [JsonPropertyName("objectMapPath")]
+    public string? ObjectMapPath
+    {
+        get; set;
+    }
+
+    /// <summary>Directory the al-config.json this instance was loaded from lives in, used to resolve
+    /// a relative <see cref="ObjectMapPath"/>. Not populated when defaults are used (no config file found).</summary>
+    [JsonIgnore]
+    private string? ConfigDirectory
+    {
+        get; set;
+    }
+
+    /// <summary>
+    /// Resolves <see cref="ObjectMapPath"/> to an absolute path, relative to the directory of the
+    /// al-config.json this configuration was loaded from. Returns <c>null</c> when the object map
+    /// feature is disabled (no path configured).
+    /// </summary>
+    public string? GetResolvedObjectMapPath()
+    {
+        if (string.IsNullOrWhiteSpace(ObjectMapPath))
+            return null;
+        if (Path.IsPathRooted(ObjectMapPath))
+            return ObjectMapPath;
+        var baseDirectory = ConfigDirectory ?? Directory.GetCurrentDirectory();
+        return Path.GetFullPath(Path.Combine(baseDirectory, ObjectMapPath));
+    }
+
     // Computed companion references
     [JsonIgnore]
 #pragma warning disable CA1721 // Property names should not match get methods
@@ -135,6 +172,7 @@ public class ALConfiguration
                 var config = JsonSerializer.Deserialize<ALConfiguration>(json, s_jsonOptions) ?? new ALConfiguration();
 #pragma warning restore IL2026
                 config.Validate();
+                config.ConfigDirectory = Path.GetDirectoryName(configPath);
                 return config;
             }
             catch (JsonException)

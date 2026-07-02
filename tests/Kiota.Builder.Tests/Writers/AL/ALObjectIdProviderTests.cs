@@ -1,4 +1,5 @@
-﻿using Kiota.Builder.Writers.AL;
+﻿using Kiota.Builder.Refiners;
+using Kiota.Builder.Writers.AL;
 
 using System;
 
@@ -72,5 +73,54 @@ public class ALObjectIdProviderTests
         // The counter must not advance after a failed allocation, so each retry reports the same overflow.
         Assert.Throws<InvalidOperationException>(() => provider.GetNextCodeunitId());
         Assert.Throws<InvalidOperationException>(() => provider.GetNextCodeunitId());
+    }
+
+    [Fact]
+    public void TryGetExistingIdMissesWhenNoMapWasSeeded()
+    {
+        var provider = new ALObjectIdProvider(50000);
+        Assert.False(provider.TryGetExistingId("Ns::Widget", out _));
+    }
+
+    [Fact]
+    public void SeedFromMapMakesExistingActiveEntryResolvable()
+    {
+        var map = new ALObjectMap();
+        map.Upsert("Ns::Widget", 50003, "codeunit", "Widget");
+        var provider = new ALObjectIdProvider(50000);
+
+        provider.SeedFromMap(map);
+
+        Assert.True(provider.TryGetExistingId("Ns::Widget", out var id));
+        Assert.Equal(50003, id);
+    }
+
+    [Fact]
+    public void SeedFromMapDoesNotResolveTombstonedEntries()
+    {
+        var map = new ALObjectMap();
+        map.Upsert("Ns::Removed", 50003, "codeunit", "Removed");
+        map.MarkTombstonesExcept(new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal));
+        var provider = new ALObjectIdProvider(50000);
+
+        provider.SeedFromMap(map);
+
+        Assert.False(provider.TryGetExistingId("Ns::Removed", out _));
+    }
+
+    [Fact]
+    public void SeedFromMapReservesIdsFromBothActiveAndTombstonedEntriesSoNewIdsSkipThem()
+    {
+        var map = new ALObjectMap();
+        map.Upsert("Ns::Active", 50000, "codeunit", "Active");
+        map.Upsert("Ns::Removed", 50001, "codeunit", "Removed");
+        map.MarkTombstonesExcept(new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal) { "Ns::Active" });
+        var provider = new ALObjectIdProvider(50000);
+
+        provider.SeedFromMap(map);
+
+        // Both 50000 (active) and 50001 (tombstoned) are reserved, so the first newly-minted id
+        // must skip over the gap and land on 50002.
+        Assert.Equal(50002, provider.GetNextCodeunitId());
     }
 }

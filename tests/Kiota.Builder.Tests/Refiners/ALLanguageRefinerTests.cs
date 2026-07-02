@@ -227,4 +227,134 @@ public class ALLanguageRefinerTests
         Assert.NotEqual(requestBuilderIdValue, modelClassIdValue);
         Assert.Equal(1, System.Math.Abs(requestBuilderIdValue - modelClassIdValue));
     }
+
+    [Fact]
+    public async Task AssignsSameObjectIdsRegardlessOfInsertionOrderAsync()
+    {
+        // Same logical tree, built via two different insertion-call orders. Object id assignment
+        // must not depend on that order (CodeDOM child collections have no enumeration-order
+        // guarantee - see CrawlTreeOrdered).
+        var rootForward = CodeNamespace.InitRootNamespace();
+        var forwardNs = rootForward.AddNamespace("ApiSdk.models");
+        var alphaForward = forwardNs.AddClass(new CodeClass { Name = "Alpha", Kind = CodeClassKind.Model }).First();
+        var bravoForward = forwardNs.AddClass(new CodeClass { Name = "Bravo", Kind = CodeClassKind.Model }).First();
+        var charlieForward = forwardNs.AddEnum(new CodeEnum { Name = "Charlie" }).First();
+        charlieForward.AddOption(new CodeEnumOption { Name = "one" });
+
+        var rootReversed = CodeNamespace.InitRootNamespace();
+        var reversedNs = rootReversed.AddNamespace("ApiSdk.models");
+        var charlieReversed = reversedNs.AddEnum(new CodeEnum { Name = "Charlie" }).First();
+        charlieReversed.AddOption(new CodeEnumOption { Name = "one" });
+        var bravoReversed = reversedNs.AddClass(new CodeClass { Name = "Bravo", Kind = CodeClassKind.Model }).First();
+        var alphaReversed = reversedNs.AddClass(new CodeClass { Name = "Alpha", Kind = CodeClassKind.Model }).First();
+
+        await ILanguageRefiner.RefineAsync(CreateConfiguration(), rootForward, cancellationToken: TestContext.Current.CancellationToken);
+        await ILanguageRefiner.RefineAsync(CreateConfiguration(), rootReversed, cancellationToken: TestContext.Current.CancellationToken);
+
+        static string IdOf(CodeElement e)
+        {
+            Assert.True(e.CustomData.TryGetValue("object-id", out var id));
+            return id!;
+        }
+
+        Assert.Equal(IdOf(alphaForward), IdOf(alphaReversed));
+        Assert.Equal(IdOf(bravoForward), IdOf(bravoReversed));
+        Assert.Equal(IdOf(charlieForward), IdOf(charlieReversed));
+    }
+
+    [Fact]
+    public async Task DeduplicatesCollidingClassNamesTheSameWayRegardlessOfInsertionOrderAsync()
+    {
+        // Two model classes named "Widget" in different namespaces (structurally different, so
+        // DeduplicateObjects does not merge them) force ALConventionService.DeduplicateName's
+        // first-come-first-served registry. Which one keeps the plain name and which one gets the
+        // namespace-prefixed name must be the same regardless of insertion order.
+        var rootForward = CodeNamespace.InitRootNamespace();
+        var moduleAForward = rootForward.AddNamespace("ApiSdk.moduleA");
+        var widgetAForward = moduleAForward.AddClass(new CodeClass { Name = "Widget", Kind = CodeClassKind.Model }).First();
+        widgetAForward.AddProperty(new CodeProperty { Name = "foo", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+        var moduleBForward = rootForward.AddNamespace("ApiSdk.moduleB");
+        var widgetBForward = moduleBForward.AddClass(new CodeClass { Name = "Widget", Kind = CodeClassKind.Model }).First();
+        widgetBForward.AddProperty(new CodeProperty { Name = "bar", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+
+        var rootReversed = CodeNamespace.InitRootNamespace();
+        var moduleBReversed = rootReversed.AddNamespace("ApiSdk.moduleB");
+        var widgetBReversed = moduleBReversed.AddClass(new CodeClass { Name = "Widget", Kind = CodeClassKind.Model }).First();
+        widgetBReversed.AddProperty(new CodeProperty { Name = "bar", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+        var moduleAReversed = rootReversed.AddNamespace("ApiSdk.moduleA");
+        var widgetAReversed = moduleAReversed.AddClass(new CodeClass { Name = "Widget", Kind = CodeClassKind.Model }).First();
+        widgetAReversed.AddProperty(new CodeProperty { Name = "foo", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+
+        await ILanguageRefiner.RefineAsync(CreateConfiguration(), rootForward, cancellationToken: TestContext.Current.CancellationToken);
+        await ILanguageRefiner.RefineAsync(CreateConfiguration(), rootReversed, cancellationToken: TestContext.Current.CancellationToken);
+
+        // The exact same original class must end up with the exact same final AL name in both runs.
+        Assert.Equal(widgetAForward.Name, widgetAReversed.Name);
+        Assert.Equal(widgetBForward.Name, widgetBReversed.Name);
+        Assert.NotEqual(widgetAForward.Name, widgetBForward.Name);
+    }
+
+    [Fact]
+    public async Task PersistedObjectMapKeepsIdsAndNamesStableAcrossAnEvolvingSpecAsync()
+    {
+        var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tempDir);
+        try
+        {
+            System.IO.File.WriteAllText(
+                System.IO.Path.Combine(tempDir, "al-config.json"),
+                "{\"objectMapPath\":\"obj-map.json\"}");
+            var mapPath = System.IO.Path.Combine(tempDir, "obj-map.json");
+
+            GenerationConfiguration CreateConfig() => new()
+            {
+                Language = GenerationLanguage.AL,
+                OutputPath = System.IO.Path.Combine(tempDir, "output"),
+                ClientClassName = "ApiClient",
+                ClientNamespaceName = "ApiSdk",
+            };
+
+            // Run 1: spec has "Alpha" and "Beta".
+            var run1Root = CodeNamespace.InitRootNamespace();
+            var config1 = CreateConfig();
+            var alpha1 = TestHelper.CreateModelClassInModelsNamespace(config1, run1Root, "Alpha");
+            var beta1 = TestHelper.CreateModelClassInModelsNamespace(config1, run1Root, "Beta");
+            await ILanguageRefiner.RefineAsync(config1, run1Root, cancellationToken: TestContext.Current.CancellationToken);
+
+            Assert.True(System.IO.File.Exists(mapPath));
+            alpha1.CustomData.TryGetValue("object-id", out var alphaId1);
+            beta1.CustomData.TryGetValue("object-id", out var betaId1);
+            Assert.NotNull(alphaId1);
+            Assert.NotNull(betaId1);
+
+            // Run 2: "Beta" was removed from the spec, "Gamma" was added. "Alpha" is unchanged.
+            var run2Root = CodeNamespace.InitRootNamespace();
+            var config2 = CreateConfig();
+            var alpha2 = TestHelper.CreateModelClassInModelsNamespace(config2, run2Root, "Alpha");
+            var gamma2 = TestHelper.CreateModelClassInModelsNamespace(config2, run2Root, "Gamma");
+            await ILanguageRefiner.RefineAsync(config2, run2Root, cancellationToken: TestContext.Current.CancellationToken);
+
+            alpha2.CustomData.TryGetValue("object-id", out var alphaId2);
+            gamma2.CustomData.TryGetValue("object-id", out var gammaId2);
+
+            // Alpha (seen in both runs) keeps its exact id and name.
+            Assert.Equal(alphaId1, alphaId2);
+            Assert.Equal(alpha1.Name, alpha2.Name);
+
+            // Gamma (new in run 2) gets a fresh id that doesn't collide with anything already mapped.
+            Assert.NotNull(gammaId2);
+            Assert.NotEqual(betaId1, gammaId2);
+            Assert.NotEqual(alphaId2, gammaId2);
+
+            // Beta (removed in run 2) is tombstoned in the saved map, keeping its original id/name.
+            var savedMap = ALObjectMap.LoadFromDisk(mapPath);
+            var betaEntry = Assert.Single(savedMap.Objects.Values, e => e.AssignedName == beta1.Name);
+            Assert.True(betaEntry.Tombstoned);
+            Assert.Equal(int.Parse(betaId1, CultureInfo.InvariantCulture), betaEntry.ObjectId);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(tempDir, true);
+        }
+    }
 }

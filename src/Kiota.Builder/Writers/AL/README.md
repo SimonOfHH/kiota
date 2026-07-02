@@ -117,11 +117,59 @@ feature is fully opt-in.
 | `privacyStatementUrl`, `eulaUrl`, `helpUrl`, `appUrl` | Passed straight through to the generated `app.json`. | `""` |
 | `generateInterfaces` | Whether AL interfaces are generated for inheritance-like relationships (AL has no class inheritance, see §2). | `false` |
 | `markInternal` | Whether generated objects/procedures are marked `Access = Internal` / `Internal` rather than public. | `false` |
+| `objectMapPath` | Path (relative to `al-config.json`'s own directory, or absolute) to a persisted object-id/name map used to keep object IDs and names stable across regenerations of an **evolving** spec, not just an unchanged one — see §4a. Feature is fully opt-in; omit/leave empty to disable. | `null` (disabled) |
 
 `ALConfiguration.Validate()` rejects an invalid ID range, a malformed
 `companionAppId` (must be a GUID), or malformed version strings before
 generation proceeds, so a broken config fails fast instead of producing
 uncompilable AL.
+
+### 4a. Keeping object IDs and names stable across spec changes (`objectMapPath`)
+
+Even with deterministic CodeDOM traversal (see §5's ordering note), IDs and
+names minted **within a single generation run** are only stable for an
+**unchanged** spec — adding, removing, or reordering schemas/operations still
+shifts which class/enum gets which ID or name on the next run, because both
+are assigned by walking the tree at generation time. `objectMapPath` closes
+that gap by persisting previously-assigned IDs/names to a small JSON file
+(`ALObjectMap`, see
+[`../../Refiners/ALObjectMap.cs`](../../Refiners/ALObjectMap.cs)) and reusing
+them on the next run whenever the *same* object is seen again.
+
+- **Stable identity key:** each object is keyed as
+  `"{Namespace.Name}::{OriginalName}"` — the AL namespace it lives in plus its
+  name *before* prefix/suffix/dedup/abbreviation were applied
+  (`ALCustomDataKeys.OriginalName`). This key is derived from Kiota-core's own
+  (already deterministic) schema/path naming, not from CodeDOM traversal order
+  or the final, possibly-renamed AL identifier.
+- **On a hit** (key found in the map and not tombstoned): the previously
+  assigned `objectId`/`assignedName` are reused verbatim — no re-minting, no
+  re-sanitization.
+- **On a miss:** a new ID/name is minted as usual (existing prefix/suffix,
+  sanitize/deduplicate, and ID-range logic all still apply), and a new entry
+  is added to the map.
+- **Renames are treated as a new object.** Because the key is derived from the
+  *original*, pre-rename schema name, renaming a schema in the source spec
+  produces a cache miss (new key) rather than reusing the old entry — this is
+  intentional: from BC's perspective a rename and an add+remove are
+  indistinguishable, and silently reassigning an existing object's identity to
+  semantically different content would be worse than minting a new one.
+- **Removed objects are tombstoned, never reused.** If a previously-mapped
+  key is not seen during a generation run, its entry is kept in the map with
+  `tombstoned: true`. Its `objectId`/`assignedName` stay reserved *forever* —
+  they are never handed to a different, unrelated object on a later run. This
+  mirrors AppSource's breaking-change/obsoletion rules, where reusing a
+  retired object ID or name for something else is not allowed.
+- **Treat the map like a lock file:** it is machine-maintained, rewritten in
+  full on every generation run that has `objectMapPath` configured, and not
+  meant to be hand-edited. Check it into source control alongside the
+  generated output so IDs/names stay stable across machines and CI runs.
+- **Known limitation:** concurrent regenerations against the same map file
+  (e.g. two branches regenerating in parallel) can produce merge conflicts in
+  the map JSON, the same way `kiota-lock.json` or a package-manager lock file
+  can. Resolving that is left to the consuming pipeline (e.g. serialize
+  regeneration, or regenerate on a single branch and merge the result) rather
+  than solved by the generator itself.
 
 ### Open for discussion
 
@@ -137,10 +185,12 @@ final design. Known trade-offs / alternatives worth revisiting:
   (or alongside) that file — instead of a bespoke `al-config.json` — would
   keep configuration in one place and get incremental-update tracking "for
   free".
-- **ID range ownership:** today the range is a flat `start`/`end` pair with no
-  persistence of *already-allocated* IDs across regenerations of the same
-  client; a stable per-object-name ID map (so re-running the generator doesn't
-  reshuffle IDs) is a likely improvement.
+- **ID range ownership:** the range itself is still a flat `start`/`end` pair
+  with no notion of per-tenant reservation bookkeeping beyond what's in the
+  object map. A persisted per-object-name ID map to keep IDs stable across
+  regenerations of an *evolving* spec is now available via `objectMapPath`
+  (see §4a); what's still open is whether/how that map should also track
+  range exhaustion or per-environment overrides.
 Feedback and proposals for a better shape are welcome before this surface is
 considered stable.
 
@@ -193,7 +243,76 @@ yet the letter) of how the other language writers dispatch.
 
 ---
 
-## 6. Where to look next
+## 6. Bug fix note (temporary — remove once merged): dictionary value types reachable only via `additionalProperties` were silently dropped
+
+**Status:** fixed 2026-07-01, tracked here temporarily so it isn't lost before being folded into the PR description.
+
+**Symptom:** for a schema like:
+
+```jsonc
+"ProjectInformationDto": {
+  "properties": {
+    "priceComponentTypes": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/definitions/PriceComponentTypeDto" }
+    }
+  }
+}
+```
+
+AL used to generate `priceComponentTypes: Dictionary of [Text, Enum "PriceComponentTypeDto"]`
+plus a standalone `PriceComponentTypeDto.Enum.al`. At some point this regressed to an empty
+wrapper codeunit (`ProjectInformationDto_priceComponentTypes.Codeunit.al`) with no dictionary
+and no enum file at all.
+
+**Important: this was not an AL-only bug.** Regenerating the same spec for CSharp showed the
+exact same problem (a `ProjectInformationDto_priceComponentTypes.cs` wrapper class with no
+standalone `PriceComponentTypeDto.cs`). The regression lived entirely in the shared,
+language-agnostic core (`KiotaBuilder.cs`), not in the AL writer/refiner. AL was simply the
+only target that ever tried to *use* the missing type information (via its pure-dictionary
+conversion in `ALRefiner.CollectPureDictionaryClasses`/`ConvertPureDictionaryProperties`), which
+is why it was the one place the regression became visible as broken output.
+
+**Root cause (two parts, both in `KiotaBuilder.cs`):**
+
+1. When a property's schema is `type: object` with a *referenced* `additionalProperties` schema
+   (e.g. an enum or class), nothing in the pipeline ever visited that referenced schema to create
+   its own CodeDOM declaration. The generic `AdditionalData` "extensibility bag" property added by
+   `AddSerializationMembers` is — by design — always untyped (`IDictionary<string, object>`), so it
+   can never be used to recover the value type. The referenced type (`PriceComponentTypeDto`) was
+   therefore never generated at all, for any language.
+2. Even after fixing (1) to explicitly create the declaration, `TrimInheritedModels` (the pass that
+   removes CodeDOM models not reachable from any real request/response type) immediately deleted it
+   again as "unused" — because nothing in the CodeDOM held an actual `CodeType` reference to it, only
+   a side-channel `CustomData` tag.
+
+**Fix:**
+
+- `KiotaBuilder.AddModelClass`: when `schema.AdditionalProperties` is a referenced schema, tag the
+  generated wrapper class with `CustomData["AdditionalPropertiesValueTypeName"]` and explicitly call
+  `AddModelDeclarationIfDoesntExist(...)` on that referenced schema so its declaration actually gets
+  created.
+- `KiotaBuilder.TrimInheritedModels`: after computing the set of models kept alive
+  (`relatedModels`/`classesInUse`), do a second pass that looks for classes carrying the
+  `AdditionalPropertiesValueTypeName` tag and keeps their tagged value type alive too, even though no
+  `CodeType` points to it directly. (Gotcha hit while fixing this: the source LINQ query must be
+  materialized with `.ToArray()` before the loop body mutates the `relatedModels` hash set, otherwise
+  you get an `InvalidOperationException` from the lazily-enumerated `Union`.)
+- `ALRefiner.CollectPureDictionaryClasses`: now reads `CustomData["AdditionalPropertiesValueTypeName"]`
+  first, falling back to the old (always-broken) `AdditionalData` property type lookup for safety.
+
+**Regression test:** `KeepsEnumReferencedOnlyThroughAdditionalPropertiesSchema` in
+`tests/Kiota.Builder.Tests/KiotaBuilderTests.cs` — deliberately placed in the core builder test file
+(not an AL-specific test file) since the bug and fix are both in shared, language-agnostic code.
+
+**Verification:** regenerated the real-world spec end-to-end after the fix;
+`priceComponentTypes` now renders as `Dictionary of [Text, Enum "PriceComponentTypeDto"]` again, and
+`PriceComponentTypeDto.Enum.al` is generated as a standalone file. Full `Kiota.Builder.Tests` suite
+(2128 tests) passes.
+
+---
+
+## 7. Where to look next
 
 - Refiner (CodeDOM transformations specific to AL):
   [`../../Refiners/ALRefiner.cs`](../../Refiners/ALRefiner.cs)

@@ -119,7 +119,37 @@ public class ALConventionService : CommonLanguageConventionService
 
     #region Global Name Tracking
     private readonly HashSet<string> _allNames = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Stable object-map key -> previously-assigned final AL name, for active
+    /// (non-tombstoned) entries only. Populated via <see cref="SeedFromMap"/>.</summary>
+    private readonly Dictionary<string, string> _existingNamesByKey = new(StringComparer.Ordinal);
     #endregion
+
+    /// <summary>
+    /// Seeds this service with previously-assigned names from a persisted object map, before any new
+    /// names are deduplicated this run. Every name in the map (active or tombstoned) is reserved into
+    /// <see cref="_allNames"/> so it can never be handed to a different, unrelated object; only
+    /// active entries become resolvable via <see cref="TryGetExistingName"/>.
+    /// </summary>
+    public void SeedFromMap(ALObjectMap map)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+        foreach (var (key, entry) in map.Objects)
+        {
+            _allNames.Add(entry.AssignedName);
+            if (!entry.Tombstoned)
+                _existingNamesByKey[key] = entry.AssignedName;
+        }
+    }
+
+    /// <summary>Returns the previously-assigned final AL name for <paramref name="key"/>, if this
+    /// object was seen (and not removed) in a prior generation covered by the seeded map. Callers
+    /// must skip <see cref="SanitizeName"/>/<see cref="DeduplicateName"/> entirely on a hit and reuse
+    /// the name verbatim.</summary>
+    public bool TryGetExistingName(string key, out string name)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(key);
+        return _existingNamesByKey.TryGetValue(key, out name!);
+    }
 
     /// <summary>
     /// Maps special Kiota abstraction type names to their fixed AL external counterparts.

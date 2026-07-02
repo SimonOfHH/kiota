@@ -23,6 +23,19 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             var objectIdProvider = new ALObjectIdProvider(alConfig.ObjectIdRangeStart, alConfig.ObjectIdRangeEnd);
             var conventionService = new ALConventionService(alConfig);
 
+            // Phase 2: optional persisted object map (stable ids/names across an *evolving* spec,
+            // on top of Phase 1's same-spec-rerun determinism). Fully inert when not configured:
+            // objectMap stays null, and ALObjectIdProvider/ALConventionService's TryGetExisting*
+            // lookups always miss (their seed dictionaries are simply never populated).
+            var objectMapPath = alConfig.GetResolvedObjectMapPath();
+            ALObjectMap? objectMap = null;
+            if (!string.IsNullOrEmpty(objectMapPath))
+            {
+                objectMap = ALObjectMap.LoadFromDisk(objectMapPath);
+                objectIdProvider.SeedFromMap(objectMap);
+                conventionService.SeedFromMap(objectMap);
+            }
+
             cancellationToken.ThrowIfCancellationRequested();
 
             // Step 1: Pre-processing
@@ -83,7 +96,52 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             UpdateMethodParameters(generatedCode);
 
             AddDefaultPragmas(generatedCode, alConfig, conventionService);
+
+            // Persist the object map (if enabled): walk the finished tree once, upsert every
+            // top-level class/enum's final (id, name) under its stable key, tombstone anything from
+            // a prior run that wasn't seen this time (never delete - ids/names are kept forever), and
+            // save. Order-independent: only content, not traversal order, matters here.
+            if (objectMap is not null && objectMapPath is not null)
+            {
+                var seenKeys = new HashSet<string>(StringComparer.Ordinal);
+                CollectObjectMapEntries(generatedCode, objectMap, seenKeys);
+                objectMap.MarkTombstonesExcept(seenKeys);
+                objectMap.SaveToDisk(objectMapPath);
+            }
         }, cancellationToken);
+    }
+
+    /// <summary>
+    /// Builds the stable, spec-derived object-map key for <paramref name="element"/>: its containing
+    /// namespace name plus its <see cref="ALCustomDataKeys.OriginalName"/> (falling back to its
+    /// current <c>Name</c> if that tag isn't set yet). Does not depend on CodeDOM traversal order.
+    /// </summary>
+    private static string BuildObjectMapKey(CodeElement element, string namespaceName)
+    {
+        var originalName = element.GetData(ALCustomDataKeys.OriginalName, element.Name);
+        return $"{namespaceName}::{originalName}";
+    }
+
+    /// <summary>
+    /// Walks the fully-refined tree and upserts every top-level (namespace-child) class/enum that
+    /// received an object id into <paramref name="map"/>, recording each one's key into
+    /// <paramref name="seenKeys"/> so the caller can tombstone everything else.
+    /// </summary>
+    private static void CollectObjectMapEntries(CodeElement currentElement, ALObjectMap map, HashSet<string> seenKeys)
+    {
+        if (currentElement is CodeClass { Parent: CodeNamespace parentNs } c && c.HasData(ALCustomDataKeys.ObjectId))
+        {
+            var key = BuildObjectMapKey(c, parentNs.Name);
+            seenKeys.Add(key);
+            map.Upsert(key, c.GetInt(ALCustomDataKeys.ObjectId, 0), "codeunit", c.Name);
+        }
+        else if (currentElement is CodeEnum { Parent: CodeNamespace parentNsEnum } e && e.HasData(ALCustomDataKeys.ObjectId))
+        {
+            var key = BuildObjectMapKey(e, parentNsEnum.Name);
+            seenKeys.Add(key);
+            map.Upsert(key, e.GetInt(ALCustomDataKeys.ObjectId, 0), "enum", e.Name);
+        }
+        CrawlTree(currentElement, x => CollectObjectMapEntries(x, map, seenKeys));
     }
 
     #region Step 1: ModifyNamespaces
@@ -471,20 +529,39 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     /// classes were also given IDs here, the IDs would be reserved but never emitted, producing gaps in
     /// the generated object ID range. Restricting assignment to namespace-level elements keeps every
     /// allocated ID mapped to an object that is actually written to disk.
+    /// <para>
+    /// Phase 2 (persisted object map): <see cref="ALCustomDataKeys.OriginalName"/> is captured
+    /// unconditionally here (not only on a later rename) so a stable object-map key is always
+    /// available, and <see cref="ALObjectIdProvider.TryGetExistingId"/> is consulted before minting a
+    /// new id so a class/enum seen in a prior generation (per a loaded object map) keeps its id. When
+    /// no map was loaded, that lookup always misses and behavior is unchanged.
+    /// </para>
     /// </summary>
     private static void SetObjectIdsOnClassesAndEnums(CodeElement currentElement, ALObjectIdProvider objectIdProvider)
     {
-        if (currentElement is CodeClass { Parent: CodeNamespace } c)
+        if (currentElement is CodeClass { Parent: CodeNamespace parentNs } c)
         {
-            var id = objectIdProvider.GetNextCodeunitId().ToString(CultureInfo.InvariantCulture);
-            c.SetData(ALCustomDataKeys.ObjectId, id);
+            if (!c.HasData(ALCustomDataKeys.OriginalName))
+                c.SetData(ALCustomDataKeys.OriginalName, c.Name);
+            var key = BuildObjectMapKey(c, parentNs.Name);
+            var id = objectIdProvider.TryGetExistingId(key, out var existingId) ? existingId : objectIdProvider.GetNextCodeunitId();
+            c.SetData(ALCustomDataKeys.ObjectId, id.ToString(CultureInfo.InvariantCulture));
         }
-        else if (currentElement is CodeEnum { Parent: CodeNamespace } e)
+        else if (currentElement is CodeEnum { Parent: CodeNamespace parentNsEnum } e)
         {
-            var id = objectIdProvider.GetNextEnumId().ToString(CultureInfo.InvariantCulture);
-            e.SetData(ALCustomDataKeys.ObjectId, id);
+            if (!e.HasData(ALCustomDataKeys.OriginalName))
+                e.SetData(ALCustomDataKeys.OriginalName, e.Name);
+            var key = BuildObjectMapKey(e, parentNsEnum.Name);
+            var id = objectIdProvider.TryGetExistingId(key, out var existingId) ? existingId : objectIdProvider.GetNextEnumId();
+            e.SetData(ALCustomDataKeys.ObjectId, id.ToString(CultureInfo.InvariantCulture));
         }
-        CrawlTree(currentElement, x => SetObjectIdsOnClassesAndEnums(x, objectIdProvider));
+        // Ordered traversal: object-id assignment feeds a shared sequential counter
+        // (ALObjectIdProvider), so visitation order directly determines which object gets which
+        // id. CodeDOM child collections are ConcurrentDictionary-backed with no enumeration-order
+        // guarantee, and .NET randomizes string hashing per process, so plain CrawlTree would give
+        // different ids for the exact same, unchanged spec across separate generation runs. See
+        // CrawlTreeOrdered for why sorting by Name is safe here.
+        CrawlTreeOrdered(currentElement, x => SetObjectIdsOnClassesAndEnums(x, objectIdProvider));
     }
 
     private static void ModifyClassNames(CodeElement generatedCode, ALConfiguration alConfig, ALConventionService conventionService)
@@ -504,6 +581,28 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         if (currentElement is CodeClass c)
         {
             var originalName = c.Name;
+
+            // Phase 2 (persisted object map): if this class was seen (and not removed) in a prior
+            // generation covered by a loaded object map, reuse its final AL name verbatim - never
+            // re-run SanitizeName/DeduplicateName or re-apply objectPrefix/objectSuffix for it, so a
+            // later config change doesn't retroactively rename an already-mapped object. When no map
+            // was loaded, this lookup always misses and behavior is unchanged.
+            string? existingName = null;
+            try
+            {
+                var mapNs = c.GetImmediateParentOfType<CodeNamespace>();
+                if (conventionService.TryGetExistingName(BuildObjectMapKey(c, mapNs.Name), out var mappedName))
+                    existingName = mappedName;
+            }
+            catch (InvalidOperationException) { }
+
+            if (existingName is not null)
+            {
+                c.Name = existingName;
+                CrawlTreeOrdered(currentElement, x => ApplyClassNameChanges(x, classNames, maxLength, alConfig, conventionService));
+                return;
+            }
+
             var hasDuplicate = classNames.TryGetValue(originalName, out var list) && list!.Count > 1;
 
             if (!hasDuplicate && originalName.Length <= maxLength)
@@ -538,7 +637,12 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 }
             }
         }
-        CrawlTree(currentElement, x => ApplyClassNameChanges(x, classNames, maxLength, alConfig, conventionService));
+        // Ordered traversal: colliding class names are resolved via ALConventionService.DeduplicateName,
+        // which claims names into a shared, first-come-first-served registry. Visitation order therefore
+        // decides which colliding class keeps the plain/abbreviated name and which gets a numeric suffix.
+        // See CrawlTreeOrdered for why sorting by Name is safe and necessary here to keep that outcome
+        // stable across separate generation runs of the same, unchanged spec.
+        CrawlTreeOrdered(currentElement, x => ApplyClassNameChanges(x, classNames, maxLength, alConfig, conventionService));
     }
 
     private static void ModifyEnumNames(CodeElement generatedCode, ALConfiguration alConfig, ALConventionService conventionService)
@@ -549,6 +653,11 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         ApplyEnumNameChanges(generatedCode, enumNames, alConfig, conventionService);
     }
 
+    // NOTE: unlike ApplyClassNameChanges, this method does NOT need CrawlTreeOrdered. It only
+    // depends on `enumNames`' duplicate *counts* (computed once, order-independent) and each enum's
+    // own namespace segment - never on a shared first-come-first-served registry keyed by visitation
+    // order. If this method is ever changed to consult a shared name registry (e.g. ALConventionService's
+    // _allNames), switch its traversal to CrawlTreeOrdered too, or cross-run name stability regresses.
     private static void ApplyEnumNameChanges(CodeElement currentElement, Dictionary<string, List<CodeEnum>> enumNames, ALConfiguration alConfig, ALConventionService conventionService)
     {
         if (currentElement is CodeEnum e)
@@ -1353,20 +1462,31 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
                 if (queryParamProperties.Count > 0)
                 {
-                    // Create parameter codeunit class
-                    var paramClassName = $"{parentClass.Name}{method.Name}Parameters";
-                    paramClassName = conventionService.SanitizeName(paramClassName, null, 30);
+                    // Create parameter codeunit class. The un-sanitized base name is used as the
+                    // Phase 2 object-map key's "original name" component so the key stays stable even
+                    // if SanitizeName's abbreviation table changes (see BuildObjectMapKey remarks).
+                    var paramClassNameBase = $"{parentClass.GetData(ALCustomDataKeys.OriginalName, parentClass.Name)}{method.Name}Parameters";
+                    var paramClassName = conventionService.SanitizeName(paramClassNameBase, null, 30);
 
                     try
                     {
                         var parentNs = parentClass.GetImmediateParentOfType<CodeNamespace>();
+
+                        // Phase 2 (persisted object map): reuse a prior id/name for this parameter
+                        // codeunit if one exists. Both lookups always miss when no map was loaded.
+                        var mapKey = $"{parentNs.Name}::{paramClassNameBase}";
+                        if (conventionService.TryGetExistingName(mapKey, out var existingParamClassName))
+                            paramClassName = existingParamClassName;
+
                         var paramClass = new CodeClass
                         {
                             Name = paramClassName,
                             Kind = CodeClassKind.QueryParameters,
                         };
                         paramClass.SetFlag(ALCustomDataKeys.ParameterCodeunit);
-                        paramClass.SetData(ALCustomDataKeys.ObjectId, objectIdProvider.GetNextCodeunitId().ToString(CultureInfo.InvariantCulture));
+                        paramClass.SetData(ALCustomDataKeys.OriginalName, paramClassNameBase);
+                        var paramObjectId = objectIdProvider.TryGetExistingId(mapKey, out var existingParamObjectId) ? existingParamObjectId : objectIdProvider.GetNextCodeunitId();
+                        paramClass.SetData(ALCustomDataKeys.ObjectId, paramObjectId.ToString(CultureInfo.InvariantCulture));
                         parentNs.AddClass(paramClass);
 
                         // Using for the client namespace (where Kiota Query Param Formatter lives)
@@ -1614,6 +1734,40 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             }
         }
         CrawlTree(currentElement, UpdateMethodParameters);
+    }
+    #endregion
+
+    #region Deterministic traversal
+    /// <summary>
+    /// Same one-level-then-self-recurse contract as <see cref="CrawlTree"/>, except children are
+    /// visited in a stable, content-derived order (by <see cref="CodeElement.Name"/>, ordinal)
+    /// instead of raw <see cref="CodeElement.GetChildElements"/> enumeration order.
+    /// <para>
+    /// CodeDOM child collections (<c>CodeBlock.InnerChildElements</c>) are backed by a
+    /// <see cref="System.Collections.Concurrent.ConcurrentDictionary{TKey,TValue}"/> with no
+    /// enumeration-order guarantee, and .NET randomizes string hashing per process by default, so
+    /// plain <see cref="CrawlTree"/> traversal order can differ between separate generation runs of
+    /// the exact same, unchanged OpenAPI spec. That's harmless for most refiner passes, but two AL
+    /// passes feed traversal order into a shared, first-come-first-served registry
+    /// (<see cref="ALObjectIdProvider"/>'s per-type counters, <see cref="ALConventionService"/>'s
+    /// name-dedup registry) - an order flip there means the exact same class/enum gets a different
+    /// object id, or two colliding class names literally swap which one gets a numeric suffix,
+    /// across otherwise-identical generations.
+    /// </para>
+    /// <para>
+    /// Sorting by <see cref="CodeElement.Name"/> is safe/sufficient here because both call sites
+    /// only assign ids/names to <see cref="CodeClass"/>/<see cref="CodeEnum"/> nodes that are
+    /// direct children of a <see cref="CodeNamespace"/>, and <see cref="CodeNamespace.AddClass"/>/
+    /// <see cref="CodeNamespace.AddEnum"/> key their child collection by plain <c>Name</c> (the
+    /// overload-style key-suffixing in <c>CodeBlock</c> only ever applies to <see cref="CodeMethod"/>
+    /// additions), so <c>Name</c> is guaranteed unique among the siblings that matter at the point
+    /// each assignment happens.
+    /// </para>
+    /// </summary>
+    private static void CrawlTreeOrdered(CodeElement currentElement, Action<CodeElement> function, bool innerOnly = true)
+    {
+        foreach (var child in currentElement.GetChildElements(innerOnly).OrderBy(static x => x.Name, StringComparer.Ordinal))
+            function.Invoke(child);
     }
     #endregion
 

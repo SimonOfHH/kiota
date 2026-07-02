@@ -80,4 +80,54 @@ public class ALConventionServiceTests
         Assert.Equal("QueryParameters", service.TempDictionaryVarName);
         Assert.Equal("JsonObject", service.ParseNodeInterfaceName);
     }
+
+    [Fact]
+    public void TryGetExistingNameMissesWhenNoMapWasSeeded()
+    {
+        var service = CreateService();
+        Assert.False(service.TryGetExistingName("Ns::Widget", out _));
+    }
+
+    [Fact]
+    public void SeedFromMapMakesExistingActiveEntryResolvable()
+    {
+        var map = new ALObjectMap();
+        map.Upsert("Ns::Widget", 50000, "codeunit", "Widget");
+        var service = CreateService();
+
+        service.SeedFromMap(map);
+
+        Assert.True(service.TryGetExistingName("Ns::Widget", out var name));
+        Assert.Equal("Widget", name);
+    }
+
+    [Fact]
+    public void SeedFromMapDoesNotResolveTombstonedEntries()
+    {
+        var map = new ALObjectMap();
+        map.Upsert("Ns::Removed", 50000, "codeunit", "Removed");
+        map.MarkTombstonesExcept(new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal));
+        var service = CreateService();
+
+        service.SeedFromMap(map);
+
+        Assert.False(service.TryGetExistingName("Ns::Removed", out _));
+    }
+
+    [Fact]
+    public void SeedFromMapBlocksNewObjectFromReusingATombstonedName()
+    {
+        var map = new ALObjectMap();
+        map.Upsert("Ns::Removed", 50000, "codeunit", "Removed");
+        map.MarkTombstonesExcept(new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal));
+        var service = CreateService();
+        service.SeedFromMap(map);
+
+        // A brand-new, unrelated class happens to sanitize/abbreviate down to the exact same name
+        // that a tombstoned object used to have - it must not be handed that name again.
+        var newClass = new CodeClass { Name = "Removed" };
+        var result = service.DeduplicateName("Removed", newClass);
+
+        Assert.NotEqual("Removed", result);
+    }
 }
