@@ -693,23 +693,37 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         var enumNames = new Dictionary<string, List<CodeEnum>>(StringComparer.OrdinalIgnoreCase);
         CollectEnumNames(generatedCode, enumNames);
 
-        ApplyEnumNameChanges(generatedCode, enumNames, alConfig, conventionService);
+        var maxLength = 30 - alConfig.ObjectPrefix.Length - alConfig.ObjectSuffix.Length;
+        if (maxLength <= 0) maxLength = 30;
+
+        ApplyEnumNameChanges(generatedCode, enumNames, maxLength, alConfig, conventionService);
     }
 
-    // NOTE: unlike ApplyClassNameChanges, this method does NOT need CrawlTreeOrdered. It only
-    // depends on `enumNames`' duplicate *counts* (computed once, order-independent) and each enum's
-    // own namespace segment - never on a shared first-come-first-served registry keyed by visitation
-    // order. If this method is ever changed to consult a shared name registry (e.g. ALConventionService's
-    // _allNames), switch its traversal to CrawlTreeOrdered too, or cross-run name stability regresses.
-    private static void ApplyEnumNameChanges(CodeElement currentElement, Dictionary<string, List<CodeEnum>> enumNames, ALConfiguration alConfig, ALConventionService conventionService)
+    // Ordered traversal: like ApplyClassNameChanges, this now consults ALConventionService's shared,
+    // first-come-first-served name registry (via SanitizeName/DeduplicateName) whenever an enum name
+    // exceeds the 30-character limit (AL0659) or collides with another enum's original name. Visitation
+    // order therefore decides which colliding/over-length enum keeps the plain/abbreviated name and
+    // which gets a numeric suffix - see CrawlTreeOrdered for why sorting by Name keeps that stable
+    // across separate generation runs of the same, unchanged spec.
+    private static void ApplyEnumNameChanges(CodeElement currentElement, Dictionary<string, List<CodeEnum>> enumNames, int maxLength, ALConfiguration alConfig, ALConventionService conventionService)
     {
         if (currentElement is CodeEnum e)
         {
             var originalName = e.Name;
             var hasDuplicate = enumNames.TryGetValue(originalName, out var list) && list!.Count > 1;
 
-            if (hasDuplicate)
+            if (!hasDuplicate && originalName.Length <= maxLength)
             {
+                if (!string.IsNullOrEmpty(alConfig.ObjectPrefix) || !string.IsNullOrEmpty(alConfig.ObjectSuffix))
+                    e.Name = $"{alConfig.ObjectPrefix}{e.Name}{alConfig.ObjectSuffix}";
+            }
+            else
+            {
+                // Need abbreviation (AL0659: identifier > 30 chars) and/or deduplication (true name
+                // collision, or two different names colliding only after abbreviation to 30 chars -
+                // DeduplicateName's shared registry catches both cases uniformly).
+                var processedName = conventionService.SanitizeName(originalName, e, 30);
+
                 string? parentSegment = null;
                 try
                 {
@@ -719,17 +733,19 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 }
                 catch (InvalidOperationException) { }
 
-                if (!string.IsNullOrEmpty(parentSegment))
+                processedName = conventionService.DeduplicateName(processedName, e, parentSegment, 30);
+
+                e.Name = $"{alConfig.ObjectPrefix}{processedName}{alConfig.ObjectSuffix}";
+                if (!e.Name.Equals($"{alConfig.ObjectPrefix}{originalName}{alConfig.ObjectSuffix}", StringComparison.Ordinal))
                 {
-                    e.Name = parentSegment.ToFirstCharacterUpperCase() + e.Name;
                     if (!e.HasData(ALCustomDataKeys.OriginalName))
                         e.SetData(ALCustomDataKeys.OriginalName, originalName);
+                    // Filename is original, but enum name differs -> add pragma to suppress warning about that
+                    e.AppendCsv(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.NamingConvention);
                 }
             }
-
-            e.Name = $"{alConfig.ObjectPrefix}{e.Name}{alConfig.ObjectSuffix}";
         }
-        CrawlTree(currentElement, x => ApplyEnumNameChanges(x, enumNames, alConfig, conventionService));
+        CrawlTreeOrdered(currentElement, x => ApplyEnumNameChanges(x, enumNames, maxLength, alConfig, conventionService));
     }
     #endregion
 
@@ -1078,10 +1094,15 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             AddUsing(codeClass, alConfig.DefinitionsNamespace);
 
             // Add global variables
-            AddGlobalVariable(codeClass, "JSONHelper", $"Codeunit \"JSON Helper\"", "2", ALCustomDataKeys.PragmaCodes.UnusedVariable);
+            AddGlobalVariable(codeClass, "JSONHelper", $"Codeunit \"JSON Helper\"", "2");
             AddGlobalVariable(codeClass, "DebugCall", "Boolean", "4");
             AddGlobalVariable(codeClass, "JsonBody", "JsonObject", "3");
             AddGlobalVariable(codeClass, "SubToken", "JsonToken", "3");
+            // Not every one of these is guaranteed to be referenced (e.g. a Model codeunit with no
+            // properties never emits the property-iteration code that uses SubToken/JSONHelper), so
+            // suppress the unused-variable warning for the whole global-var block rather than trying
+            // to track per-property usage.
+            codeClass.AppendCsv(ALCustomDataKeys.PragmasVariables, ALCustomDataKeys.PragmaCodes.UnusedVariable);
 
             // Add SetBody overloads
             AddSetBodyMethods(codeClass);
@@ -1436,6 +1457,22 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     #endregion
 
     #region Step 6: Request Executor Enhancement
+    /// <summary>
+    /// Determines the query-parameter type category ("text", "enum" or "primitive") used both to
+    /// decide whether the "Kiota Query Param Formatter" global variable is actually needed, and to
+    /// pick the right value expression in <see cref="Writers.AL.CodeMethodWriter"/>'s typed setter
+    /// body. Must stay in sync with that writer's switch on the same category strings.
+    /// </summary>
+    private static string GetQueryParamTypeCategory(CodeProperty qp, ALConventionService conventionService)
+    {
+        var alTypeName = conventionService.GetTypeString(qp.Type, qp);
+        if (alTypeName.Equals("Text", StringComparison.OrdinalIgnoreCase))
+            return "text";
+        if (qp.Type is CodeType { TypeDefinition: CodeEnum })
+            return "enum";
+        return "primitive";
+    }
+
     private static void UpdateRequestExecutorMethods(CodeElement currentElement, ALConfiguration alConfig, ALConventionService conventionService, ALObjectIdProvider objectIdProvider)
     {
         if (currentElement is CodeMethod method && method.Kind == CodeMethodKind.RequestExecutor &&
@@ -1585,8 +1622,12 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                         if (alConfig.MarkInternal)
                             AddObjectProperty(paramClass, "Access", "Internal");
 
-                        // Global variables
-                        AddGlobalVariable(paramClass, "QueryParamFormatter", $"Codeunit {alConfig.ClientNamespace}.\"Kiota Query Param Formatter\"", "1");
+                        // Global variables. QueryParamFormatter is only referenced by typed setters
+                        // whose query parameter type falls back to the "primitive" category (see
+                        // GetQueryParamTypeCategory below); omit it entirely when every query
+                        // parameter is text/enum-typed, otherwise it ends up unused (AA0137).
+                        if (queryParamProperties.Any(qp => GetQueryParamTypeCategory(qp, conventionService) == "primitive"))
+                            AddGlobalVariable(paramClass, "QueryParamFormatter", $"Codeunit {alConfig.ClientNamespace}.\"Kiota Query Param Formatter\"", "1");
                         AddGlobalVariable(paramClass, "QueryParameters", "Dictionary of [Text, Text]", "2");
 
                         // SetQueryParameter(QueryKey: Text; QueryValue: Text) method
@@ -1615,14 +1656,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                             }
 
                             // Determine type category for writer formatting
-                            string typeCategory;
-                            var alTypeName = conventionService.GetTypeString(qp.Type, qp);
-                            if (alTypeName.Equals("Text", StringComparison.OrdinalIgnoreCase))
-                                typeCategory = "text";
-                            else if (qp.Type is CodeType { TypeDefinition: CodeEnum })
-                                typeCategory = "enum";
-                            else
-                                typeCategory = "primitive";
+                            var typeCategory = GetQueryParamTypeCategory(qp, conventionService);
 
                             var typedSetterMethod = CreateVoidMethod($"Set{qp.Name.ToFirstCharacterUpperCase()}", CodeMethodKind.Custom, paramClass);
                             typedSetterMethod.SetCategory(ALMethodCategory.QueryParamTypedSetter);
