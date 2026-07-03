@@ -114,12 +114,39 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     /// <summary>
     /// Builds the stable, spec-derived object-map key for <paramref name="element"/>: its containing
     /// namespace name plus its <see cref="ALCustomDataKeys.OriginalName"/> (falling back to its
-    /// current <c>Name</c> if that tag isn't set yet). Does not depend on CodeDOM traversal order.
+    /// current <c>Name</c> if that tag isn't set yet), plus a content disambiguator. Does not depend
+    /// on CodeDOM traversal order.
+    /// <para>
+    /// Namespace + original name alone is NOT always unique: <see cref="DeduplicateObjects"/> only
+    /// merges classes/enums that share both the same name AND identical members, so two distinct
+    /// classes/enums with the same name and namespace but different members ("true" duplicates
+    /// disambiguated in the emitted output via a numeric suffix) can legitimately coexist. Without a
+    /// disambiguator, both would collapse onto the same map key, and on a later run
+    /// <see cref="ALObjectIdProvider.TryGetExistingId"/>/<see cref="ALConventionService.TryGetExistingName"/>
+    /// would hand BOTH of them the same id/name (last Upsert wins), which is invalid AL and defeats the
+    /// numeric-suffix disambiguation that used to happen unconditionally. Folding a sorted list of the
+    /// element's own member names into the key keeps colliding-by-name-only objects distinct.
+    /// </para>
+    /// <para>
+    /// This must be called (and its result cached via <see cref="ALCustomDataKeys.ObjectMapKey"/>)
+    /// exactly once, in <see cref="SetObjectIdsOnClassesAndEnums"/>, while the element's member list
+    /// still reflects the original schema shape. Every other call site must read the cached key
+    /// instead of recomputing it, because later steps (e.g. <see cref="MovePropertiesToMethods"/>)
+    /// mutate the member list, which would otherwise make the key drift mid-pipeline.
+    /// </para>
     /// </summary>
     private static string BuildObjectMapKey(CodeElement element, string namespaceName)
     {
         var originalName = element.GetData(ALCustomDataKeys.OriginalName, element.Name);
-        return $"{namespaceName}::{originalName}";
+        var disambiguator = element switch
+        {
+            CodeClass cls => string.Join(',', cls.Properties.Select(static p => p.Name).OrderBy(static n => n, StringComparer.Ordinal)),
+            CodeEnum en => string.Join(',', en.Options.Select(static o => o.Name).OrderBy(static n => n, StringComparer.Ordinal)),
+            _ => string.Empty,
+        };
+        return string.IsNullOrEmpty(disambiguator)
+            ? $"{namespaceName}::{originalName}"
+            : $"{namespaceName}::{originalName}::{disambiguator}";
     }
 
     /// <summary>
@@ -131,13 +158,16 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     {
         if (currentElement is CodeClass { Parent: CodeNamespace parentNs } c && c.HasData(ALCustomDataKeys.ObjectId))
         {
-            var key = BuildObjectMapKey(c, parentNs.Name);
+            // Reuse the key cached in SetObjectIdsOnClassesAndEnums - recomputing here would use the
+            // post-refinement member list (properties already moved to methods), producing a different
+            // disambiguator than the one used to seed/lookup ids and names earlier in the pipeline.
+            var key = c.GetData(ALCustomDataKeys.ObjectMapKey, BuildObjectMapKey(c, parentNs.Name));
             seenKeys.Add(key);
             map.Upsert(key, c.GetInt(ALCustomDataKeys.ObjectId, 0), "codeunit", c.Name);
         }
         else if (currentElement is CodeEnum { Parent: CodeNamespace parentNsEnum } e && e.HasData(ALCustomDataKeys.ObjectId))
         {
-            var key = BuildObjectMapKey(e, parentNsEnum.Name);
+            var key = e.GetData(ALCustomDataKeys.ObjectMapKey, BuildObjectMapKey(e, parentNsEnum.Name));
             seenKeys.Add(key);
             map.Upsert(key, e.GetInt(ALCustomDataKeys.ObjectId, 0), "enum", e.Name);
         }
@@ -544,6 +574,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             if (!c.HasData(ALCustomDataKeys.OriginalName))
                 c.SetData(ALCustomDataKeys.OriginalName, c.Name);
             var key = BuildObjectMapKey(c, parentNs.Name);
+            c.SetData(ALCustomDataKeys.ObjectMapKey, key);
             var id = objectIdProvider.TryGetExistingId(key, out var existingId) ? existingId : objectIdProvider.GetNextCodeunitId();
             c.SetData(ALCustomDataKeys.ObjectId, id.ToString(CultureInfo.InvariantCulture));
         }
@@ -552,6 +583,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             if (!e.HasData(ALCustomDataKeys.OriginalName))
                 e.SetData(ALCustomDataKeys.OriginalName, e.Name);
             var key = BuildObjectMapKey(e, parentNsEnum.Name);
+            e.SetData(ALCustomDataKeys.ObjectMapKey, key);
             var id = objectIdProvider.TryGetExistingId(key, out var existingId) ? existingId : objectIdProvider.GetNextEnumId();
             e.SetData(ALCustomDataKeys.ObjectId, id.ToString(CultureInfo.InvariantCulture));
         }
@@ -587,14 +619,17 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             // re-run SanitizeName/DeduplicateName or re-apply objectPrefix/objectSuffix for it, so a
             // later config change doesn't retroactively rename an already-mapped object. When no map
             // was loaded, this lookup always misses and behavior is unchanged.
+            // Read the key cached in SetObjectIdsOnClassesAndEnums (must match the key used to seed/
+            // persist the map - see BuildObjectMapKey remarks) rather than recomputing it here.
+            // TryClaimExistingName guards against a corrupt/stale map where two DIFFERENT objects were
+            // (incorrectly, in an older map) saved under the same assignedName: only the first class
+            // to claim it in this run may reuse it verbatim; any later one falls through to fresh
+            // SanitizeName/DeduplicateName treatment below instead of reusing an already-taken name.
             string? existingName = null;
-            try
-            {
-                var mapNs = c.GetImmediateParentOfType<CodeNamespace>();
-                if (conventionService.TryGetExistingName(BuildObjectMapKey(c, mapNs.Name), out var mappedName))
-                    existingName = mappedName;
-            }
-            catch (InvalidOperationException) { }
+            if (c.TryGetData(ALCustomDataKeys.ObjectMapKey, out var cachedMapKey) &&
+                conventionService.TryGetExistingName(cachedMapKey, out var mappedName) &&
+                conventionService.TryClaimExistingName(mappedName))
+                existingName = mappedName;
 
             if (existingName is not null)
             {
@@ -1474,7 +1509,6 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                     // Phase 2 object-map key's "original name" component so the key stays stable even
                     // if SanitizeName's abbreviation table changes (see BuildObjectMapKey remarks).
                     var paramClassNameBase = $"{parentClass.GetData(ALCustomDataKeys.OriginalName, parentClass.Name)}{method.Name}Parameters";
-                    var paramClassName = conventionService.SanitizeName(paramClassNameBase, null, 30);
 
                     try
                     {
@@ -1482,17 +1516,64 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
                         // Phase 2 (persisted object map): reuse a prior id/name for this parameter
                         // codeunit if one exists. Both lookups always miss when no map was loaded.
-                        var mapKey = $"{parentNs.Name}::{paramClassNameBase}";
-                        if (conventionService.TryGetExistingName(mapKey, out var existingParamClassName))
-                            paramClassName = existingParamClassName;
+                        // The key is derived from the PARENT request-builder's own cached, content-
+                        // disambiguated ObjectMapKey (falling back to the plain namespace::name form
+                        // only if that parent was, for some reason, never processed by
+                        // SetObjectIdsOnClassesAndEnums) rather than being rebuilt from raw
+                        // namespace+name strings. Two request-builder classes can legitimately share
+                        // a name in the same namespace (see BuildObjectMapKey remarks) - keying off the
+                        // parent's own disambiguated key keeps their respective parameter codeunits
+                        // from colliding too. This key is cached on the parameter codeunit itself (see
+                        // below) so CollectObjectMapEntries persists it verbatim instead of falling
+                        // back to a differently-shaped, non-matching key at save time.
+                        var parentMapKey = parentClass.GetData(ALCustomDataKeys.ObjectMapKey,
+                            $"{parentNs.Name}::{parentClass.GetData(ALCustomDataKeys.OriginalName, parentClass.Name)}");
+                        var mapKey = $"{parentMapKey}::{method.Name}Parameters";
 
                         var paramClass = new CodeClass
                         {
-                            Name = paramClassName,
                             Kind = CodeClassKind.QueryParameters,
                         };
                         paramClass.SetFlag(ALCustomDataKeys.ParameterCodeunit);
                         paramClass.SetData(ALCustomDataKeys.OriginalName, paramClassNameBase);
+                        paramClass.SetData(ALCustomDataKeys.ObjectMapKey, mapKey);
+
+                        // AL object names must be unique across the WHOLE app regardless of namespace.
+                        // paramClassNameBase is derived from the parent request-builder's name plus the
+                        // executor method name, and DIFFERENT request-builder classes (in different
+                        // namespaces, or disambiguated only by content) can legitimately produce the
+                        // exact same paramClassNameBase - so, just like model classes/enums, this name
+                        // MUST go through the shared DeduplicateName registry instead of only being
+                        // abbreviated via SanitizeName. TryClaimExistingName also guards against a
+                        // corrupt/stale map where two different parameter codeunits were (incorrectly,
+                        // by this very bug in an older run) saved with the identical assignedName.
+                        string paramClassName;
+                        if (conventionService.TryGetExistingName(mapKey, out var existingParamClassName) &&
+                            conventionService.TryClaimExistingName(existingParamClassName))
+                        {
+                            paramClassName = existingParamClassName;
+                        }
+                        else
+                        {
+                            var parentSegment = parentNs.Name.Split('.') is { Length: > 0 } segments ? segments[^1] : null;
+                            var sanitized = conventionService.SanitizeName(paramClassNameBase, paramClass, 30);
+                            paramClassName = conventionService.DeduplicateName(sanitized, paramClass, parentSegment, 30);
+                        }
+                        paramClass.Name = paramClassName;
+
+                        // Whichever path produced the final name (fresh dedup or a reused map entry),
+                        // if it differs from the un-sanitized base name the object/file name mismatch
+                        // must keep suppressing the AA0215 naming-convention warning - mirroring
+                        // ApplyClassNameChanges's identical check for ordinary classes/enums. Without
+                        // this, DeduplicateName's own AddPragma calls only fire on its fallback
+                        // (collision) branches, never on its "no collision, but SanitizeName already
+                        // abbreviated the name for length" fast-path return, and the map-reuse branch
+                        // above never touches pragmas at all - so a param codeunit whose name was only
+                        // ever abbreviated for length (not deduplicated) silently lost the pragma the
+                        // moment a persisted map made it take the reuse branch instead of the fresh one.
+                        if (!paramClass.Name.Equals(paramClassNameBase, StringComparison.Ordinal))
+                            paramClass.AppendCsv(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.NamingConvention);
+
                         var paramObjectId = objectIdProvider.TryGetExistingId(mapKey, out var existingParamObjectId) ? existingParamObjectId : objectIdProvider.GetNextCodeunitId();
                         paramClass.SetData(ALCustomDataKeys.ObjectId, paramObjectId.ToString(CultureInfo.InvariantCulture));
                         parentNs.AddClass(paramClass);

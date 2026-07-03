@@ -13,6 +13,11 @@ internal static class ALCustomDataKeys
     public const string ObjectId = "object-id";
     /// <summary>Original (pre-sanitization) name, used for file naming and pragma decisions.</summary>
     public const string OriginalName = "original-name";
+    /// <summary>Stable, content-disambiguated object-map key computed once (see
+    /// <c>ALRefiner.BuildObjectMapKey</c>) and reused verbatim by every later pass that needs to
+    /// look up/persist this element's id or name, so all passes agree on the same key even though
+    /// the element's structure (e.g. Properties) changes over the course of the pipeline.</summary>
+    public const string ObjectMapKey = "object-map-key";
     /// <summary>Marks the generated API client codeunit.</summary>
     public const string ClientClass = "client-class";
     /// <summary>Marks an element that must not be emitted (e.g. nested/skipped classes or methods).</summary>

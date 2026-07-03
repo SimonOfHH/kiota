@@ -151,6 +151,24 @@ public class ALConventionService : CommonLanguageConventionService
         return _existingNamesByKey.TryGetValue(key, out name!);
     }
 
+    /// <summary>Names reserved by a "reuse the cached map name verbatim" call site during THIS run
+    /// (see <see cref="TryClaimExistingName"/>). Distinct from <see cref="_allNames"/>, which is
+    /// pre-seeded at startup with every name the map has ever handed out and therefore can't be used
+    /// to detect a same-run collision between two reuse calls (an <c>_allNames.Add</c> for either
+    /// would always fail, seeded or not).</summary>
+    private readonly HashSet<string> _namesClaimedThisRun = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Call this before honoring a <see cref="TryGetExistingName"/> hit. Returns <see langword="true"/>
+    /// the first time <paramref name="name"/> is claimed in the current run, reserving it so a second,
+    /// unrelated object that also resolves to the identical cached name (a corrupt/stale map entry -
+    /// e.g. two distinct objects were saved under different keys but with the same
+    /// <c>assignedName</c>, which must never happen going forward but can exist in an old map file)
+    /// is told to fall back to fresh <see cref="SanitizeName"/>/<see cref="DeduplicateName"/>
+    /// treatment instead of silently reusing the same, already-taken AL object name.
+    /// </summary>
+    public bool TryClaimExistingName(string name) => _namesClaimedThisRun.Add(name);
+
     /// <summary>
     /// Maps special Kiota abstraction type names to their fixed AL external counterparts.
     /// Centralizes the type mapping instead of inlining name comparisons in <see cref="GetTypeString"/>.
@@ -275,7 +293,10 @@ public class ALConventionService : CommonLanguageConventionService
         if (maxLength <= 0) maxLength = 30;
 
         if (_allNames.Add(name))
+        {
+            _namesClaimedThisRun.Add(name);
             return name;
+        }
 
         // Store original name
         if (element is not null && !element.HasData(ALCustomDataKeys.OriginalName))
@@ -291,6 +312,7 @@ public class ALConventionService : CommonLanguageConventionService
                 withNs = withNs[..maxLength];
             if (_allNames.Add(withNs))
             {
+                _namesClaimedThisRun.Add(withNs);
                 AddPragma(element, ALCustomDataKeys.PragmaCodes.NamingConvention);
                 return withNs;
             }
@@ -302,6 +324,7 @@ public class ALConventionService : CommonLanguageConventionService
             abbreviated = abbreviated[..maxLength];
         if (_allNames.Add(abbreviated))
         {
+            _namesClaimedThisRun.Add(abbreviated);
             AddPragma(element, ALCustomDataKeys.PragmaCodes.NamingConvention);
             return abbreviated;
         }
@@ -314,6 +337,7 @@ public class ALConventionService : CommonLanguageConventionService
                 candidate = abbreviated[..Math.Max(1, maxLength - i.ToString(CultureInfo.InvariantCulture).Length)] + i.ToString(CultureInfo.InvariantCulture);
             if (_allNames.Add(candidate))
             {
+                _namesClaimedThisRun.Add(candidate);
                 AddPragma(element, ALCustomDataKeys.PragmaCodes.NamingConvention);
                 return candidate;
             }

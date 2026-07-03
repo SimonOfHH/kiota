@@ -423,4 +423,338 @@ public class ALLanguageRefinerTests
             System.IO.Directory.Delete(tempDir, true);
         }
     }
+
+    [Fact]
+    public async Task PersistedObjectMapKeepsDistinctIdsAndNamesForSameNameSameNamespaceClassesAsync()
+    {
+        // Regression for: two structurally-different classes sharing both the same original name AND
+        // the same namespace (DeduplicateObjects only merges classes with IDENTICAL members, so these
+        // two survive as distinct objects) used to collapse onto the same object-map key
+        // ("namespace::name"), which made TryGetExistingId/TryGetExistingName hand BOTH of them the
+        // exact same id/name on a second run - invalid duplicate AL object names/ids.
+        var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tempDir);
+        try
+        {
+            System.IO.File.WriteAllText(
+                System.IO.Path.Combine(tempDir, "al-config.json"),
+                "{\"objectMapPath\":\"obj-map.json\"}");
+
+            GenerationConfiguration CreateConfig() => new()
+            {
+                Language = GenerationLanguage.AL,
+                OutputPath = System.IO.Path.Combine(tempDir, "output"),
+                ClientClassName = "ApiClient",
+                ClientNamespaceName = "ApiSdk",
+            };
+
+            static (CodeClass a, CodeClass b) CreateWidgets(CodeNamespace root)
+            {
+                var modelsNs = root.AddNamespace("ApiSdk.models");
+                var widgetA = modelsNs.AddClass(new CodeClass { Name = "Widget", Kind = CodeClassKind.Model }).First();
+                widgetA.AddProperty(new CodeProperty { Name = "foo", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+                var widgetB = modelsNs.AddClass(new CodeClass { Name = "Widget2", Kind = CodeClassKind.Model }).First();
+                widgetB.Name = "Widget"; // force the same final name as widgetA without colliding in the child collection key
+                widgetB.AddProperty(new CodeProperty { Name = "bar", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+                return (widgetA, widgetB);
+            }
+
+            // Run 1: establish the map with both same-name, same-namespace, structurally-different classes.
+            var run1Root = CodeNamespace.InitRootNamespace();
+            var config1 = CreateConfig();
+            var (widgetA1, widgetB1) = CreateWidgets(run1Root);
+            await ILanguageRefiner.RefineAsync(config1, run1Root, cancellationToken: TestContext.Current.CancellationToken);
+
+            Assert.NotEqual(widgetA1.Name, widgetB1.Name);
+            widgetA1.CustomData.TryGetValue("object-id", out var idA1);
+            widgetB1.CustomData.TryGetValue("object-id", out var idB1);
+            Assert.NotEqual(idA1, idB1);
+
+            // Run 2: same two classes again - both must still resolve to distinct ids/names, reusing
+            // (not swapping or collapsing) their respective run-1 identities.
+            var run2Root = CodeNamespace.InitRootNamespace();
+            var config2 = CreateConfig();
+            var (widgetA2, widgetB2) = CreateWidgets(run2Root);
+            await ILanguageRefiner.RefineAsync(config2, run2Root, cancellationToken: TestContext.Current.CancellationToken);
+
+            widgetA2.CustomData.TryGetValue("object-id", out var idA2);
+            widgetB2.CustomData.TryGetValue("object-id", out var idB2);
+
+            Assert.NotEqual(widgetA2.Name, widgetB2.Name);
+            Assert.NotEqual(idA2, idB2);
+            Assert.Equal(widgetA1.Name, widgetA2.Name);
+            Assert.Equal(widgetB1.Name, widgetB2.Name);
+            Assert.Equal(idA1, idA2);
+            Assert.Equal(idB1, idB2);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task PersistedObjectMapKeepsQueryParameterCodeunitIdAndNameStableAcrossRunsAsync()
+    {
+        // Regression for: the generated top-level query-parameter codeunit (built in
+        // UpdateRequestExecutorMethods/Step 6) used its own key format
+        // ("namespace::parentOriginalName+methodName+Parameters") instead of going through
+        // BuildObjectMapKey/the cached ALCustomDataKeys.ObjectMapKey. After BuildObjectMapKey grew a
+        // content disambiguator, CollectObjectMapEntries's generic fallback recomputed a DIFFERENT key
+        // for the parameter codeunit at save time than the one used to look it up on the next run
+        // (it was never cached on the element), so the parameter codeunit's id/name were never
+        // actually reused - a fresh id/name was minted on every single run.
+        var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tempDir);
+        try
+        {
+            System.IO.File.WriteAllText(
+                System.IO.Path.Combine(tempDir, "al-config.json"),
+                "{\"objectMapPath\":\"obj-map.json\"}");
+
+            GenerationConfiguration CreateConfig() => new()
+            {
+                Language = GenerationLanguage.AL,
+                OutputPath = System.IO.Path.Combine(tempDir, "output"),
+                ClientClassName = "ApiClient",
+                ClientNamespaceName = "ApiSdk",
+            };
+
+            static CodeClass CreateRequestBuilderWithQueryParameters(CodeNamespace root)
+            {
+                var ns = root.AddNamespace("ApiSdk.users");
+                var requestBuilder = ns.AddClass(new CodeClass
+                {
+                    Name = "usersRequestBuilder",
+                    Kind = CodeClassKind.RequestBuilder,
+                }).First();
+
+                var queryParametersClass = requestBuilder.AddInnerClass(new CodeClass
+                {
+                    Name = "usersRequestBuilderGetQueryParameters",
+                    Kind = CodeClassKind.QueryParameters,
+                }).First();
+                queryParametersClass.AddProperty(new CodeProperty
+                {
+                    Name = "filter",
+                    Kind = CodePropertyKind.QueryParameter,
+                    Type = new CodeType { Name = "string", IsExternal = true },
+                });
+
+                var executor = new CodeMethod
+                {
+                    Name = "Get",
+                    Kind = CodeMethodKind.RequestExecutor,
+                    ReturnType = new CodeType { Name = "void", IsExternal = true },
+                };
+                executor.AddParameter(new CodeParameter
+                {
+                    Name = "requestConfiguration",
+                    Kind = CodeParameterKind.RequestConfiguration,
+                    Type = new CodeType { Name = "usersRequestBuilderGetQueryParameters", TypeDefinition = queryParametersClass },
+                });
+                requestBuilder.AddMethod(executor);
+                return requestBuilder;
+            }
+
+            static CodeClass GetGeneratedParamCodeunit(CodeNamespace root) =>
+                root.FindNamespaceByName("ApiSdk.users")!.Classes.Single(c => c.IsOfKind(CodeClassKind.QueryParameters) && c.Parent is CodeNamespace);
+
+            // Run 1: establish the map.
+            var run1Root = CodeNamespace.InitRootNamespace();
+            var config1 = CreateConfig();
+            CreateRequestBuilderWithQueryParameters(run1Root);
+            await ILanguageRefiner.RefineAsync(config1, run1Root, cancellationToken: TestContext.Current.CancellationToken);
+
+            var paramClass1 = GetGeneratedParamCodeunit(run1Root);
+            paramClass1.CustomData.TryGetValue("object-id", out var paramId1);
+            Assert.NotNull(paramId1);
+
+            // Run 2: identical spec - the parameter codeunit must reuse the exact same id and name.
+            var run2Root = CodeNamespace.InitRootNamespace();
+            var config2 = CreateConfig();
+            CreateRequestBuilderWithQueryParameters(run2Root);
+            await ILanguageRefiner.RefineAsync(config2, run2Root, cancellationToken: TestContext.Current.CancellationToken);
+
+            var paramClass2 = GetGeneratedParamCodeunit(run2Root);
+            paramClass2.CustomData.TryGetValue("object-id", out var paramId2);
+
+            Assert.Equal(paramId1, paramId2);
+            Assert.Equal(paramClass1.Name, paramClass2.Name);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task PersistedObjectMapKeepsNamingConventionPragmaOnAnAbbreviatedParameterCodeunitAsync()
+    {
+        // Regression for: the parameter codeunit's name-mismatch pragma (AA0215) was only ever added
+        // via ALConventionService.DeduplicateName's internal fallback branches (which only fire on an
+        // actual name COLLISION) - never via an explicit "does the final name differ from the base
+        // name" check the way ApplyClassNameChanges does for ordinary classes/enums. So a parameter
+        // codeunit whose name was merely ABBREVIATED for length (SanitizeName, no collision at all)
+        // got no pragma on the very first run, and - once a persisted map existed - permanently took
+        // the map-reuse branch (which never touched pragmas either), so it never got the pragma on any
+        // subsequent run.
+        var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tempDir);
+        try
+        {
+            System.IO.File.WriteAllText(
+                System.IO.Path.Combine(tempDir, "al-config.json"),
+                "{\"objectMapPath\":\"obj-map.json\"}");
+
+            GenerationConfiguration CreateConfig() => new()
+            {
+                Language = GenerationLanguage.AL,
+                OutputPath = System.IO.Path.Combine(tempDir, "output"),
+                ClientClassName = "ApiClient",
+                ClientNamespaceName = "ApiSdk",
+            };
+
+            static void CreateRequestBuilderWithLongNameAndQueryParameters(CodeNamespace root)
+            {
+                var ns = root.AddNamespace("ApiSdk.users");
+                var requestBuilder = ns.AddClass(new CodeClass
+                {
+                    // Long enough that "{name}GetParameters" exceeds the 30-char AL object name limit,
+                    // forcing SanitizeName to abbreviate the parameter codeunit's name (with no name
+                    // collision at all - the mismatch is purely a length truncation).
+                    Name = "ExtremelyLongRequestBuilderNameForTesting",
+                    Kind = CodeClassKind.RequestBuilder,
+                }).First();
+
+                var queryParametersClass = requestBuilder.AddInnerClass(new CodeClass
+                {
+                    Name = "ExtremelyLongRequestBuilderNameForTestingGetQueryParameters",
+                    Kind = CodeClassKind.QueryParameters,
+                }).First();
+                queryParametersClass.AddProperty(new CodeProperty
+                {
+                    Name = "filter",
+                    Kind = CodePropertyKind.QueryParameter,
+                    Type = new CodeType { Name = "string", IsExternal = true },
+                });
+
+                var executor = new CodeMethod
+                {
+                    Name = "Get",
+                    Kind = CodeMethodKind.RequestExecutor,
+                    ReturnType = new CodeType { Name = "void", IsExternal = true },
+                };
+                executor.AddParameter(new CodeParameter
+                {
+                    Name = "requestConfiguration",
+                    Kind = CodeParameterKind.RequestConfiguration,
+                    Type = new CodeType { Name = "ExtremelyLongRequestBuilderNameForTestingGetQueryParameters", TypeDefinition = queryParametersClass },
+                });
+                requestBuilder.AddMethod(executor);
+            }
+
+            static CodeClass GetGeneratedParamCodeunit(CodeNamespace root) =>
+                root.FindNamespaceByName("ApiSdk.users")!.Classes.Single(c => c.IsOfKind(CodeClassKind.QueryParameters) && c.Parent is CodeNamespace);
+
+            // Run 1: fresh mint - the name is abbreviated for length, no collision involved.
+            var run1Root = CodeNamespace.InitRootNamespace();
+            var config1 = CreateConfig();
+            CreateRequestBuilderWithLongNameAndQueryParameters(run1Root);
+            await ILanguageRefiner.RefineAsync(config1, run1Root, cancellationToken: TestContext.Current.CancellationToken);
+
+            var paramClass1 = GetGeneratedParamCodeunit(run1Root);
+            Assert.NotEqual("ExtremelyLongRequestBuilderNameForTestingGetParameters", paramClass1.Name);
+            paramClass1.CustomData.TryGetValue(ALCustomDataKeys.Pragmas, out var pragmas1);
+            Assert.NotNull(pragmas1);
+            Assert.Contains(ALCustomDataKeys.PragmaCodes.NamingConvention, (string)pragmas1!, StringComparison.Ordinal);
+
+            // Run 2: identical spec - the parameter codeunit now hits the persisted-map reuse branch;
+            // it must still carry the pragma.
+            var run2Root = CodeNamespace.InitRootNamespace();
+            var config2 = CreateConfig();
+            CreateRequestBuilderWithLongNameAndQueryParameters(run2Root);
+            await ILanguageRefiner.RefineAsync(config2, run2Root, cancellationToken: TestContext.Current.CancellationToken);
+
+            var paramClass2 = GetGeneratedParamCodeunit(run2Root);
+            Assert.Equal(paramClass1.Name, paramClass2.Name);
+            paramClass2.CustomData.TryGetValue(ALCustomDataKeys.Pragmas, out var pragmas2);
+            Assert.NotNull(pragmas2);
+            Assert.Contains(ALCustomDataKeys.PragmaCodes.NamingConvention, (string)pragmas2!, StringComparison.Ordinal);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task GivesDistinctNamesToParameterCodeunitsFromDifferentlyNamespacedRequestBuildersWithTheSameNameAsync()
+    {
+        // Regression for: two request-builder classes that share the same original name (a common
+        // pattern when a spec mirrors the same nested structure under multiple parent paths, e.g.
+        // ".conversion.ava.ugl" and ".conversion.flatAva.ugl" both containing an "ugl" builder) each
+        // have a "Post" executor with query parameters. UpdateRequestExecutorMethods derived the
+        // parameter-codeunit name purely via SanitizeName (abbreviation only) and NEVER routed it
+        // through DeduplicateName/the shared name registry, so both ended up with the byte-identical
+        // AL object name (e.g. "uglRequestBuilderPostParams") even though they got distinct object
+        // ids - i.e. two different codeunits with the same name, which AL will not compile (object
+        // names must be unique across the whole app, unlike ids which are just unique numbers).
+        static CodeClass CreateUglRequestBuilderWithPost(CodeNamespace root, string namespaceName)
+        {
+            var ns = root.AddNamespace(namespaceName);
+            var requestBuilder = ns.AddClass(new CodeClass
+            {
+                Name = "uglRequestBuilder",
+                Kind = CodeClassKind.RequestBuilder,
+            }).First();
+
+            var queryParametersClass = requestBuilder.AddInnerClass(new CodeClass
+            {
+                Name = "uglRequestBuilderPostQueryParameters",
+                Kind = CodeClassKind.QueryParameters,
+            }).First();
+            queryParametersClass.AddProperty(new CodeProperty
+            {
+                Name = "filter",
+                Kind = CodePropertyKind.QueryParameter,
+                Type = new CodeType { Name = "string", IsExternal = true },
+            });
+
+            var executor = new CodeMethod
+            {
+                Name = "Post",
+                Kind = CodeMethodKind.RequestExecutor,
+                ReturnType = new CodeType { Name = "void", IsExternal = true },
+            };
+            executor.AddParameter(new CodeParameter
+            {
+                Name = "requestConfiguration",
+                Kind = CodeParameterKind.RequestConfiguration,
+                Type = new CodeType { Name = "uglRequestBuilderPostQueryParameters", TypeDefinition = queryParametersClass },
+            });
+            requestBuilder.AddMethod(executor);
+            return requestBuilder;
+        }
+
+        var config = CreateConfiguration();
+        CreateUglRequestBuilderWithPost(root, "ApiSdk.conversion.ava.ugl");
+        CreateUglRequestBuilderWithPost(root, "ApiSdk.conversion.flatAva.ugl");
+
+        await ILanguageRefiner.RefineAsync(config, root, cancellationToken: TestContext.Current.CancellationToken);
+
+        var paramClasses = root.FindNamespaceByName("ApiSdk.conversion.ava.ugl")!.Classes
+            .Concat(root.FindNamespaceByName("ApiSdk.conversion.flatAva.ugl")!.Classes)
+            .Where(c => c.IsOfKind(CodeClassKind.QueryParameters) && c.Parent is CodeNamespace)
+            .ToList();
+
+        Assert.Equal(2, paramClasses.Count);
+        Assert.NotEqual(paramClasses[0].Name, paramClasses[1].Name);
+
+        // Object ids must also, obviously, still be distinct.
+        paramClasses[0].CustomData.TryGetValue("object-id", out var id0);
+        paramClasses[1].CustomData.TryGetValue("object-id", out var id1);
+        Assert.NotEqual(id0, id1);
+    }
 }
+
