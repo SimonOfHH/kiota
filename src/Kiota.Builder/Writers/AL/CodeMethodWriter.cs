@@ -332,7 +332,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
         writer.WriteLine("exit;");
         writer.DecreaseIndent();
         writer.WriteLine("JObject := JToken.AsObject();");
-        writer.WriteLine("foreach KeyText in JObject.Keys do begin");
+        writer.WriteLine("foreach KeyText in JObject.Keys() do begin");
         writer.IncreaseIndent();
         writer.WriteLine("JObject.Get(KeyText, JToken);");
         if (isEnum)
@@ -520,7 +520,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     private void WriteDictionarySetterBody(CodeMethod method, LanguageWriter writer, string serializationName, bool isEnum, bool isCodeunit)
     {
         // Iterate the caller's dictionary and build a JSON object
-        writer.WriteLine("foreach KeyText in p.Keys do begin");
+        writer.WriteLine("foreach KeyText in p.Keys() do begin");
         writer.IncreaseIndent();
         if (isEnum)
         {
@@ -641,7 +641,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
                     param.TryGetData(ALCustomDataKeys.KeyVariable, out var keyVar);
                     param.TryGetData(ALCustomDataKeys.ValueVariable, out var valueVar);
                     param.TryGetData(ALCustomDataKeys.ObjectVariable, out var objVar);
-                    writer.WriteLine($"foreach {keyVar} in {paramName}.Keys do");
+                    writer.WriteLine($"foreach {keyVar} in {paramName}.Keys() do");
                     writer.IncreaseIndent();
                     writer.WriteLine($"if {paramName}.Get({keyVar}, {valueVar}) then");
                     writer.IncreaseIndent();
