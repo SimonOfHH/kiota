@@ -710,6 +710,36 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         if (currentElement is CodeEnum e)
         {
             var originalName = e.Name;
+
+            // Phase 2 (persisted object map): mirrors ApplyClassNameChanges - if this enum was seen
+            // (and not removed) in a prior generation covered by a loaded object map, reuse its final
+            // AL name verbatim and skip SanitizeName/DeduplicateName entirely. Without this, a later
+            // change to the abbreviation table (or any other change to SanitizeName/DeduplicateName's
+            // output) would silently re-abbreviate/re-deduplicate an already-mapped enum to a
+            // DIFFERENT name than what a prior generation persisted, defeating the whole point of the
+            // object map for enums. TryClaimExistingName guards against a corrupt/stale map the same
+            // way it does for classes.
+            string? existingName = null;
+            if (e.TryGetData(ALCustomDataKeys.ObjectMapKey, out var cachedMapKey) &&
+                conventionService.TryGetExistingName(cachedMapKey, out var mappedName) &&
+                conventionService.TryClaimExistingName(mappedName))
+                existingName = mappedName;
+
+            if (existingName is not null)
+            {
+                e.Name = existingName;
+                if (!e.Name.Equals($"{alConfig.ObjectPrefix}{originalName}{alConfig.ObjectSuffix}", StringComparison.Ordinal))
+                {
+                    if (!e.HasData(ALCustomDataKeys.OriginalName))
+                        e.SetData(ALCustomDataKeys.OriginalName, originalName);
+                    // Reused name (from a prior run's map entry) still differs from the file/schema
+                    // name -> keep suppressing the naming-convention warning, same as a fresh mint.
+                    e.AppendCsv(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.NamingConvention);
+                }
+                CrawlTreeOrdered(currentElement, x => ApplyEnumNameChanges(x, enumNames, maxLength, alConfig, conventionService));
+                return;
+            }
+
             var hasDuplicate = enumNames.TryGetValue(originalName, out var list) && list!.Count > 1;
 
             if (!hasDuplicate && originalName.Length <= maxLength)

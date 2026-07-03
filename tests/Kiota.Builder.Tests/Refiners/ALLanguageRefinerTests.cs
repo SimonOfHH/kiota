@@ -532,6 +532,71 @@ public class ALLanguageRefinerTests
     }
 
     [Fact]
+    public async Task PersistedObjectMapKeepsEnumNameStableAcrossAbbreviatedRunsAsync()
+    {
+        // Regression: ApplyEnumNameChanges used to skip the persisted-map name-reuse check that
+        // ApplyClassNameChanges already had, so an enum that needed abbreviation/deduplication in run
+        // 1 was silently re-abbreviated/re-deduplicated from scratch on every later run instead of
+        // reusing its mapped name. That meant the AL name could drift (e.g. after a change to
+        // ALConventionService's abbreviation table) even though the object map was configured
+        // specifically to keep names stable.
+        var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tempDir);
+        try
+        {
+            System.IO.File.WriteAllText(
+                System.IO.Path.Combine(tempDir, "al-config.json"),
+                "{\"objectMapPath\":\"obj-map.json\"}");
+
+            GenerationConfiguration CreateConfig() => new()
+            {
+                Language = GenerationLanguage.AL,
+                OutputPath = System.IO.Path.Combine(tempDir, "output"),
+                ClientClassName = "ApiClient",
+                ClientNamespaceName = "ApiSdk",
+            };
+
+            const string longName = "PostDatanormDestinationVersionQueryParameterType";
+
+            static CodeEnum CreateLongEnum(CodeNamespace root)
+            {
+                var modelsNs = root.AddNamespace("ApiSdk.models");
+                var codeEnum = modelsNs.AddEnum(new CodeEnum { Name = longName }).First();
+                codeEnum.AddOption(new CodeEnumOption { Name = "value1" });
+                return codeEnum;
+            }
+
+            // Run 1: name is too long -> gets abbreviated/dedup-processed and tagged with the
+            // naming-convention pragma.
+            var run1Root = CodeNamespace.InitRootNamespace();
+            var config1 = CreateConfig();
+            var enum1 = CreateLongEnum(run1Root);
+            await ILanguageRefiner.RefineAsync(config1, run1Root, cancellationToken: TestContext.Current.CancellationToken);
+
+            Assert.NotEqual(longName, enum1.Name);
+            enum1.CustomData.TryGetValue(ALCustomDataKeys.Pragmas, out var pragmas1);
+            Assert.NotNull(pragmas1);
+            Assert.Contains(ALCustomDataKeys.PragmaCodes.NamingConvention, (string)pragmas1!, StringComparison.Ordinal);
+
+            // Run 2: same enum again - must hit the persisted map and reuse the exact same name
+            // verbatim (not re-run SanitizeName/DeduplicateName), still carrying the pragma.
+            var run2Root = CodeNamespace.InitRootNamespace();
+            var config2 = CreateConfig();
+            var enum2 = CreateLongEnum(run2Root);
+            await ILanguageRefiner.RefineAsync(config2, run2Root, cancellationToken: TestContext.Current.CancellationToken);
+
+            Assert.Equal(enum1.Name, enum2.Name);
+            enum2.CustomData.TryGetValue(ALCustomDataKeys.Pragmas, out var pragmas2);
+            Assert.NotNull(pragmas2);
+            Assert.Contains(ALCustomDataKeys.PragmaCodes.NamingConvention, (string)pragmas2!, StringComparison.Ordinal);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
     public async Task PersistedObjectMapKeepsDistinctIdsAndNamesForSameNameSameNamespaceClassesAsync()
     {
         // Regression for: two structurally-different classes sharing both the same original name AND
