@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Linq;
 using Kiota.Builder.CodeDOM;
 
 namespace Kiota.Builder.Writers.AL;
@@ -101,12 +102,19 @@ internal static class ALMetadata
     public static bool IsCategory(this CodeElement element, ALMethodCategory category)
         => element.GetCategory() == category;
 
-    /// <summary>Appends a comma-separated token to a metadata entry (used for pragma accumulation), creating it when absent.</summary>
+    /// <summary>Appends a comma-separated token to a metadata entry (used for pragma accumulation), creating it when absent. No-op if the token is already present (exact match against existing comma-separated entries), so callers can safely append the same token more than once (e.g. once from a fallback branch of a shared registry lookup and once from an outer "did this change" check).</summary>
     public static void AppendCsv(this CodeElement element, string key, string token)
     {
         ArgumentNullException.ThrowIfNull(element);
-        element.CustomData[key] = element.CustomData.TryGetValue(key, out var existing) && !string.IsNullOrEmpty(existing)
-            ? $"{existing},{token}"
-            : token;
+        if (element.CustomData.TryGetValue(key, out var existing) && !string.IsNullOrEmpty(existing))
+        {
+            if (existing.Split(',').Contains(token, StringComparer.OrdinalIgnoreCase))
+                return;
+            element.CustomData[key] = $"{existing},{token}";
+        }
+        else
+        {
+            element.CustomData[key] = token;
+        }
     }
 }

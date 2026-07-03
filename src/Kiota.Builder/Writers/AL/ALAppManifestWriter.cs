@@ -118,11 +118,6 @@ public class ALAppManifestWriter : BaseElementWriter<CodeFunction, ALConventionS
     {
         var config = ExtractConfig(codeElement);
 
-        var clientClassName = GetConfigValue(config, "ClientClassName", "ApiClient");
-        var clientNamespace = GetConfigValue(config, "ClientNamespaceName", "ApiSdk");
-        var openApiPath = GetConfigValue(config, "OpenAPIFilePath", "openapi.yaml");
-        var language = GetConfigValue(config, "Language", "AL");
-        var outputPath = GetConfigValue(config, "OutputPath", "./output");
         var objectPrefix = GetConfigValue(config, "ObjectPrefix", string.Empty);
         var objectSuffix = GetConfigValue(config, "ObjectSuffix", string.Empty);
         var idRangeStart = GetConfigValue(config, "IDRangeStart", "50000");

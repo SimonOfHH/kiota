@@ -65,6 +65,46 @@ public class ALLanguageRefinerTests
     }
 
     [Fact]
+    public async Task AbbreviatesEnumNamesLongerThan30CharactersAsync()
+    {
+        // AL0659: enum identifiers longer than 30 characters may collide at runtime with another
+        // enum sharing the same first 30 characters. Long enum names must be abbreviated/truncated,
+        // mirroring the existing class-name-length handling in ApplyClassNameChanges.
+        var modelsNs = root.AddNamespace("ApiSdk.models");
+        var codeEnum = modelsNs.AddEnum(new CodeEnum { Name = "PostDatanormDestinationVersionQueryParameterType" }).First();
+        codeEnum.AddOption(new CodeEnumOption { Name = "value1" });
+
+        await ILanguageRefiner.RefineAsync(CreateConfiguration(), root, cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.True(codeEnum.Name.Length <= 30, $"Expected enum name <= 30 characters but was '{codeEnum.Name}' ({codeEnum.Name.Length})");
+        Assert.True(codeEnum.CustomData.TryGetValue(ALCustomDataKeys.OriginalName, out var originalName));
+        Assert.Equal("PostDatanormDestinationVersionQueryParameterType", originalName);
+        Assert.True(codeEnum.CustomData.TryGetValue(ALCustomDataKeys.Pragmas, out var pragmas));
+        Assert.Contains(ALCustomDataKeys.PragmaCodes.NamingConvention, pragmas!.Split(','));
+    }
+
+    [Fact]
+    public async Task DeduplicatesEnumNamesThatCollideOnlyAfterAbbreviationAsync()
+    {
+        // Two DIFFERENT original enum names that abbreviate down to the identical 30-character
+        // string must still end up with distinct final names - the same collision risk AL0659 warns
+        // about, just triggered by truncation instead of an exact original-name match.
+        var modelsNs = root.AddNamespace("ApiSdk.models");
+        var longNameA = "PostDatanormDestinationVersionQueryParameterTypeAlpha";
+        var longNameB = "PostDatanormDestinationVersionQueryParameterTypeBeta";
+        var enumA = modelsNs.AddEnum(new CodeEnum { Name = longNameA }).First();
+        enumA.AddOption(new CodeEnumOption { Name = "value1" });
+        var enumB = modelsNs.AddEnum(new CodeEnum { Name = longNameB }).First();
+        enumB.AddOption(new CodeEnumOption { Name = "value1" });
+
+        await ILanguageRefiner.RefineAsync(CreateConfiguration(), root, cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.True(enumA.Name.Length <= 30, $"Expected enum name <= 30 characters but was '{enumA.Name}' ({enumA.Name.Length})");
+        Assert.True(enumB.Name.Length <= 30, $"Expected enum name <= 30 characters but was '{enumB.Name}' ({enumB.Name.Length})");
+        Assert.NotEqual(enumA.Name, enumB.Name);
+    }
+
+    [Fact]
     public async Task FlattensInheritanceByRemovingBaseTypeLinkAsync()
     {
         var config = CreateConfiguration();
@@ -227,6 +267,73 @@ public class ALLanguageRefinerTests
         Assert.True(int.TryParse(modelClassId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var modelClassIdValue));
         Assert.NotEqual(requestBuilderIdValue, modelClassIdValue);
         Assert.Equal(1, System.Math.Abs(requestBuilderIdValue - modelClassIdValue));
+    }
+
+    [Fact]
+    public async Task SuppressesUnusedVariableWarningOnModelCodeunitGlobalVariablesAsync()
+    {
+        // A Model codeunit with no properties never emits the property-iteration code that
+        // references SubToken/JSONHelper, so those default global variables would otherwise trigger
+        // AA0137 (unused variable). The whole global-var block must be wrapped in the pragma.
+        var config = CreateConfiguration();
+        var modelClass = TestHelper.CreateModelClassInModelsNamespace(config, root, "widget");
+
+        await ILanguageRefiner.RefineAsync(config, root, cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.True(modelClass.CustomData.TryGetValue(ALCustomDataKeys.PragmasVariables, out var pragmas));
+        Assert.Contains(ALCustomDataKeys.PragmaCodes.UnusedVariable, pragmas!.Split(','));
+    }
+
+    [Fact]
+    public async Task OmitsQueryParamFormatterWhenAllQueryParametersAreTextOrEnumAsync()
+    {
+        // QueryParamFormatter is only referenced by the typed setter of a "primitive"-category query
+        // parameter (see CodeMethodWriter.WriteQueryParamTypedSetterBody). If every query parameter
+        // is text-typed (or enum-typed), the variable is never referenced and would trigger AA0137.
+        var config = CreateConfiguration();
+        var ns = root.AddNamespace("ApiSdk.users");
+        var requestBuilder = ns.AddClass(new CodeClass
+        {
+            Name = "usersRequestBuilder",
+            Kind = CodeClassKind.RequestBuilder,
+        }).First();
+
+        var queryParametersClass = requestBuilder.AddInnerClass(new CodeClass
+        {
+            Name = "usersRequestBuilderGetQueryParameters",
+            Kind = CodeClassKind.QueryParameters,
+        }).First();
+        queryParametersClass.AddProperty(new CodeProperty
+        {
+            Name = "filter",
+            Kind = CodePropertyKind.QueryParameter,
+            Type = new CodeType { Name = "string", IsExternal = true },
+        });
+
+        var executor = new CodeMethod
+        {
+            Name = "Get",
+            Kind = CodeMethodKind.RequestExecutor,
+            ReturnType = new CodeType { Name = "void", IsExternal = true },
+        };
+        executor.AddParameter(new CodeParameter
+        {
+            Name = "requestConfiguration",
+            Kind = CodeParameterKind.RequestConfiguration,
+            Type = new CodeType { Name = "usersRequestBuilderGetQueryParameters", TypeDefinition = queryParametersClass },
+        });
+        requestBuilder.AddMethod(executor);
+
+        await ILanguageRefiner.RefineAsync(config, root, cancellationToken: TestContext.Current.CancellationToken);
+
+        var paramCodeunit = ns.Classes.Single(c => c.GetFlag(ALCustomDataKeys.ParameterCodeunit));
+        var globalVarNames = paramCodeunit.Properties
+            .Where(p => p.HasData(ALCustomDataKeys.GlobalVariable))
+            .Select(p => p.Name)
+            .ToList();
+
+        Assert.DoesNotContain("QueryParamFormatter", globalVarNames);
+        Assert.Contains("QueryParameters", globalVarNames);
     }
 
     [Fact]

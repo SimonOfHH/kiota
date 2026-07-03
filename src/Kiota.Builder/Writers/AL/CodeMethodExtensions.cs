@@ -48,9 +48,15 @@ public static class CodeMethodExtensions
             .Where(p => p.GetFlag(ALCustomDataKeys.LocalVariable))
             .ToList();
 
-        // Codeunit types first
-        var codeunitVars = variables.Where(v => v.Type.IsCodeunitType());
-        var otherVars = variables.Where(v => !v.Type.IsCodeunitType());
+        // Codeunit types first (AA0021). Collection types render as "List of [...]" in AL, which
+        // the linter does NOT treat as an ordered "Codeunit" keyword even when the element type is
+        // a codeunit - so collections must always fall into the unsorted "rest" bucket, never be
+        // grouped with singular Codeunit variables.
+        bool IsOrderedCodeunitVar(CodeParameter v) =>
+            v.Type.CollectionKind == CodeTypeBase.CodeTypeCollectionKind.None && v.Type.IsCodeunitType();
+
+        var codeunitVars = variables.Where(IsOrderedCodeunitVar);
+        var otherVars = variables.Where(v => !IsOrderedCodeunitVar(v));
 
         return codeunitVars.Concat(otherVars);
     }
