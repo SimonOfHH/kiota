@@ -90,13 +90,11 @@ public sealed class ALAppManifestWriterTests : IDisposable
     public void WritesReadmeMarkdown()
     {
         var function = CreateConfigFunction("Readme",
-            ("Language", "AL"),
-            ("ClientClassName", "PetClient"));
+            ("ObjectPrefix", "PX"));
         writer.Write(function);
         var result = tw.ToString();
         Assert.Contains("# Auto-Generated AL Client", result);
-        Assert.Contains("| Language | `AL` |", result);
-        Assert.Contains("| Client class name | `PetClient` |", result);
+        Assert.Contains("| Object prefix | `PX` |", result);
     }
 
     [Fact]
