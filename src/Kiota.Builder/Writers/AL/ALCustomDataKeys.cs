@@ -18,6 +18,12 @@ internal static class ALCustomDataKeys
     /// look up/persist this element's id or name, so all passes agree on the same key even though
     /// the element's structure (e.g. Properties) changes over the course of the pipeline.</summary>
     public const string ObjectMapKey = "object-map-key";
+    /// <summary>The legacy (formatVersion &lt; 2, always content-disambiguated) object-map key this
+    /// element's active <see cref="ObjectMapKey"/> was adopted from via
+    /// <c>ALObjectMap.TryAdoptLegacyKey</c>, if any. Read by <c>CollectObjectMapEntries</c> to
+    /// <c>Rekey</c> the stale legacy entry to the new key at save time instead of leaving it behind
+    /// as a distinct (and then spuriously tombstoned) entry.</summary>
+    public const string ObjectMapLegacyKey = "object-map-legacy-key";
     /// <summary>Marks the generated API client codeunit.</summary>
     public const string ClientClass = "client-class";
     /// <summary>Marks an element that must not be emitted (e.g. nested/skipped classes or methods).</summary>

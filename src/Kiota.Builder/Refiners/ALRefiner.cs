@@ -63,7 +63,8 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             MarkMethodsToSkip(generatedCode);
 
             // Step 3: Name management
-            SetObjectIdsOnClassesAndEnums(generatedCode, objectIdProvider);
+            var duplicateIdentityKeys = CollectDuplicateIdentityKeys(generatedCode);
+            SetObjectIdsOnClassesAndEnums(generatedCode, objectIdProvider, objectMap, duplicateIdentityKeys);
             ModifyClassNames(generatedCode, alConfig, conventionService);
             ModifyEnumNames(generatedCode, alConfig, conventionService);
             SetDefaultObjectProperties(generatedCode, alConfig);
@@ -81,7 +82,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             AddValueWrapperConvenienceOverloads(generatedCode);
 
             // Step 6: Request executor enhancement
-            UpdateRequestExecutorMethods(generatedCode, alConfig, conventionService, objectIdProvider);
+            UpdateRequestExecutorMethods(generatedCode, alConfig, conventionService, objectIdProvider, objectMap);
 
             // Step 5.6: Multipart body convenience overloads
             AddMultipartBodyConvenienceOverloads(generatedCode);
@@ -106,16 +107,43 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 var seenKeys = new HashSet<string>(StringComparer.Ordinal);
                 CollectObjectMapEntries(generatedCode, objectMap, seenKeys);
                 objectMap.MarkTombstonesExcept(seenKeys);
+                objectMap.FormatVersion = 2;
                 objectMap.SaveToDisk(objectMapPath);
             }
         }, cancellationToken);
     }
 
     /// <summary>
-    /// Builds the stable, spec-derived object-map key for <paramref name="element"/>: its containing
+    /// Builds the stable, spec-derived object IDENTITY for <paramref name="element"/>: its containing
     /// namespace name plus its <see cref="ALCustomDataKeys.OriginalName"/> (falling back to its
-    /// current <c>Name</c> if that tag isn't set yet), plus a content disambiguator. Does not depend
-    /// on CodeDOM traversal order.
+    /// current <c>Name</c> if that tag isn't set yet). Does not depend on CodeDOM traversal order and
+    /// does NOT include any content-based disambiguator - see <see cref="BuildObjectMapKey"/> for why
+    /// a disambiguator is sometimes still required, and <see cref="CollectDuplicateIdentityKeys"/> for
+    /// how the (rare) cases that need one are detected.
+    /// </summary>
+    private static string BuildObjectIdentityKey(CodeElement element, string namespaceName)
+    {
+        var originalName = element.GetData(ALCustomDataKeys.OriginalName, element.Name);
+        return $"{namespaceName}::{originalName}";
+    }
+
+    /// <summary>
+    /// Builds the content disambiguator for <paramref name="element"/>: a sorted, comma-joined list
+    /// of its own property (CodeClass) or option (CodeEnum) names. Empty for any other element kind.
+    /// See <see cref="BuildObjectMapKey"/> remarks for when this is actually appended to a key.
+    /// </summary>
+    private static string BuildObjectContentDisambiguator(CodeElement element) => element switch
+    {
+        CodeClass cls => string.Join(',', cls.Properties.Select(static p => p.Name).OrderBy(static n => n, StringComparer.Ordinal)),
+        CodeEnum en => string.Join(',', en.Options.Select(static o => o.Name).OrderBy(static n => n, StringComparer.Ordinal)),
+        _ => string.Empty,
+    };
+
+    /// <summary>
+    /// Builds the stable, spec-derived object-map key for <paramref name="element"/>: its identity
+    /// (see <see cref="BuildObjectIdentityKey"/>) alone, UNLESS <paramref name="isDuplicateIdentity"/>
+    /// is <see langword="true"/>, in which case a content disambiguator (see
+    /// <see cref="BuildObjectContentDisambiguator"/>) is appended.
     /// <para>
     /// Namespace + original name alone is NOT always unique: <see cref="DeduplicateObjects"/> only
     /// merges classes/enums that share both the same name AND identical members, so two distinct
@@ -128,6 +156,15 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     /// element's own member names into the key keeps colliding-by-name-only objects distinct.
     /// </para>
     /// <para>
+    /// The disambiguator is applied ONLY when needed (i.e. <paramref name="isDuplicateIdentity"/> is
+    /// true - see <see cref="CollectDuplicateIdentityKeys"/>), NOT unconditionally as in the original
+    /// (formatVersion &lt; 2) implementation of this feature. An unconditional disambiguator makes the
+    /// key drift every time a schema gains/loses a property or enum option, even though the object's
+    /// identity has not changed - defeating the whole point of a persisted map for an *evolving* spec.
+    /// See <see cref="ALObjectMap.TryAdoptLegacyKey"/> for the one-time migration off the old,
+    /// always-disambiguated key format.
+    /// </para>
+    /// <para>
     /// This must be called (and its result cached via <see cref="ALCustomDataKeys.ObjectMapKey"/>)
     /// exactly once, in <see cref="SetObjectIdsOnClassesAndEnums"/>, while the element's member list
     /// still reflects the original schema shape. Every other call site must read the cached key
@@ -135,24 +172,56 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     /// mutate the member list, which would otherwise make the key drift mid-pipeline.
     /// </para>
     /// </summary>
-    private static string BuildObjectMapKey(CodeElement element, string namespaceName)
+    private static string BuildObjectMapKey(CodeElement element, string namespaceName, bool isDuplicateIdentity)
     {
-        var originalName = element.GetData(ALCustomDataKeys.OriginalName, element.Name);
-        var disambiguator = element switch
+        var identityKey = BuildObjectIdentityKey(element, namespaceName);
+        if (!isDuplicateIdentity)
+            return identityKey;
+        var disambiguator = BuildObjectContentDisambiguator(element);
+        return string.IsNullOrEmpty(disambiguator) ? identityKey : $"{identityKey}::{disambiguator}";
+    }
+
+    /// <summary>
+    /// Walks the (pre-renaming) tree and returns every identity key (see
+    /// <see cref="BuildObjectIdentityKey"/>) shared by two or more top-level (namespace-child)
+    /// classes/enums, grouping classes and enums TOGETHER - a class and an enum can legitimately
+    /// share a namespace+name (they emit as different AL object types), and both would otherwise
+    /// collide on the same undisambiguated map key. Must run before any renaming pass (Step 3) so
+    /// <c>element.Name</c> still reflects the original schema name where <see cref="ALCustomDataKeys.OriginalName"/>
+    /// has not yet been set.
+    /// </summary>
+    private static HashSet<string> CollectDuplicateIdentityKeys(CodeElement generatedCode)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        void Count(CodeElement currentElement)
         {
-            CodeClass cls => string.Join(',', cls.Properties.Select(static p => p.Name).OrderBy(static n => n, StringComparer.Ordinal)),
-            CodeEnum en => string.Join(',', en.Options.Select(static o => o.Name).OrderBy(static n => n, StringComparer.Ordinal)),
-            _ => string.Empty,
-        };
-        return string.IsNullOrEmpty(disambiguator)
-            ? $"{namespaceName}::{originalName}"
-            : $"{namespaceName}::{originalName}::{disambiguator}";
+            if (currentElement is CodeClass { Parent: CodeNamespace parentNs } c)
+            {
+                var key = BuildObjectIdentityKey(c, parentNs.Name);
+                counts[key] = counts.GetValueOrDefault(key) + 1;
+            }
+            else if (currentElement is CodeEnum { Parent: CodeNamespace parentNsEnum } e)
+            {
+                var key = BuildObjectIdentityKey(e, parentNsEnum.Name);
+                counts[key] = counts.GetValueOrDefault(key) + 1;
+            }
+            CrawlTree(currentElement, Count);
+        }
+        Count(generatedCode);
+        var duplicates = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (key, count) in counts)
+            if (count > 1)
+                duplicates.Add(key);
+        return duplicates;
     }
 
     /// <summary>
     /// Walks the fully-refined tree and upserts every top-level (namespace-child) class/enum that
     /// received an object id into <paramref name="map"/>, recording each one's key into
-    /// <paramref name="seenKeys"/> so the caller can tombstone everything else.
+    /// <paramref name="seenKeys"/> so the caller can tombstone everything else. If a legacy key was
+    /// adopted for this element (see <see cref="ALCustomDataKeys.ObjectMapLegacyKey"/>), the stale
+    /// legacy entry is re-keyed (not tombstoned) to the new key first - see
+    /// <see cref="ALObjectMap.Rekey"/> remarks and the class-level "REKEY, not tombstone" decision.
     /// </summary>
     private static void CollectObjectMapEntries(CodeElement currentElement, ALObjectMap map, HashSet<string> seenKeys)
     {
@@ -161,13 +230,17 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             // Reuse the key cached in SetObjectIdsOnClassesAndEnums - recomputing here would use the
             // post-refinement member list (properties already moved to methods), producing a different
             // disambiguator than the one used to seed/lookup ids and names earlier in the pipeline.
-            var key = c.GetData(ALCustomDataKeys.ObjectMapKey, BuildObjectMapKey(c, parentNs.Name));
+            var key = c.GetData(ALCustomDataKeys.ObjectMapKey, BuildObjectMapKey(c, parentNs.Name, false));
+            if (c.TryGetData(ALCustomDataKeys.ObjectMapLegacyKey, out var legacyKey) && legacyKey != key)
+                map.Rekey(legacyKey, key);
             seenKeys.Add(key);
             map.Upsert(key, c.GetInt(ALCustomDataKeys.ObjectId, 0), "codeunit", c.Name);
         }
         else if (currentElement is CodeEnum { Parent: CodeNamespace parentNsEnum } e && e.HasData(ALCustomDataKeys.ObjectId))
         {
-            var key = e.GetData(ALCustomDataKeys.ObjectMapKey, BuildObjectMapKey(e, parentNsEnum.Name));
+            var key = e.GetData(ALCustomDataKeys.ObjectMapKey, BuildObjectMapKey(e, parentNsEnum.Name, false));
+            if (e.TryGetData(ALCustomDataKeys.ObjectMapLegacyKey, out var legacyKey) && legacyKey != key)
+                map.Rekey(legacyKey, key);
             seenKeys.Add(key);
             map.Upsert(key, e.GetInt(ALCustomDataKeys.ObjectId, 0), "enum", e.Name);
         }
@@ -566,25 +639,45 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     /// new id so a class/enum seen in a prior generation (per a loaded object map) keeps its id. When
     /// no map was loaded, that lookup always misses and behavior is unchanged.
     /// </para>
+    /// <para>
+    /// On a miss, and only when <paramref name="objectMap"/> is not <see langword="null"/>, a one-time
+    /// legacy-key migration is attempted via <see cref="ALObjectMap.TryAdoptLegacyKey"/> (see that
+    /// method's remarks and <see cref="BuildObjectMapKey"/>'s "REKEY, not tombstone" note). On a
+    /// successful adoption, the resolved legacy key is cached via
+    /// <see cref="ALCustomDataKeys.ObjectMapLegacyKey"/> so <see cref="CollectObjectMapEntries"/> can
+    /// re-key the stale entry at save time, and the id lookup is retried against that legacy key.
+    /// </para>
     /// </summary>
-    private static void SetObjectIdsOnClassesAndEnums(CodeElement currentElement, ALObjectIdProvider objectIdProvider)
+    private static void SetObjectIdsOnClassesAndEnums(CodeElement currentElement, ALObjectIdProvider objectIdProvider, ALObjectMap? objectMap, IReadOnlySet<string> duplicateIdentityKeys)
     {
         if (currentElement is CodeClass { Parent: CodeNamespace parentNs } c)
         {
             if (!c.HasData(ALCustomDataKeys.OriginalName))
                 c.SetData(ALCustomDataKeys.OriginalName, c.Name);
-            var key = BuildObjectMapKey(c, parentNs.Name);
+            var identityKey = BuildObjectIdentityKey(c, parentNs.Name);
+            var isDuplicate = duplicateIdentityKeys.Contains(identityKey);
+            var key = BuildObjectMapKey(c, parentNs.Name, isDuplicate);
             c.SetData(ALCustomDataKeys.ObjectMapKey, key);
-            var id = objectIdProvider.TryGetExistingId(key, out var existingId) ? existingId : objectIdProvider.GetNextCodeunitId();
+            var id = objectIdProvider.TryGetExistingId(key, out var existingId)
+                ? existingId
+                : TryResolveViaLegacyKey(c, key, isDuplicate ? BuildObjectContentDisambiguator(c) : null, objectMap, objectIdProvider.TryGetExistingId, out var legacyId)
+                    ? legacyId
+                    : objectIdProvider.GetNextCodeunitId();
             c.SetData(ALCustomDataKeys.ObjectId, id.ToString(CultureInfo.InvariantCulture));
         }
         else if (currentElement is CodeEnum { Parent: CodeNamespace parentNsEnum } e)
         {
             if (!e.HasData(ALCustomDataKeys.OriginalName))
                 e.SetData(ALCustomDataKeys.OriginalName, e.Name);
-            var key = BuildObjectMapKey(e, parentNsEnum.Name);
+            var identityKey = BuildObjectIdentityKey(e, parentNsEnum.Name);
+            var isDuplicate = duplicateIdentityKeys.Contains(identityKey);
+            var key = BuildObjectMapKey(e, parentNsEnum.Name, isDuplicate);
             e.SetData(ALCustomDataKeys.ObjectMapKey, key);
-            var id = objectIdProvider.TryGetExistingId(key, out var existingId) ? existingId : objectIdProvider.GetNextEnumId();
+            var id = objectIdProvider.TryGetExistingId(key, out var existingId)
+                ? existingId
+                : TryResolveViaLegacyKey(e, key, isDuplicate ? BuildObjectContentDisambiguator(e) : null, objectMap, objectIdProvider.TryGetExistingId, out var legacyId)
+                    ? legacyId
+                    : objectIdProvider.GetNextEnumId();
             e.SetData(ALCustomDataKeys.ObjectId, id.ToString(CultureInfo.InvariantCulture));
         }
         // Ordered traversal: object-id assignment feeds a shared sequential counter
@@ -593,7 +686,29 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         // guarantee, and .NET randomizes string hashing per process, so plain CrawlTree would give
         // different ids for the exact same, unchanged spec across separate generation runs. See
         // CrawlTreeOrdered for why sorting by Name is safe here.
-        CrawlTreeOrdered(currentElement, x => SetObjectIdsOnClassesAndEnums(x, objectIdProvider));
+        CrawlTreeOrdered(currentElement, x => SetObjectIdsOnClassesAndEnums(x, objectIdProvider, objectMap, duplicateIdentityKeys));
+    }
+
+    /// <summary>
+    /// Delegate-based helper shared by the class/enum branches of <see cref="SetObjectIdsOnClassesAndEnums"/>:
+    /// attempts a one-time legacy-key migration for <paramref name="element"/> via
+    /// <see cref="ALObjectMap.TryAdoptLegacyKey"/>, and if a legacy match is found and resolves via
+    /// <paramref name="tryGetExistingId"/>, caches the legacy key on the element (see
+    /// <see cref="ALCustomDataKeys.ObjectMapLegacyKey"/>) so it can be re-keyed at save time. No-op
+    /// (returns <see langword="false"/>) when <paramref name="objectMap"/> is <see langword="null"/>.
+    /// </summary>
+    private delegate bool TryGetExistingIdDelegate(string key, out int id);
+    private static bool TryResolveViaLegacyKey(CodeElement element, string primaryKey, string? currentDisambiguator, ALObjectMap? objectMap, TryGetExistingIdDelegate tryGetExistingId, out int id)
+    {
+        id = 0;
+        if (objectMap is null)
+            return false;
+        if (!objectMap.TryAdoptLegacyKey(primaryKey, currentDisambiguator, out var legacyKey))
+            return false;
+        if (!tryGetExistingId(legacyKey, out id))
+            return false;
+        element.SetData(ALCustomDataKeys.ObjectMapLegacyKey, legacyKey);
+        return true;
     }
 
     private static void ModifyClassNames(CodeElement generatedCode, ALConfiguration alConfig, ALConventionService conventionService)
@@ -620,7 +735,11 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             // later config change doesn't retroactively rename an already-mapped object. When no map
             // was loaded, this lookup always misses and behavior is unchanged.
             // Read the key cached in SetObjectIdsOnClassesAndEnums (must match the key used to seed/
-            // persist the map - see BuildObjectMapKey remarks) rather than recomputing it here.
+            // persist the map - see BuildObjectMapKey remarks) rather than recomputing it here. Also
+            // try the legacy key (see ALCustomDataKeys.ObjectMapLegacyKey) cached alongside it when a
+            // legacy-format map entry was adopted during id assignment - the seeded convention-service
+            // dictionary is still keyed by the OLD (on-disk) key at this point, since the map itself
+            // is only re-keyed at save time.
             // TryClaimExistingName guards against a corrupt/stale map where two DIFFERENT objects were
             // (incorrectly, in an older map) saved under the same assignedName: only the first class
             // to claim it in this run may reuse it verbatim; any later one falls through to fresh
@@ -630,6 +749,10 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 conventionService.TryGetExistingName(cachedMapKey, out var mappedName) &&
                 conventionService.TryClaimExistingName(mappedName))
                 existingName = mappedName;
+            else if (c.TryGetData(ALCustomDataKeys.ObjectMapLegacyKey, out var cachedLegacyMapKey) &&
+                conventionService.TryGetExistingName(cachedLegacyMapKey, out var mappedLegacyName) &&
+                conventionService.TryClaimExistingName(mappedLegacyName))
+                existingName = mappedLegacyName;
 
             if (existingName is not null)
             {
@@ -718,12 +841,16 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             // output) would silently re-abbreviate/re-deduplicate an already-mapped enum to a
             // DIFFERENT name than what a prior generation persisted, defeating the whole point of the
             // object map for enums. TryClaimExistingName guards against a corrupt/stale map the same
-            // way it does for classes.
+            // way it does for classes. Also tries the legacy key (see ApplyClassNameChanges remarks).
             string? existingName = null;
             if (e.TryGetData(ALCustomDataKeys.ObjectMapKey, out var cachedMapKey) &&
                 conventionService.TryGetExistingName(cachedMapKey, out var mappedName) &&
                 conventionService.TryClaimExistingName(mappedName))
                 existingName = mappedName;
+            else if (e.TryGetData(ALCustomDataKeys.ObjectMapLegacyKey, out var cachedLegacyMapKey) &&
+                conventionService.TryGetExistingName(cachedLegacyMapKey, out var mappedLegacyName) &&
+                conventionService.TryClaimExistingName(mappedLegacyName))
+                existingName = mappedLegacyName;
 
             if (existingName is not null)
             {
@@ -1503,7 +1630,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         return "primitive";
     }
 
-    private static void UpdateRequestExecutorMethods(CodeElement currentElement, ALConfiguration alConfig, ALConventionService conventionService, ALObjectIdProvider objectIdProvider)
+    private static void UpdateRequestExecutorMethods(CodeElement currentElement, ALConfiguration alConfig, ALConventionService conventionService, ALObjectIdProvider objectIdProvider, ALObjectMap? objectMap)
     {
         if (currentElement is CodeMethod method && method.Kind == CodeMethodKind.RequestExecutor &&
             method.Parent is CodeClass parentClass &&
@@ -1583,19 +1710,25 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
                         // Phase 2 (persisted object map): reuse a prior id/name for this parameter
                         // codeunit if one exists. Both lookups always miss when no map was loaded.
-                        // The key is derived from the PARENT request-builder's own cached, content-
-                        // disambiguated ObjectMapKey (falling back to the plain namespace::name form
-                        // only if that parent was, for some reason, never processed by
+                        // The key is derived from the PARENT request-builder's own cached, effective
+                        // ObjectMapKey (falling back to the plain namespace::name identity only if
+                        // that parent was, for some reason, never processed by
                         // SetObjectIdsOnClassesAndEnums) rather than being rebuilt from raw
                         // namespace+name strings. Two request-builder classes can legitimately share
                         // a name in the same namespace (see BuildObjectMapKey remarks) - keying off the
-                        // parent's own disambiguated key keeps their respective parameter codeunits
-                        // from colliding too. This key is cached on the parameter codeunit itself (see
-                        // below) so CollectObjectMapEntries persists it verbatim instead of falling
-                        // back to a differently-shaped, non-matching key at save time.
+                        // parent's own (possibly content-disambiguated) key keeps their respective
+                        // parameter codeunits from colliding too.
+                        // The "::params::" marker segment is deliberate and load-bearing: it can never
+                        // be produced by a content disambiguator (a sorted, comma-joined list of plain
+                        // identifiers, which never contains "::"), so a param-codeunit key can never be
+                        // mistaken for an ordinary disambiguated class/enum key by
+                        // ALObjectMap.TryAdoptLegacyKey's "remainder has no further ::" exclusion rule.
+                        // This key is cached on the parameter codeunit itself (see below) so
+                        // CollectObjectMapEntries persists it verbatim instead of falling back to a
+                        // differently-shaped, non-matching key at save time.
                         var parentMapKey = parentClass.GetData(ALCustomDataKeys.ObjectMapKey,
                             $"{parentNs.Name}::{parentClass.GetData(ALCustomDataKeys.OriginalName, parentClass.Name)}");
-                        var mapKey = $"{parentMapKey}::{method.Name}Parameters";
+                        var mapKey = $"{parentMapKey}::params::{method.Name}Parameters";
 
                         var paramClass = new CodeClass
                         {
@@ -1614,11 +1747,39 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                         // abbreviated via SanitizeName. TryClaimExistingName also guards against a
                         // corrupt/stale map where two different parameter codeunits were (incorrectly,
                         // by this very bug in an older run) saved with the identical assignedName.
+                        //
+                        // Legacy-key migration (formatVersion < 2): a pre-existing map built its
+                        // parameter-codeunit key WITHOUT the "::params::" marker
+                        // ("{parentLegacyOrPrimaryKey}::{Method}Parameters") - this is an EXACT key
+                        // (unlike the ordinary class/enum case, no prefix scan is needed or correct
+                        // here, since we already know precisely what the legacy key must have looked
+                        // like), so adopt it via ALObjectMap.TryAdoptExactLegacyKey/Rekey exactly like
+                        // SetObjectIdsOnClassesAndEnums does for ordinary classes/enums.
+                        string? legacyMapKey = null;
+                        if (objectMap is not null)
+                        {
+                            var parentEffectiveKeyForLegacy = parentClass.TryGetData(ALCustomDataKeys.ObjectMapLegacyKey, out var parentLegacyKey)
+                                ? parentLegacyKey
+                                : parentMapKey;
+                            var candidateLegacyKey = $"{parentEffectiveKeyForLegacy}::{method.Name}Parameters";
+                            if (objectMap.TryAdoptExactLegacyKey(candidateLegacyKey))
+                            {
+                                legacyMapKey = candidateLegacyKey;
+                                paramClass.SetData(ALCustomDataKeys.ObjectMapLegacyKey, legacyMapKey);
+                            }
+                        }
+
                         string paramClassName;
                         if (conventionService.TryGetExistingName(mapKey, out var existingParamClassName) &&
                             conventionService.TryClaimExistingName(existingParamClassName))
                         {
                             paramClassName = existingParamClassName;
+                        }
+                        else if (legacyMapKey is not null &&
+                            conventionService.TryGetExistingName(legacyMapKey, out var existingLegacyParamClassName) &&
+                            conventionService.TryClaimExistingName(existingLegacyParamClassName))
+                        {
+                            paramClassName = existingLegacyParamClassName;
                         }
                         else
                         {
@@ -1641,7 +1802,11 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                         if (!paramClass.Name.Equals(paramClassNameBase, StringComparison.Ordinal))
                             paramClass.AppendCsv(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.NamingConvention);
 
-                        var paramObjectId = objectIdProvider.TryGetExistingId(mapKey, out var existingParamObjectId) ? existingParamObjectId : objectIdProvider.GetNextCodeunitId();
+                        var paramObjectId = objectIdProvider.TryGetExistingId(mapKey, out var existingParamObjectId)
+                            ? existingParamObjectId
+                            : (legacyMapKey is not null && objectIdProvider.TryGetExistingId(legacyMapKey, out var existingLegacyParamObjectId)
+                                ? existingLegacyParamObjectId
+                                : objectIdProvider.GetNextCodeunitId());
                         paramClass.SetData(ALCustomDataKeys.ObjectId, paramObjectId.ToString(CultureInfo.InvariantCulture));
                         parentNs.AddClass(paramClass);
 
@@ -1722,7 +1887,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
                 }
             }
         }
-        CrawlTree(currentElement, x => UpdateRequestExecutorMethods(x, alConfig, conventionService, objectIdProvider));
+        CrawlTree(currentElement, x => UpdateRequestExecutorMethods(x, alConfig, conventionService, objectIdProvider, objectMap));
     }
     #endregion
 

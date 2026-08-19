@@ -93,4 +93,166 @@ public class ALObjectMapTests
         Assert.Equal(50001, map.Objects["Ns::Removed"].ObjectId);
         Assert.Equal("Removed", map.Objects["Ns::Removed"].AssignedName);
     }
+
+    private static ALObjectMap CreateMapWithEntry(string key, int objectId = 1, string assignedName = "Foo", bool tombstoned = false)
+    {
+        var map = new ALObjectMap();
+        map.Upsert(key, objectId, "codeunit", assignedName);
+        if (tombstoned)
+            map.Objects[key].Tombstoned = true;
+        return map;
+    }
+
+    [Fact]
+    public void TryAdoptLegacyKeyMatchesTheSingleContentSuffixedCandidate()
+    {
+        var map = CreateMapWithEntry("ApiSdk.models::Alpha::foo", 123, "Alpha");
+
+        var adopted = map.TryAdoptLegacyKey("ApiSdk.models::Alpha", null, out var legacyKey);
+
+        Assert.True(adopted);
+        Assert.Equal("ApiSdk.models::Alpha::foo", legacyKey);
+    }
+
+    [Fact]
+    public void TryAdoptLegacyKeyIgnoresParameterCodeunitKeysWhenResolvingItsRequestBuilder()
+    {
+        // The param-codeunit's legacy key nests an additional "::{Method}Parameters" segment on top of
+        // the request-builder's own disambiguator - its remainder therefore contains a further "::"
+        // and must never match the request-builder's own primary key lookup.
+        var map = new ALObjectMap();
+        map.Upsert("ApiSdk.users::usersRequestBuilder::pathParameters,requestAdapter,urlTemplate", 1, "codeunit", "usersRequestBuilder");
+        map.Upsert("ApiSdk.users::usersRequestBuilder::pathParameters,requestAdapter,urlTemplate::GetParameters", 2, "codeunit", "usersRequestBuilderGetParams");
+
+        var adopted = map.TryAdoptLegacyKey("ApiSdk.users::usersRequestBuilder", null, out var legacyKey);
+
+        Assert.True(adopted);
+        Assert.Equal("ApiSdk.users::usersRequestBuilder::pathParameters,requestAdapter,urlTemplate", legacyKey);
+    }
+
+    [Fact]
+    public void TryAdoptLegacyKeyRequiresAnExactDisambiguatorMatchWhenSeveralCandidatesExist()
+    {
+        var map = new ALObjectMap();
+        map.Upsert("ApiSdk.models::Alpha::foo", 1, "codeunit", "Alpha");
+        map.Upsert("ApiSdk.models::Alpha::bar", 2, "codeunit", "Alpha2");
+
+        var adoptedForFoo = map.TryAdoptLegacyKey("ApiSdk.models::Alpha", "foo", out var legacyKeyForFoo);
+        Assert.True(adoptedForFoo);
+        Assert.Equal("ApiSdk.models::Alpha::foo", legacyKeyForFoo);
+
+        var map2 = new ALObjectMap();
+        map2.Upsert("ApiSdk.models::Alpha::foo", 1, "codeunit", "Alpha");
+        map2.Upsert("ApiSdk.models::Alpha::bar", 2, "codeunit", "Alpha2");
+        var adoptedForBaz = map2.TryAdoptLegacyKey("ApiSdk.models::Alpha", "baz", out _);
+        Assert.False(adoptedForBaz);
+    }
+
+    [Fact]
+    public void TryAdoptLegacyKeyAdoptsEachLegacyEntryAtMostOnce()
+    {
+        var map = CreateMapWithEntry("ApiSdk.models::Alpha::foo", 123, "Alpha");
+
+        var firstAdoption = map.TryAdoptLegacyKey("ApiSdk.models::Alpha", null, out var legacyKey1);
+        Assert.True(firstAdoption);
+        Assert.Equal("ApiSdk.models::Alpha::foo", legacyKey1);
+
+        // A second, unrelated attempt to resolve the SAME primary key must not re-adopt the entry
+        // (it was already claimed) - simulates a corrupt/stale map, or a second lookup for the same
+        // element by mistake.
+        var secondAdoption = map.TryAdoptLegacyKey("ApiSdk.models::Alpha", null, out _);
+        Assert.False(secondAdoption);
+    }
+
+    [Fact]
+    public void TryAdoptLegacyKeySkipsTombstonedEntries()
+    {
+        var map = CreateMapWithEntry("ApiSdk.models::Alpha::foo", 123, "Alpha", tombstoned: true);
+
+        var adopted = map.TryAdoptLegacyKey("ApiSdk.models::Alpha", null, out _);
+
+        Assert.False(adopted);
+    }
+
+    [Fact]
+    public void TryAdoptLegacyKeyIsDisabledOnceFormatVersionIsTwo()
+    {
+        var map = CreateMapWithEntry("ApiSdk.models::Alpha::foo", 123, "Alpha");
+        map.FormatVersion = 2;
+
+        var adopted = map.TryAdoptLegacyKey("ApiSdk.models::Alpha", null, out _);
+
+        Assert.False(adopted);
+    }
+
+    [Fact]
+    public void TryAdoptExactLegacyKeyMatchesAnExactParameterCodeunitKey()
+    {
+        var map = CreateMapWithEntry("ApiSdk.users::usersRequestBuilder::pathParameters,requestAdapter,urlTemplate::GetParameters", 60002, "usersRequestBuilderGetParams");
+
+        var adopted = map.TryAdoptExactLegacyKey("ApiSdk.users::usersRequestBuilder::pathParameters,requestAdapter,urlTemplate::GetParameters");
+
+        Assert.True(adopted);
+    }
+
+    [Fact]
+    public void TryAdoptExactLegacyKeyDoesNotMatchAPrefixOnlyCandidate()
+    {
+        // Unlike TryAdoptLegacyKey, this is an exact lookup - a key that only shares a PREFIX must
+        // not be adopted.
+        var map = CreateMapWithEntry("ApiSdk.users::usersRequestBuilder::pathParameters,requestAdapter,urlTemplate::GetParameters", 60002, "usersRequestBuilderGetParams");
+
+        var adopted = map.TryAdoptExactLegacyKey("ApiSdk.users::usersRequestBuilder::pathParameters,requestAdapter,urlTemplate");
+
+        Assert.False(adopted);
+    }
+
+    [Fact]
+    public void TryAdoptExactLegacyKeyCanOnlyBeClaimedOnce()
+    {
+        var map = CreateMapWithEntry("ApiSdk.users::usersRequestBuilder::pathParameters,requestAdapter,urlTemplate::GetParameters", 60002, "usersRequestBuilderGetParams");
+
+        Assert.True(map.TryAdoptExactLegacyKey("ApiSdk.users::usersRequestBuilder::pathParameters,requestAdapter,urlTemplate::GetParameters"));
+        Assert.False(map.TryAdoptExactLegacyKey("ApiSdk.users::usersRequestBuilder::pathParameters,requestAdapter,urlTemplate::GetParameters"));
+    }
+
+    [Fact]
+    public void TryAdoptExactLegacyKeyIsDisabledOnceFormatVersionIsTwo()
+    {
+        var map = CreateMapWithEntry("ApiSdk.users::usersRequestBuilder::pathParameters,requestAdapter,urlTemplate::GetParameters", 60002, "usersRequestBuilderGetParams");
+        map.FormatVersion = 2;
+
+        Assert.False(map.TryAdoptExactLegacyKey("ApiSdk.users::usersRequestBuilder::pathParameters,requestAdapter,urlTemplate::GetParameters"));
+    }
+
+    [Fact]
+    public void RekeyMovesTheEntryAndLeavesNoStaleKey()
+    {
+        var map = CreateMapWithEntry("ApiSdk.models::Alpha::foo", 123, "Alpha");
+
+        map.Rekey("ApiSdk.models::Alpha::foo", "ApiSdk.models::Alpha");
+
+        Assert.False(map.Objects.ContainsKey("ApiSdk.models::Alpha::foo"));
+        Assert.True(map.Objects.ContainsKey("ApiSdk.models::Alpha"));
+        var entry = map.Objects["ApiSdk.models::Alpha"];
+        Assert.Equal(123, entry.ObjectId);
+        Assert.Equal("Alpha", entry.AssignedName);
+        Assert.False(entry.Tombstoned);
+        Assert.Single(map.Objects);
+    }
+
+    [Fact]
+    public void RekeyDoesNotOverwriteAnExistingEntryAtTheNewKey()
+    {
+        var map = new ALObjectMap();
+        map.Upsert("ApiSdk.models::Alpha::foo", 1, "codeunit", "AlphaOld");
+        map.Upsert("ApiSdk.models::Alpha", 2, "codeunit", "AlphaNew");
+
+        map.Rekey("ApiSdk.models::Alpha::foo", "ApiSdk.models::Alpha");
+
+        // Both entries survive unchanged - Rekey refuses to clobber a live entry at the destination key.
+        Assert.Equal(2, map.Objects.Count);
+        Assert.Equal(1, map.Objects["ApiSdk.models::Alpha::foo"].ObjectId);
+        Assert.Equal(2, map.Objects["ApiSdk.models::Alpha"].ObjectId);
+    }
 }

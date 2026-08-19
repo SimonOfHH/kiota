@@ -928,5 +928,389 @@ public class ALLanguageRefinerTests
         paramClasses[1].CustomData.TryGetValue("object-id", out var id1);
         Assert.NotEqual(id0, id1);
     }
+
+    [Fact]
+    public async Task PersistedObjectMapKeepsIdAndNameWhenAClassGainsAPropertyAsync()
+    {
+        // Headline regression for the identity-only key format: a class gaining a property must NOT
+        // renumber or rename, and must NOT tombstone the old entry (there is no "old" entry - it's the
+        // same object, same key, just with an updated member list).
+        var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tempDir);
+        try
+        {
+            System.IO.File.WriteAllText(
+                System.IO.Path.Combine(tempDir, "al-config.json"),
+                "{\"objectMapPath\":\"obj-map.json\"}");
+            var mapPath = System.IO.Path.Combine(tempDir, "obj-map.json");
+
+            GenerationConfiguration CreateConfig() => new()
+            {
+                Language = GenerationLanguage.AL,
+                OutputPath = System.IO.Path.Combine(tempDir, "output"),
+                ClientClassName = "ApiClient",
+                ClientNamespaceName = "ApiSdk",
+            };
+
+            // Run 1: Alpha has one property.
+            var run1Root = CodeNamespace.InitRootNamespace();
+            var config1 = CreateConfig();
+            var alpha1 = TestHelper.CreateModelClassInModelsNamespace(config1, run1Root, "Alpha");
+            alpha1.AddProperty(new CodeProperty { Name = "foo", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+            await ILanguageRefiner.RefineAsync(config1, run1Root, cancellationToken: TestContext.Current.CancellationToken);
+
+            alpha1.CustomData.TryGetValue("object-id", out var alphaId1);
+            Assert.NotNull(alphaId1);
+
+            // Run 2: Alpha gained a second property - identity is unchanged, only its content grew.
+            var run2Root = CodeNamespace.InitRootNamespace();
+            var config2 = CreateConfig();
+            var alpha2 = TestHelper.CreateModelClassInModelsNamespace(config2, run2Root, "Alpha");
+            alpha2.AddProperty(new CodeProperty { Name = "foo", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+            alpha2.AddProperty(new CodeProperty { Name = "bar", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+            await ILanguageRefiner.RefineAsync(config2, run2Root, cancellationToken: TestContext.Current.CancellationToken);
+
+            alpha2.CustomData.TryGetValue("object-id", out var alphaId2);
+
+            Assert.Equal(alphaId1, alphaId2);
+            Assert.Equal(alpha1.Name, alpha2.Name);
+
+            var savedMap = ALObjectMap.LoadFromDisk(mapPath);
+            var alphaEntry = Assert.Single(savedMap.Objects.Values, e => e.AssignedName == "Alpha");
+            Assert.False(alphaEntry.Tombstoned);
+            Assert.DoesNotContain(savedMap.Objects.Values, e => e.Tombstoned);
+            Assert.Equal(2, savedMap.FormatVersion);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task PersistedObjectMapKeepsIdAndNameWhenAnEnumGainsAnOptionAsync()
+    {
+        var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tempDir);
+        try
+        {
+            System.IO.File.WriteAllText(
+                System.IO.Path.Combine(tempDir, "al-config.json"),
+                "{\"objectMapPath\":\"obj-map.json\"}");
+
+            GenerationConfiguration CreateConfig() => new()
+            {
+                Language = GenerationLanguage.AL,
+                OutputPath = System.IO.Path.Combine(tempDir, "output"),
+                ClientClassName = "ApiClient",
+                ClientNamespaceName = "ApiSdk",
+            };
+
+            static CodeEnum CreateColorEnum(CodeNamespace root, params string[] optionNames)
+            {
+                var modelsNs = root.FindNamespaceByName("ApiSdk.models") ?? root.AddNamespace("ApiSdk.models");
+                var codeEnum = modelsNs.AddEnum(new CodeEnum { Name = "Color" }).First();
+                foreach (var name in optionNames)
+                    codeEnum.AddOption(new CodeEnumOption { Name = name });
+                return codeEnum;
+            }
+
+            // Run 1: Color has one option.
+            var run1Root = CodeNamespace.InitRootNamespace();
+            var config1 = CreateConfig();
+            var color1 = CreateColorEnum(run1Root, "red");
+            await ILanguageRefiner.RefineAsync(config1, run1Root, cancellationToken: TestContext.Current.CancellationToken);
+            color1.CustomData.TryGetValue("object-id", out var colorId1);
+            Assert.NotNull(colorId1);
+
+            // Run 2: Color gained a second option.
+            var run2Root = CodeNamespace.InitRootNamespace();
+            var config2 = CreateConfig();
+            var color2 = CreateColorEnum(run2Root, "red", "blue");
+            await ILanguageRefiner.RefineAsync(config2, run2Root, cancellationToken: TestContext.Current.CancellationToken);
+            color2.CustomData.TryGetValue("object-id", out var colorId2);
+
+            Assert.Equal(colorId1, colorId2);
+            Assert.Equal(color1.Name, color2.Name);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task PersistedObjectMapKeepsIdAndNameWhenAClassLosesAPropertyAsync()
+    {
+        var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tempDir);
+        try
+        {
+            System.IO.File.WriteAllText(
+                System.IO.Path.Combine(tempDir, "al-config.json"),
+                "{\"objectMapPath\":\"obj-map.json\"}");
+
+            GenerationConfiguration CreateConfig() => new()
+            {
+                Language = GenerationLanguage.AL,
+                OutputPath = System.IO.Path.Combine(tempDir, "output"),
+                ClientClassName = "ApiClient",
+                ClientNamespaceName = "ApiSdk",
+            };
+
+            // Run 1: Alpha has two properties.
+            var run1Root = CodeNamespace.InitRootNamespace();
+            var config1 = CreateConfig();
+            var alpha1 = TestHelper.CreateModelClassInModelsNamespace(config1, run1Root, "Alpha");
+            alpha1.AddProperty(new CodeProperty { Name = "foo", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+            alpha1.AddProperty(new CodeProperty { Name = "bar", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+            await ILanguageRefiner.RefineAsync(config1, run1Root, cancellationToken: TestContext.Current.CancellationToken);
+            alpha1.CustomData.TryGetValue("object-id", out var alphaId1);
+            Assert.NotNull(alphaId1);
+
+            // Run 2: Alpha lost "bar".
+            var run2Root = CodeNamespace.InitRootNamespace();
+            var config2 = CreateConfig();
+            var alpha2 = TestHelper.CreateModelClassInModelsNamespace(config2, run2Root, "Alpha");
+            alpha2.AddProperty(new CodeProperty { Name = "foo", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+            await ILanguageRefiner.RefineAsync(config2, run2Root, cancellationToken: TestContext.Current.CancellationToken);
+            alpha2.CustomData.TryGetValue("object-id", out var alphaId2);
+
+            Assert.Equal(alphaId1, alphaId2);
+            Assert.Equal(alpha1.Name, alpha2.Name);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task PersistedObjectMapMigratesALegacyContentSuffixedKeyWithoutRenumberingAsync()
+    {
+        // A hand-written v1 (formatVersion < 2) map, built with the always-on content disambiguator,
+        // must resolve against the new identity-only key on the very first run under the new code -
+        // no renumbering, and the legacy key must be gone (rekeyed, not tombstoned) afterwards.
+        var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tempDir);
+        try
+        {
+            System.IO.File.WriteAllText(
+                System.IO.Path.Combine(tempDir, "al-config.json"),
+                "{\"objectMapPath\":\"obj-map.json\"}");
+            var mapPath = System.IO.Path.Combine(tempDir, "obj-map.json");
+            const string legacyKey = "ApiSdk.models::Alpha::foo";
+            System.IO.File.WriteAllText(mapPath,
+                "{\"objects\":{\"" + legacyKey + "\":{\"objectId\":50123,\"objectType\":\"codeunit\",\"assignedName\":\"Alpha\",\"tombstoned\":false}}}");
+
+            var config = new GenerationConfiguration
+            {
+                Language = GenerationLanguage.AL,
+                OutputPath = System.IO.Path.Combine(tempDir, "output"),
+                ClientClassName = "ApiClient",
+                ClientNamespaceName = "ApiSdk",
+            };
+            var runRoot = CodeNamespace.InitRootNamespace();
+            var alpha = TestHelper.CreateModelClassInModelsNamespace(config, runRoot, "Alpha");
+            alpha.AddProperty(new CodeProperty { Name = "foo", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+            alpha.AddProperty(new CodeProperty { Name = "bar", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+
+            await ILanguageRefiner.RefineAsync(config, runRoot, cancellationToken: TestContext.Current.CancellationToken);
+
+            alpha.CustomData.TryGetValue("object-id", out var alphaId);
+            Assert.Equal("50123", alphaId);
+            Assert.Equal("Alpha", alpha.Name);
+
+            var savedMap = ALObjectMap.LoadFromDisk(mapPath);
+            Assert.Equal(2, savedMap.FormatVersion);
+            Assert.False(savedMap.Objects.ContainsKey(legacyKey));
+            Assert.True(savedMap.Objects.ContainsKey("ApiSdk.models::Alpha"));
+            Assert.Single(savedMap.Objects);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task PersistedObjectMapMigratesALegacyQueryParameterCodeunitKeyAsync()
+    {
+        // A hand-written v1 map containing both a request-builder entry and its parameter-codeunit
+        // entry (in the OLD, "::params::"-less shape) must migrate both without renumbering.
+        var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tempDir);
+        try
+        {
+            System.IO.File.WriteAllText(
+                System.IO.Path.Combine(tempDir, "al-config.json"),
+                "{\"objectMapPath\":\"obj-map.json\"}");
+            var mapPath = System.IO.Path.Combine(tempDir, "obj-map.json");
+            const string builderLegacyKey = "ApiSdk.users::usersRequestBuilder::pathParameters,requestAdapter,urlTemplate";
+            const string paramLegacyKey = "ApiSdk.users::usersRequestBuilder::pathParameters,requestAdapter,urlTemplate::GetParameters";
+            System.IO.File.WriteAllText(mapPath,
+                "{\"objects\":{" +
+                "\"" + builderLegacyKey + "\":{\"objectId\":60001,\"objectType\":\"codeunit\",\"assignedName\":\"usersRequestBuilder\",\"tombstoned\":false}," +
+                "\"" + paramLegacyKey + "\":{\"objectId\":60002,\"objectType\":\"codeunit\",\"assignedName\":\"usersRequestBuilderGetParams\",\"tombstoned\":false}" +
+                "}}");
+
+            var config = new GenerationConfiguration
+            {
+                Language = GenerationLanguage.AL,
+                OutputPath = System.IO.Path.Combine(tempDir, "output"),
+                ClientClassName = "ApiClient",
+                ClientNamespaceName = "ApiSdk",
+            };
+            var runRoot = CodeNamespace.InitRootNamespace();
+            var ns = runRoot.AddNamespace("ApiSdk.users");
+            var requestBuilder = ns.AddClass(new CodeClass
+            {
+                Name = "usersRequestBuilder",
+                Kind = CodeClassKind.RequestBuilder,
+            }).First();
+            requestBuilder.AddProperty(new CodeProperty { Name = "pathParameters", Kind = CodePropertyKind.PathParameters, Type = new CodeType { Name = "string", IsExternal = true } });
+            requestBuilder.AddProperty(new CodeProperty { Name = "requestAdapter", Kind = CodePropertyKind.RequestAdapter, Type = new CodeType { Name = "string", IsExternal = true } });
+            requestBuilder.AddProperty(new CodeProperty { Name = "urlTemplate", Kind = CodePropertyKind.UrlTemplate, Type = new CodeType { Name = "string", IsExternal = true } });
+
+            var queryParametersClass = requestBuilder.AddInnerClass(new CodeClass
+            {
+                Name = "usersRequestBuilderGetQueryParameters",
+                Kind = CodeClassKind.QueryParameters,
+            }).First();
+            queryParametersClass.AddProperty(new CodeProperty
+            {
+                Name = "filter",
+                Kind = CodePropertyKind.QueryParameter,
+                Type = new CodeType { Name = "string", IsExternal = true },
+            });
+
+            var executor = new CodeMethod
+            {
+                Name = "Get",
+                Kind = CodeMethodKind.RequestExecutor,
+                ReturnType = new CodeType { Name = "void", IsExternal = true },
+            };
+            executor.AddParameter(new CodeParameter
+            {
+                Name = "requestConfiguration",
+                Kind = CodeParameterKind.RequestConfiguration,
+                Type = new CodeType { Name = "usersRequestBuilderGetQueryParameters", TypeDefinition = queryParametersClass },
+            });
+            requestBuilder.AddMethod(executor);
+
+            await ILanguageRefiner.RefineAsync(config, runRoot, cancellationToken: TestContext.Current.CancellationToken);
+
+            requestBuilder.CustomData.TryGetValue("object-id", out var builderId);
+            Assert.Equal("60001", builderId);
+
+            var paramClass = runRoot.FindNamespaceByName("ApiSdk.users")!.Classes
+                .Single(c => c.IsOfKind(CodeClassKind.QueryParameters) && c.Parent is CodeNamespace);
+            paramClass.CustomData.TryGetValue("object-id", out var paramId);
+            Assert.Equal("60002", paramId);
+            Assert.Equal("usersRequestBuilderGetParams", paramClass.Name);
+
+            var savedMap = ALObjectMap.LoadFromDisk(mapPath);
+            Assert.Equal(2, savedMap.FormatVersion);
+            Assert.False(savedMap.Objects.ContainsKey(builderLegacyKey));
+            Assert.False(savedMap.Objects.ContainsKey(paramLegacyKey));
+            Assert.True(savedMap.Objects.ContainsKey("ApiSdk.users::usersRequestBuilder"));
+            Assert.True(savedMap.Objects.ContainsKey("ApiSdk.users::usersRequestBuilder::params::GetParameters"));
+        }
+        finally
+        {
+            System.IO.Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task PersistedObjectMapDoesNotAdoptAnAmbiguousLegacyKeyAsync()
+    {
+        // Two legacy entries share the same identity prefix but neither's disambiguator matches the
+        // current run's content - no adoption must occur, and a fresh id/name must be minted instead
+        // of guessing.
+        var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tempDir);
+        try
+        {
+            System.IO.File.WriteAllText(
+                System.IO.Path.Combine(tempDir, "al-config.json"),
+                "{\"objectMapPath\":\"obj-map.json\"}");
+            var mapPath = System.IO.Path.Combine(tempDir, "obj-map.json");
+            System.IO.File.WriteAllText(mapPath,
+                """
+                {"objects":{
+                  "ApiSdk.models::Alpha::foo":{"objectId":70001,"objectType":"codeunit","assignedName":"Alpha","tombstoned":false},
+                  "ApiSdk.models::Alpha::bar":{"objectId":70002,"objectType":"codeunit","assignedName":"Alpha2","tombstoned":false}
+                }}
+                """);
+
+            var config = new GenerationConfiguration
+            {
+                Language = GenerationLanguage.AL,
+                OutputPath = System.IO.Path.Combine(tempDir, "output"),
+                ClientClassName = "ApiClient",
+                ClientNamespaceName = "ApiSdk",
+            };
+            var runRoot = CodeNamespace.InitRootNamespace();
+            var alpha = TestHelper.CreateModelClassInModelsNamespace(config, runRoot, "Alpha");
+            // Current content is neither "foo" nor "bar" alone - "baz" - so neither legacy candidate's
+            // disambiguator matches.
+            alpha.AddProperty(new CodeProperty { Name = "baz", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+
+            await ILanguageRefiner.RefineAsync(config, runRoot, cancellationToken: TestContext.Current.CancellationToken);
+
+            alpha.CustomData.TryGetValue("object-id", out var alphaId);
+            Assert.NotEqual("70001", alphaId);
+            Assert.NotEqual("70002", alphaId);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task PersistedObjectMapKeepsNamingConventionPragmaWhenMigratingALegacyKeyAsync()
+    {
+        // Mirrors PersistedObjectMapKeepsNamingConventionPragmaOnARenamedClassAsync, but starting from
+        // a legacy-format map entry that must be migrated: the reused name still differs from the
+        // schema name, so the AA0215-suppressing pragma must still be applied on the migration path.
+        var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tempDir);
+        try
+        {
+            System.IO.File.WriteAllText(
+                System.IO.Path.Combine(tempDir, "al-config.json"),
+                "{\"objectMapPath\":\"obj-map.json\"}");
+            var mapPath = System.IO.Path.Combine(tempDir, "obj-map.json");
+            const string legacyKey = "ApiSdk.models::ExtremelyLongModelClassNameForTesting::foo";
+            System.IO.File.WriteAllText(mapPath,
+                "{\"objects\":{\"" + legacyKey + "\":{\"objectId\":80001,\"objectType\":\"codeunit\",\"assignedName\":\"ExtremelyLongModelClassNameFor\",\"tombstoned\":false}}}");
+
+            var config = new GenerationConfiguration
+            {
+                Language = GenerationLanguage.AL,
+                OutputPath = System.IO.Path.Combine(tempDir, "output"),
+                ClientClassName = "ApiClient",
+                ClientNamespaceName = "ApiSdk",
+            };
+            var runRoot = CodeNamespace.InitRootNamespace();
+            var model = TestHelper.CreateModelClassInModelsNamespace(config, runRoot, "ExtremelyLongModelClassNameForTesting");
+            model.AddProperty(new CodeProperty { Name = "foo", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+
+            await ILanguageRefiner.RefineAsync(config, runRoot, cancellationToken: TestContext.Current.CancellationToken);
+
+            model.CustomData.TryGetValue("object-id", out var modelId);
+            Assert.Equal("80001", modelId);
+            Assert.Equal("ExtremelyLongModelClassNameFor", model.Name);
+            model.CustomData.TryGetValue(ALCustomDataKeys.Pragmas, out var pragmas);
+            Assert.NotNull(pragmas);
+            Assert.Contains(ALCustomDataKeys.PragmaCodes.NamingConvention, (string)pragmas!, StringComparison.Ordinal);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(tempDir, true);
+        }
+    }
 }
 

@@ -141,13 +141,29 @@ them on the next run whenever the *same* object is seen again.
   name *before* prefix/suffix/dedup/abbreviation were applied
   (`ALCustomDataKeys.OriginalName`). This key is derived from Kiota-core's own
   (already deterministic) schema/path naming, not from CodeDOM traversal order
-  or the final, possibly-renamed AL identifier.
+  or the final, possibly-renamed AL identifier. A schema gaining, losing, or
+  changing a property (or an enum gaining/losing an option) does **not**
+  change this key — the whole point of the map is to stay stable while a spec
+  *evolves*.
+  - A content disambiguator (a sorted, comma-joined list of the object's own
+    property/option names) is appended **only** when two distinct top-level
+    classes/enums genuinely share the same namespace+name in the same
+    generation run — `DeduplicateObjects` only merges classes/enums that are
+    both same-name AND structurally identical, so two differently-shaped
+    classes/enums with the same name legitimately coexist and need a
+    disambiguator to avoid colliding on one map key.
+  - Parameter codeunits (the synthetic top-level class generated per query-string
+    parameter set, see §5) are keyed off their owning request-builder's own
+    key plus a `"::params::{MethodName}Parameters"` marker. That marker can
+    never be produced by a content disambiguator (which is always a plain,
+    `::`-free, comma-joined list), so it can never be mistaken for one.
 - **On a hit** (key found in the map and not tombstoned): the previously
   assigned `objectId`/`assignedName` are reused verbatim — no re-minting, no
   re-sanitization.
 - **On a miss:** a new ID/name is minted as usual (existing prefix/suffix,
   sanitize/deduplicate, and ID-range logic all still apply), and a new entry
-  is added to the map.
+  is added to the map. Before minting, a **one-time legacy-key migration**
+  (see below) is attempted first.
 - **Renames are treated as a new object.** Because the key is derived from the
   *original*, pre-rename schema name, renaming a schema in the source spec
   produces a cache miss (new key) rather than reusing the old entry — this is
@@ -170,6 +186,26 @@ them on the next run whenever the *same* object is seen again.
   can. Resolving that is left to the consuming pipeline (e.g. serialize
   regeneration, or regenerate on a single branch and merge the result) rather
   than solved by the generator itself.
+- **One-time legacy-key migration (`formatVersion`):** the map carries a
+  `formatVersion` field. Versions before `2` always appended the content
+  disambiguator to every key (not just genuine name collisions), so an
+  older map's keys drift on ordinary schema evolution. The **first**
+  generation run against such a map resolves each new-format key against the
+  old, disambiguated one (an unambiguous prefix match, or an exact-disambiguator
+  match when several legacy candidates share the same prefix) and **re-keys**
+  the entry in place — the object keeps its `objectId`/`assignedName`
+  unchanged, only the map key changes; nothing is tombstoned by the
+  migration itself. Once every entry has been touched this way, the map is
+  saved with `formatVersion: 2` and the migration path is permanently
+  disabled for that file (a plain identity-key miss after that is a genuine
+  new or removed object, not a legacy-format artifact).
+  - **Verify a migration before trusting it:** since the map is checked into
+    source control, diff it after the first migrating run. A correct
+    migration shows *only* key renames with the exact same `objectId` and
+    `assignedName` on every changed line, plus the new `formatVersion` field.
+    Any line where the `objectId` or `assignedName` itself changed means the
+    migration guessed wrong (e.g. an ambiguous legacy match) and should be
+    investigated before committing.
 
 ### Open for discussion
 
