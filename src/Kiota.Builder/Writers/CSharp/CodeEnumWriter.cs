@@ -37,9 +37,9 @@ public class CodeEnumWriter : BaseElementWriter<CodeEnum, CSharpConventionServic
         if (codeElement.Flags)
             writer.WriteLine("[Flags]");
         conventions.WriteDeprecationAttribute(codeElement, writer);
-        if (!hasDescription) writer.WriteLine("#pragma warning disable CS1591");
+        if (!hasDescription) conventions.WritePragmaDisable(writer, CSharpConventionService.CS1591);
         writer.WriteLine($"{conventions.GetAccessModifier(codeElement.Access)} enum {codeElement.Name.ToFirstCharacterUpperCase()}");
-        if (!hasDescription) writer.WriteLine("#pragma warning restore CS1591");
+        if (!hasDescription) conventions.WritePragmaRestore(writer, CSharpConventionService.CS1591);
         writer.StartBlock();
         var idx = 0;
         foreach (var option in codeElement.Options)
@@ -48,11 +48,11 @@ public class CodeEnumWriter : BaseElementWriter<CodeEnum, CSharpConventionServic
 
             if (option.IsNameEscaped)
             {
-                writer.WriteLine($"[EnumMember(Value = \"{option.SerializationName.SanitizeDoubleQuote()}\")]");
+                writer.WriteLine($"[EnumMember(Value = \"{option.SerializationName.SanitizeCSharpDoubleQuote()}\")]");
             }
-            if (!hasDescription) writer.WriteLine("#pragma warning disable CS1591");
+            if (!hasDescription) conventions.WritePragmaDisable(writer, CSharpConventionService.CS1591);
             writer.WriteLine($"{option.Name.ToFirstCharacterUpperCase()}{(codeElement.Flags ? " = " + GetEnumFlag(idx) : string.Empty)},");
-            if (!hasDescription) writer.WriteLine("#pragma warning restore CS1591");
+            if (!hasDescription) conventions.WritePragmaRestore(writer, CSharpConventionService.CS1591);
             idx++;
         }
         if (codeNamespace != null)

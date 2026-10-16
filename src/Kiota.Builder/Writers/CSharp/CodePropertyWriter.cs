@@ -22,15 +22,15 @@ public class CodePropertyWriter : BaseElementWriter<CodeProperty, CSharpConventi
         if (isNullableReferenceType)
         {
             CSharpConventionService.WriteNullableOpening(writer);
-            if (!hasDescription) writer.WriteLine("#pragma warning disable CS1591");
+            if (!hasDescription) conventions.WritePragmaDisable(writer, CSharpConventionService.CS1591);
             WritePropertyInternal(codeElement, writer, $"{propertyType}?");
-            if (!hasDescription) writer.WriteLine("#pragma warning restore CS1591");
+            if (!hasDescription) conventions.WritePragmaRestore(writer, CSharpConventionService.CS1591);
             CSharpConventionService.WriteNullableMiddle(writer);
         }
 
-        if (!hasDescription) writer.WriteLine("#pragma warning disable CS1591");
+        if (!hasDescription) conventions.WritePragmaDisable(writer, CSharpConventionService.CS1591);
         WritePropertyInternal(codeElement, writer, propertyType);// Always write the normal way
-        if (!hasDescription) writer.WriteLine("#pragma warning restore CS1591");
+        if (!hasDescription) conventions.WritePragmaRestore(writer, CSharpConventionService.CS1591);
 
         if (isNullableReferenceType)
             CSharpConventionService.WriteNullableClosing(writer);
@@ -54,7 +54,7 @@ public class CodePropertyWriter : BaseElementWriter<CodeProperty, CSharpConventi
                 break;
             case CodePropertyKind.AdditionalData when backingStoreProperty != null:
             case CodePropertyKind.Custom when backingStoreProperty != null:
-                var backingStoreKey = codeElement.WireName.SanitizeDoubleQuote();
+                var backingStoreKey = codeElement.WireName.SanitizeCSharpDoubleQuote();
                 var nullableOp = !codeElement.IsOfKind(CodePropertyKind.AdditionalData) ? "?" : string.Empty;
                 var defaultPropertyValue = codeElement.IsOfKind(CodePropertyKind.AdditionalData) ? " ?? new Dictionary<string, object>()" : string.Empty;
                 writer.WriteLine($"{conventions.GetAccessModifier(codeElement.Access)} {propertyType} {codeElement.Name.ToFirstCharacterUpperCase()}");
@@ -70,7 +70,7 @@ public class CodePropertyWriter : BaseElementWriter<CodeProperty, CSharpConventi
                     writer.WriteLine($"public override {propertyType} {codeElement.Name.ToFirstCharacterUpperCase()} {{ get => base.Message; }}");
                 break;
             case CodePropertyKind.QueryParameter when codeElement.IsNameEscaped:
-                writer.WriteLine($"[QueryParameter(\"{codeElement.SerializationName.SanitizeDoubleQuote()}\")]");
+                writer.WriteLine($"[QueryParameter(\"{codeElement.SerializationName.SanitizeCSharpDoubleQuote()}\")]");
                 goto default;
             case CodePropertyKind.QueryParameters:
                 defaultValue = $" = new {propertyType}();";

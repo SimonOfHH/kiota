@@ -187,6 +187,560 @@ public sealed class CodeMethodWriterTests : IDisposable
         });
 
     }
+    [Fact]
+    public void WritesRequestBuilderWithParametersUsingTheSnakeCasedParameter()
+    {
+        setup();
+        var targetNamespace = root.AddNamespace("models.sub");
+        var target = targetNamespace.AddClass(new CodeClass
+        {
+            Name = "WithDomainNameQuoteRequestBuilder",
+            Kind = CodeClassKind.RequestBuilder,
+        }).First();
+        method.Kind = CodeMethodKind.RequestBuilderWithParameters;
+        method.ReturnType = new CodeType { Name = "WithDomainNameQuoteRequestBuilder", TypeDefinition = target };
+        method.AddParameter(new CodeParameter
+        {
+            Name = "domainName",
+            Kind = CodeParameterKind.Path,
+            Type = new CodeType { Name = "string" },
+        });
+        AddRequestProperties();
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("Models::Sub::WithDomainNameQuoteRequestBuilder.new", result);
+        Assert.Contains("domain_name", result);
+        Assert.DoesNotContain("domainName", result);
+    }
+    [Fact]
+    public void WritesRequestBuilderInTheRootNamespaceWithoutALeadingSeparator()
+    {
+        setup();
+        var target = root.AddClass(new CodeClass
+        {
+            Name = "RootRequestBuilder",
+            Kind = CodeClassKind.RequestBuilder,
+        }).First();
+        method.Kind = CodeMethodKind.RequestBuilderWithParameters;
+        method.ReturnType = new CodeType { Name = "RootRequestBuilder", TypeDefinition = target };
+        AddRequestProperties();
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("RootRequestBuilder.new", result);
+        Assert.DoesNotContain("return RootRequestBuilder.new", result);
+        Assert.DoesNotContain("::RootRequestBuilder", result);
+    }
+    [Fact]
+    public void WritesEnumDeserializerInTheRootNamespaceWithoutALeadingSeparator()
+    {
+        setup();
+        var enumDefinition = root.AddEnum(new CodeEnum { Name = "SomeEnum" }).First();
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = "enumValue",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { Name = "SomeEnum", TypeDefinition = enumDefinition },
+        });
+        method.Kind = CodeMethodKind.Deserializer;
+        method.IsAsync = false;
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("get_enum_value(SomeEnum)", result);
+        Assert.DoesNotContain("(::SomeEnum)", result);
+    }
+    [Fact]
+    public void WritesVoidRequestExecutorWithoutAFactory()
+    {
+        setup();
+        voidMethod.Kind = CodeMethodKind.RequestExecutor;
+        voidMethod.HttpMethod = HttpMethod.Get;
+        AddRequestProperties();
+        writer.Write(voidMethod);
+        var result = tw.ToString();
+        Assert.Contains("send_no_response_content_async", result);
+        Assert.DoesNotContain("send_async(request_info, nil", result);
+    }
+    [Fact]
+    public void WritesModelCollectionRequestExecutorWithTheCollectionSendMethod()
+    {
+        setup();
+        var model = root.AddClass(new CodeClass { Name = "SomeModel", Kind = CodeClassKind.Model }).First();
+        method.Kind = CodeMethodKind.RequestExecutor;
+        method.HttpMethod = HttpMethod.Get;
+        method.ReturnType = new CodeType
+        {
+            Name = "SomeModel",
+            TypeDefinition = model,
+            CollectionKind = CodeTypeBase.CodeTypeCollectionKind.Array,
+        };
+        AddRequestProperties();
+        writer.Write(method);
+        Assert.Contains("send_collection_async", tw.ToString());
+    }
+    [Fact]
+    public void WritesPrimitiveCollectionRequestExecutorWithTheCollectionSendMethod()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestExecutor;
+        method.HttpMethod = HttpMethod.Get;
+        method.ReturnType = new CodeType { Name = "string", CollectionKind = CodeTypeBase.CodeTypeCollectionKind.Array };
+        AddRequestProperties();
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("send_collection_of_primitive_async", result);
+        Assert.DoesNotContain(", string,", result);
+    }
+    [Fact]
+    public void WritesScalarRequestExecutorWithoutABareTypeName()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestExecutor;
+        method.HttpMethod = HttpMethod.Get;
+        method.ReturnType = new CodeType { Name = "string" };
+        AddRequestProperties();
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("send_primitive_async", result);
+        Assert.DoesNotContain(", string,", result);
+    }
+    [Fact]
+    public void WritesEnumCollectionDeserializerAsAnEnumCollection()
+    {
+        setup();
+        AddEnumCollectionProperty();
+        method.Kind = CodeMethodKind.Deserializer;
+        method.IsAsync = false;
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("get_collection_of_enum_values", result);
+        Assert.DoesNotContain("get_collection_of_object_values", result);
+    }
+    [Fact]
+    public void WritesEnumCollectionSerializerAsAnEnumCollection()
+    {
+        setup();
+        AddEnumCollectionProperty();
+        method.Kind = CodeMethodKind.Serializer;
+        method.IsAsync = false;
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("write_collection_of_enum_values", result);
+        Assert.DoesNotContain("write_collection_of_object_values", result);
+    }
+    [Theory]
+    [InlineData("int64", "get_number_value")]
+    [InlineData("sbyte", "get_number_value")]
+    [InlineData("byte", "get_number_value")]
+    [InlineData("double", "get_float_value")]
+    [InlineData("decimal", "get_float_value")]
+    [InlineData("binary", "get_string_value")]
+    [InlineData("base64", "get_string_value")]
+    [InlineData("base64url", "get_string_value")]
+    public void WritesKnownReadersForEveryPrimitiveFormat(string typeName, string expectedReader)
+    {
+        setup();
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = "value",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { Name = typeName },
+        });
+        method.Kind = CodeMethodKind.Deserializer;
+        method.IsAsync = false;
+        writer.Write(method);
+        Assert.Contains(expectedReader, tw.ToString());
+    }
+    [Theory]
+    [InlineData("int64", "get_collection_of_primitive_values(Integer)")]
+    [InlineData("double", "get_collection_of_primitive_values(Float)")]
+    [InlineData("binary", "get_collection_of_primitive_values(String)")]
+    [InlineData("base64", "get_collection_of_primitive_values(String)")]
+    [InlineData("base64url", "get_collection_of_primitive_values(String)")]
+    public void WritesKnownReadersForACollectionOfEveryPrimitiveFormat(string typeName, string expectedReader)
+    {
+        setup();
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = "values",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { Name = typeName, CollectionKind = CodeTypeBase.CodeTypeCollectionKind.Array },
+        });
+        method.Kind = CodeMethodKind.Deserializer;
+        method.IsAsync = false;
+        writer.Write(method);
+        Assert.Contains(expectedReader, tw.ToString());
+    }
+    [Fact]
+    public void WritesMultipartRequestBodyAsParsable()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Post;
+        method.RequestBodyContentType = "multipart/form-data";
+        AddRequestProperties();
+        method.AddParameter(new CodeParameter
+        {
+            Name = "body",
+            Kind = CodeParameterKind.RequestBody,
+            Type = new CodeType { Name = "MultipartBody", IsExternal = true },
+        });
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("set_content_from_parsable", result);
+        Assert.DoesNotContain("set_content_from_scalar", result);
+    }
+    private void AddEnumCollectionProperty()
+    {
+        var enumDefinition = new CodeEnum { Name = "SomeEnum", Parent = root.AddNamespace("models") };
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = "enumColl",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType
+            {
+                Name = "SomeEnum",
+                TypeDefinition = enumDefinition,
+                CollectionKind = CodeTypeBase.CodeTypeCollectionKind.Array,
+            },
+        });
+    }
+    [Fact]
+    public void WritesBinaryCollectionRequestExecutorWithTheCollectionSendMethod()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestExecutor;
+        method.HttpMethod = HttpMethod.Get;
+        // the refiner replaces a binary type with StringIO but keeps the collection kind
+        method.ReturnType = new CodeType
+        {
+            Name = "StringIO",
+            CollectionKind = CodeTypeBase.CodeTypeCollectionKind.Array,
+        };
+        AddRequestProperties();
+        writer.Write(method);
+        var result = tw.ToString();
+        // a whole binary body is a stream, but elements inside a payload arrive as JSON strings and
+        // the runtime has no collection reader for a stream
+        Assert.Contains("send_collection_of_primitive_async(request_info, String,", result);
+    }
+    [Fact]
+    public void WritesStreamRequestExecutorWithThePrimitiveSendMethod()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestExecutor;
+        method.HttpMethod = HttpMethod.Get;
+        // the refiner replaces a binary type with StringIO
+        method.ReturnType = new CodeType { Name = "StringIO" };
+        AddRequestProperties();
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("send_primitive_async(request_info, StringIO,", result);
+        Assert.DoesNotContain("send_async", result);
+        Assert.DoesNotContain("send_collection_of_primitive_async", result);
+    }
+    [Theory]
+    [InlineData("binary")]
+    [InlineData("base64")]
+    [InlineData("base64url")]
+    public void WritesBinaryModelPropertiesAsStringsBothWays(string typeName)
+    {
+        setup();
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = "value",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { Name = typeName },
+        });
+        method.Kind = CodeMethodKind.Serializer;
+        method.IsAsync = false;
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("write_string_value", result);
+        Assert.DoesNotContain("write_object_value(\"value\"", result);
+    }
+    [Fact]
+    public void WritesModelResponseWithItsFactoryEvenWhenNamedLikeAPrimitive()
+    {
+        setup();
+        var model = root.AddClass(new CodeClass { Name = "Date", Kind = CodeClassKind.Model }).First();
+        method.Kind = CodeMethodKind.RequestExecutor;
+        method.HttpMethod = HttpMethod.Get;
+        method.ReturnType = new CodeType { Name = "Date", TypeDefinition = model };
+        AddRequestProperties();
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("send_async", result);
+        Assert.Contains("create_from_discriminator_value", result);
+        Assert.DoesNotContain("send_primitive_async", result);
+    }
+    [Theory]
+    // kiota type, scalar reader, scalar writer, collection element constant
+    [InlineData("string", "get_string_value", "write_string_value", "String")]
+    [InlineData("boolean", "get_boolean_value", "write_boolean_value", "\"boolean\"")]
+    [InlineData("integer", "get_number_value", "write_number_value", "Integer")]
+    [InlineData("int64", "get_number_value", "write_number_value", "Integer")]
+    [InlineData("int8", "get_number_value", "write_number_value", "Integer")]
+    [InlineData("uint8", "get_number_value", "write_number_value", "Integer")]
+    [InlineData("double", "get_float_value", "write_float_value", "Float")]
+    [InlineData("decimal", "get_float_value", "write_float_value", "Float")]
+    [InlineData("guid", "get_guid_value", "write_guid_value", "UUIDTools::UUID")]
+    [InlineData("binary", "get_string_value", "write_string_value", "String")]
+    [InlineData("base64", "get_string_value", "write_string_value", "String")]
+    [InlineData("base64url", "get_string_value", "write_string_value", "String")]
+    public void ReadsAndWritesEveryPrimitiveConsistently(string kiotaType, string reader, string writerMethod, string elementConstant)
+    {
+        setup();
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = "scalar",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { Name = kiotaType },
+        });
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = "collection",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { Name = kiotaType, CollectionKind = CodeTypeBase.CodeTypeCollectionKind.Array },
+        });
+
+        method.Kind = CodeMethodKind.Deserializer;
+        method.IsAsync = false;
+        writer.Write(method);
+        var deserialized = tw.ToString();
+        Assert.Contains($"\"scalar\" => ->(n) {{ @scalar = n.{reader} }}", deserialized);
+        Assert.Contains($"get_collection_of_primitive_values({elementConstant})", deserialized);
+
+        using var serializerWriter = new StringWriter();
+        var second = LanguageWriter.GetLanguageWriter(GenerationLanguage.Ruby, DefaultPath, DefaultName);
+        second.SetTextWriter(serializerWriter);
+        var serializer = parentClass.AddMethod(new CodeMethod
+        {
+            Name = "serialize",
+            Kind = CodeMethodKind.Serializer,
+            IsAsync = false,
+            ReturnType = new CodeType { Name = "void" },
+        }).First();
+        second.Write(serializer);
+        var serialized = serializerWriter.ToString();
+        Assert.Contains($"{writerMethod}(\"scalar\", @scalar)", serialized);
+        Assert.Contains("write_collection_of_primitive_values(\"collection\", @collection)", serialized);
+    }
+    [Fact]
+    public void WritesACollectionOfBinaryRequestBodyAsAScalarNotAStream()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Put;
+        method.RequestBodyContentType = "application/json";
+        AddRequestProperties();
+        // the refiner renames a binary body to StringIO but keeps the collection kind, and
+        // set_stream_content takes one stream rather than a list of them
+        method.AddParameter(new CodeParameter
+        {
+            Name = "body",
+            Kind = CodeParameterKind.RequestBody,
+            Type = new CodeType
+            {
+                Name = "StringIO",
+                CollectionKind = CodeTypeBase.CodeTypeCollectionKind.Array,
+            },
+        });
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.DoesNotContain("set_stream_content", result);
+        Assert.Contains("set_content_from_scalar(@request_adapter, \"application/json\", body)", result);
+    }
+    [Fact]
+    public void WritesStreamContentWithTheSnakeCasedContentTypeParameter()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Put;
+        AddRequestProperties();
+        method.AddParameter(new CodeParameter
+        {
+            Name = "body",
+            Kind = CodeParameterKind.RequestBody,
+            Type = new CodeType { Name = "StringIO" },
+        });
+        method.AddParameter(new CodeParameter
+        {
+            Name = "contentType",
+            Kind = CodeParameterKind.RequestBodyContentType,
+            Type = new CodeType { Name = "string" },
+        });
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("set_stream_content(body, content_type)", result);
+        Assert.DoesNotContain("contentType", result);
+    }
+    [Fact]
+    public void WritesAParameterDefaultValueWithoutSnakeCasingIt()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestExecutor;
+        method.HttpMethod = HttpMethod.Get;
+        AddRequestProperties();
+        method.AddParameter(new CodeParameter
+        {
+            Name = "someParam",
+            Kind = CodeParameterKind.Custom,
+            Optional = true,
+            DefaultValue = "\"SomeDefaultValue\"",
+            Type = new CodeType { Name = "string" },
+        });
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("some_param = \"SomeDefaultValue\"", result);
+    }
+    [Theory]
+    [InlineData("double")]
+    [InlineData("int64")]
+    [InlineData("binary")]
+    public void WritesAModelNamedLikeAPrimitiveThroughItsFactory(string modelName)
+    {
+        setup();
+        var model = root.AddClass(new CodeClass { Name = modelName, Kind = CodeClassKind.Model }).First();
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = "value",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { Name = modelName, TypeDefinition = model },
+        });
+        method.Kind = CodeMethodKind.Deserializer;
+        method.IsAsync = false;
+        writer.Write(method);
+        var deserialized = tw.ToString();
+        Assert.Contains("get_object_value", deserialized);
+        Assert.DoesNotContain("get_float_value", deserialized);
+        Assert.DoesNotContain("get_number_value", deserialized);
+        Assert.DoesNotContain("get_string_value", deserialized);
+
+        using var serializerWriter = new StringWriter();
+        var second = LanguageWriter.GetLanguageWriter(GenerationLanguage.Ruby, DefaultPath, DefaultName);
+        second.SetTextWriter(serializerWriter);
+        var serializer = parentClass.AddMethod(new CodeMethod
+        {
+            Name = "serialize",
+            Kind = CodeMethodKind.Serializer,
+            IsAsync = false,
+            ReturnType = new CodeType { Name = "void" },
+        }).First();
+        second.Write(serializer);
+        var serialized = serializerWriter.ToString();
+        Assert.Contains("write_object_value", serialized);
+        Assert.DoesNotContain("write_float_value", serialized);
+        Assert.DoesNotContain("write_number_value", serialized);
+    }
+    [Fact]
+    public void EscapesTheRequestBodyContentTypeLiteral()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Post;
+        method.RequestBodyContentType = "application/json'; system('rm -rf /') #\n\r\t\\\"$x";
+        AddRequestProperties();
+        method.AddParameter(new CodeParameter
+        {
+            Name = "body",
+            Kind = CodeParameterKind.RequestBody,
+            Type = new CodeType { Name = "string" },
+        });
+        writer.Write(method);
+        var result = tw.ToString();
+        // the single quoted literal must not be closed early, and every control character and
+        // backslash has to arrive escaped
+        Assert.DoesNotContain("'application/json'; system", result);
+        Assert.Contains("\"application/json'; system('rm -rf /') \\#", result);
+        var emitted = result.Split('\n').First(static x => x.Contains("set_content_from", StringComparison.Ordinal));
+        Assert.Contains("\\n", emitted, StringComparison.Ordinal);
+        Assert.Contains("\\r", emitted, StringComparison.Ordinal);
+        Assert.Contains("\\t", emitted, StringComparison.Ordinal);
+        Assert.Contains("\\\\", emitted, StringComparison.Ordinal);
+        Assert.Contains("\\\"", emitted, StringComparison.Ordinal);
+    }
+    [Fact]
+    public void WritesEnumRequestExecutorWithTheEnumConstant()
+    {
+        setup();
+        var enumDefinition = root.AddEnum(new CodeEnum { Name = "SomeEnum" }).First();
+        method.Kind = CodeMethodKind.RequestExecutor;
+        method.HttpMethod = HttpMethod.Get;
+        method.ReturnType = new CodeType { Name = "SomeEnum", TypeDefinition = enumDefinition };
+        AddRequestProperties();
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("send_primitive_async(request_info, SomeEnum,", result);
+        Assert.DoesNotContain("create_from_discriminator_value", result);
+    }
+    [Fact]
+    public void WritesEnumCollectionRequestExecutorWithTheEnumConstant()
+    {
+        setup();
+        var enumDefinition = root.AddEnum(new CodeEnum { Name = "SomeEnum" }).First();
+        method.Kind = CodeMethodKind.RequestExecutor;
+        method.HttpMethod = HttpMethod.Get;
+        method.ReturnType = new CodeType
+        {
+            Name = "SomeEnum",
+            TypeDefinition = enumDefinition,
+            CollectionKind = CodeTypeBase.CodeTypeCollectionKind.Array,
+        };
+        AddRequestProperties();
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("send_collection_of_primitive_async(request_info, SomeEnum,", result);
+        Assert.DoesNotContain("create_from_discriminator_value", result);
+    }
+    [Theory]
+    [InlineData("int64")]
+    [InlineData("double")]
+    [InlineData("string")]
+    [InlineData("binary")]
+    public void DocumentsAModelNamedLikeAPrimitiveByItsOwnName(string modelName)
+    {
+        setup();
+        var model = root.AddClass(new CodeClass { Name = modelName, Kind = CodeClassKind.Model }).First();
+        Assert.Equal(modelName.ToFirstCharacterUpperCase(),
+            new RubyConventionService().TranslateType(new CodeType { Name = modelName, TypeDefinition = model }));
+    }
+    [Theory]
+    [InlineData("void")]
+    [InlineData("nil")]
+    public void WritesAModelNamedLikeVoidThroughItsFactory(string modelName)
+    {
+        setup();
+        var model = root.AddClass(new CodeClass { Name = modelName, Kind = CodeClassKind.Model }).First();
+        method.Kind = CodeMethodKind.RequestExecutor;
+        method.HttpMethod = HttpMethod.Get;
+        method.ReturnType = new CodeType { Name = modelName, TypeDefinition = model };
+        AddRequestProperties();
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("send_async", result);
+        Assert.Contains("create_from_discriminator_value", result);
+        Assert.DoesNotContain("send_no_response_content_async", result);
+    }
+    [Fact]
+    public void WritesAModelNamedLikeTheStreamTypeAsParsable()
+    {
+        setup();
+        var model = root.AddClass(new CodeClass { Name = "StringIO", Kind = CodeClassKind.Model }).First();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Post;
+        method.RequestBodyContentType = "application/json";
+        AddRequestProperties();
+        method.AddParameter(new CodeParameter
+        {
+            Name = "body",
+            Kind = CodeParameterKind.RequestBody,
+            Type = new CodeType { Name = "StringIO", TypeDefinition = model },
+        });
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("set_content_from_parsable", result);
+        Assert.DoesNotContain("set_stream_content", result);
+    }
     private void AddRequestBodyParameters()
     {
         var stringType = new CodeType
@@ -276,10 +830,10 @@ public sealed class CodeMethodWriterTests : IDisposable
         writer.Write(method);
         var result = tw.ToString();
         Assert.Contains("request_info", result);
-        Assert.Contains("error_mapping = Hash.new", result);
-        Assert.Contains("error_mapping[\"4XX\"] = lambda {|pn| Error4XX.create_from_discriminator_value(pn) }", result);
-        Assert.Contains("error_mapping[\"5XX\"] = lambda {|pn| Error5XX.create_from_discriminator_value(pn) }", result);
-        Assert.Contains("error_mapping[\"401\"] = lambda {|pn| Error401.create_from_discriminator_value(pn) }", result);
+        Assert.Contains("error_mapping = {}", result);
+        Assert.Contains("error_mapping[\"4XX\"] = ->(pn) { Error4XX.create_from_discriminator_value(pn) }", result);
+        Assert.Contains("error_mapping[\"5XX\"] = ->(pn) { Error5XX.create_from_discriminator_value(pn) }", result);
+        Assert.Contains("error_mapping[\"401\"] = ->(pn) { Error401.create_from_discriminator_value(pn) }", result);
         Assert.Contains("send_async", result);
         AssertExtensions.CurlyBracesAreClosed(result);
     }
@@ -293,9 +847,28 @@ public sealed class CodeMethodWriterTests : IDisposable
         writer.Write(voidMethod);
         var result = tw.ToString();
         Assert.Contains("request_info", result);
-        Assert.Contains("send_async", result);
-        Assert.Contains("nil", result);
+        Assert.Contains("send_no_response_content_async", result);
         AssertExtensions.CurlyBracesAreClosed(result);
+    }
+    [Fact]
+    public void WritesRequestGeneratorBodyForAModelBody()
+    {
+        setup();
+        var model = root.AddClass(new CodeClass { Name = "SomeModel", Kind = CodeClassKind.Model }).First();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Post;
+        method.RequestBodyContentType = "application/json";
+        AddRequestProperties();
+        method.AddParameter(new CodeParameter
+        {
+            Name = "body",
+            Kind = CodeParameterKind.RequestBody,
+            Type = new CodeType { Name = "SomeModel", TypeDefinition = model },
+        });
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("set_content_from_parsable", result);
+        Assert.DoesNotContain("set_content_from_scalar", result);
     }
     [Fact]
     public void WritesModelFactoryBody()
@@ -356,7 +929,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         Assert.Contains("case mapping_value", result);
         Assert.Contains("when \"ns.childmodel\"", result);
         Assert.Contains("return ChildModel.new", result);
-        Assert.Contains("return ParentModel.new", result);
+        Assert.Contains(result.Split('\n'), static x => x.Trim() == "ParentModel.new");
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
@@ -511,7 +1084,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         Assert.DoesNotContain("mapping_value = mapping_value_node.get_string_value", result);
         Assert.DoesNotContain("case mapping_value", result);
         Assert.DoesNotContain("when \"ns.childmodel\"", result);
-        Assert.Contains("return ParentModel.new", result);
+        Assert.Contains(result.Split('\n'), static x => x.Trim() == "ParentModel.new");
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
@@ -557,7 +1130,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         Assert.DoesNotContain("mapping_value = mapping_value_node.get_string_value", result);
         Assert.DoesNotContain("case mapping_value", result);
         Assert.DoesNotContain("when \"ns.childmodel\"", result);
-        Assert.Contains("return ParentModel.new", result);
+        Assert.Contains(result.Split('\n'), static x => x.Trim() == "ParentModel.new");
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
@@ -571,16 +1144,17 @@ public sealed class CodeMethodWriterTests : IDisposable
         AddRequestBodyParameters();
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains("request_info = MicrosoftKiotaAbstractions::RequestInformation.new()", result);
+        Assert.Contains("request_info = MicrosoftKiotaAbstractions::RequestInformation.new", result);
+        Assert.DoesNotContain("RequestInformation.new()", result);
         Assert.Contains("request_info.path_parameters", result);
         Assert.Contains("request_info.url_template", result);
         Assert.Contains("http_method = :GET", result);
-        Assert.Contains("request_info.headers.try_add('Accept', 'application/json')", result);
+        Assert.Contains("request_info.headers.try_add(\"Accept\", \"application/json\")", result);
         Assert.Contains("set_query_string_parameters_from_raw_object", result);
         Assert.Contains("add_headers_from_raw_object", result);
         Assert.Contains("add_request_options", result);
-        Assert.Contains("set_content_from_parsable", result);
-        Assert.Contains("return request_info", result);
+        Assert.Contains("set_content_from_scalar", result);
+        Assert.Contains(result.Split('\n'), static x => x.Trim() == "request_info");
     }
     [Fact]
     public void WritesRequestGeneratorBodyWhenUrlTemplateIsOverrode()
@@ -594,7 +1168,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         method.UrlTemplateOverride = "{baseurl+}/foo/bar";
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains("request_info.url_template = '{baseurl+}/foo/bar'", result);
+        Assert.Contains("request_info.url_template = \"{baseurl+}/foo/bar\"", result);
     }
     [Fact]
     public void EscapesRequestGeneratorBodyWhenUrlTemplateIsOverrode()
@@ -608,7 +1182,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         method.UrlTemplateOverride = "{baseurl+}/foo/'bar\nbaz";
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains("request_info.url_template = '{baseurl+}/foo/\\'bar\\nbaz'", result);
+        Assert.Contains("request_info.url_template = \"{baseurl+}/foo/'bar\\nbaz\"", result);
     }
     [Fact]
     public void WritesRequestGeneratorBodyKnownRequestBodyType()
@@ -669,7 +1243,8 @@ public sealed class CodeMethodWriterTests : IDisposable
         AddSerializationProperties();
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains("super.merge({", result);
+        Assert.Contains("super.merge(", result);
+        Assert.DoesNotContain("lambda", result);
         Assert.DoesNotContain("definedInParent", result, StringComparison.OrdinalIgnoreCase);
         AssertExtensions.CurlyBracesAreClosed(result);
     }
@@ -731,7 +1306,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         method.Kind = CodeMethodKind.Deserializer;
         writer.Write(method);
         var deserializerResult = tw.ToString();
-        Assert.Contains("\"line1\\\"\\#\\nbreak\" => lambda", deserializerResult);
+        Assert.Contains("\"line1\\\"\\#\\nbreak\" => ->(n)", deserializerResult);
     }
     [Fact]
     public void WritesTranslatedTypesDeSerializerBody()
@@ -799,7 +1374,8 @@ public sealed class CodeMethodWriterTests : IDisposable
         Assert.Contains("get_collection_of_primitive_values(String)", result);
         Assert.Contains("get_collection_of_primitive_values(\"boolean\")", result);
         Assert.Contains("get_collection_of_primitive_values(Integer)", result);
-        Assert.Contains("get_collection_of_primitive_values(Time)", result);
+        Assert.Contains("get_collection_of_primitive_values(Date)", result);
+        Assert.Contains("get_collection_of_primitive_values(DateTime)", result);
         Assert.Contains("get_collection_of_primitive_values(UUIDTools::UUID)", result);
         Assert.Contains("get_collection_of_primitive_values(NewObjectName)", result);
     }
@@ -826,6 +1402,24 @@ public sealed class CodeMethodWriterTests : IDisposable
         var result = tw.ToString();
         Assert.DoesNotContain("@return a CompletableFuture of", result);
         AssertExtensions.CurlyBracesAreClosed(result);
+    }
+    [Fact]
+    public void WritesYardDocumentationWithoutTrailingWhitespace()
+    {
+        setup();
+        method.Documentation.DescriptionTemplate = $"{MethodDescription}  ";
+        method.AddParameter(new CodeParameter
+        {
+            Documentation = new() { DescriptionTemplate = ParamDescription },
+            Name = ParamName,
+            Type = new CodeType { Name = "string" },
+        });
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.DoesNotContain("##", result, StringComparison.Ordinal);
+        Assert.Contains($"# {MethodDescription}{Environment.NewLine}", result, StringComparison.Ordinal);
+        Assert.Contains($"# @param {ParamName.ToSnakeCase()} {ParamDescription}", result, StringComparison.Ordinal);
+        Assert.DoesNotContain(result.Split(Environment.NewLine), static x => x.Length != x.TrimEnd().Length);
     }
     [Fact]
     public void Defensive()
@@ -895,7 +1489,8 @@ public sealed class CodeMethodWriterTests : IDisposable
         Assert.Contains("request_adapter", result);
         Assert.Contains("path_parameters", result);
         Assert.Contains("= id", result);
-        Assert.Contains("return Somecustomtype.new", result);
+        Assert.Contains("Somecustomtype.new", result);
+        Assert.DoesNotContain("return Somecustomtype.new", result);
     }
     [Fact]
     public void EscapesIndexerPathParameterName()
@@ -944,8 +1539,10 @@ public sealed class CodeMethodWriterTests : IDisposable
         var result = tw.ToString();
         Assert.Contains("request_adapter", result);
         Assert.Contains("path_parameters", result);
-        Assert.Contains("pathParam", result);
-        Assert.Contains("return Somecustomtype.new", result);
+        Assert.Contains("path_param", result);
+        Assert.DoesNotContain("pathParam", result);
+        Assert.Contains("Somecustomtype.new", result);
+        Assert.DoesNotContain("return Somecustomtype.new", result);
     }
     [Fact]
     public void WritesSetterToField()
@@ -1042,7 +1639,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         });
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains("def initialize(display_name=\"\\#{`id`}\")", result);
+        Assert.Contains("def initialize(display_name = \"\\#{`id`}\")", result);
     }
     [Fact]
     public void WritesConstructorWithDefaultValuesThatRequireParsing()
@@ -1150,7 +1747,8 @@ public sealed class CodeMethodWriterTests : IDisposable
         AddRequestProperties();
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains($"return {parentClass.Name.ToFirstCharacterUpperCase()}.new", result);
+        Assert.Contains($"{parentClass.Name.ToFirstCharacterUpperCase()}.new", result);
+        Assert.DoesNotContain("return ", result);
     }
     [Fact]
     public void WritesConstructorWithEnumValue()
@@ -1218,7 +1816,8 @@ public sealed class CodeMethodWriterTests : IDisposable
 
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains("initialize()", result);
+        Assert.Contains("def initialize", result);
+        Assert.DoesNotContain("initialize()", result);
         Assert.DoesNotContain(defaultValue, result);//ensure the composed type is not referenced
     }
     [Fact]
@@ -1256,8 +1855,8 @@ public sealed class CodeMethodWriterTests : IDisposable
         writer.Write(method);
         var result = tw.ToString();
         Assert.Contains(coreProp.Name, result);
-        Assert.Contains($"['baseurl'] = @core.get_base_url", result);
-        Assert.Contains($"set_base_url('{method.BaseUrl}')", result);
+        Assert.Contains($"[\"baseurl\"] = @core.get_base_url", result);
+        Assert.Contains($"set_base_url(\"{method.BaseUrl}\")", result);
     }
     [Fact]
     public void EscapesApiConstructorBaseUrl()
@@ -1293,7 +1892,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         });
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains("set_base_url('https://graph.microsoft.com/v1.0/\\'evil\\npath')", result);
+        Assert.Contains("set_base_url(\"https://graph.microsoft.com/v1.0/'evil\\npath\")", result);
     }
     [Fact]
     public void WritesApiConstructorWithBackingStore()
@@ -1383,7 +1982,8 @@ public sealed class CodeMethodWriterTests : IDisposable
         Assert.Contains("original_name", result);
         Assert.Contains("case", result);
         Assert.Contains("when \"select\"", result);
-        Assert.Contains("return \"%24select\"", result);
+        Assert.Contains("\"%24select\"", result);
+        Assert.DoesNotContain("return \"%24select\"", result);
         Assert.Contains("else", result);
     }
     [Fact]
@@ -1450,7 +2050,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         writer.Write(method);
         var result = tw.ToString();
         Assert.Contains("when \"filter\"", result);
-        Assert.Contains("return \"li\\\"ne\\#\\nbreak\"", result);
+        Assert.Contains("\"li\\\"ne\\#\\nbreak\"", result);
     }
     [Fact]
     public void DoesntWriteReadOnlyPropertiesInSerializerBody()
@@ -1483,9 +2083,21 @@ public sealed class CodeMethodWriterTests : IDisposable
         method.AcceptedResponseTypes.Add("application/json; profile='CamelCase'");
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains("request_info.headers.try_add('Accept', 'application/json; profile=\\'CamelCase\\'')", result);
+        Assert.Contains("request_info.headers.try_add(\"Accept\", \"application/json; profile='CamelCase'\")", result);
     }
 
+    [Fact]
+    public void WritesLiteralsThatCannotInterpolate()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Get;
+        AddRequestProperties();
+        method.AcceptedResponseTypes.Add("text/#{`id`}");
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("try_add(\"Accept\", \"text/\\#{`id`}\")", result);
+    }
     [Fact]
     public void WritesRequestGeneratorContentTypeQuotes()
     {
@@ -1497,7 +2109,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         method.RequestBodyContentType = "application/json; profile='CamelCase'";
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains("'application/json; profile=\\'CamelCase\\''", result);
+        Assert.Contains("\"application/json; profile='CamelCase'\"", result);
     }
     private void AddUnionTypeWrapper()
     {
@@ -1595,10 +2207,33 @@ public sealed class CodeMethodWriterTests : IDisposable
         writer.Write(method);
         var result = tw.ToString();
         Assert.Contains("result = ParentClass.new", result);
-        Assert.Contains("mapping_value_node", result);
+        Assert.Contains("mapping_value = parse_node.get_child_node(\"@odata.type\")&.get_string_value", result);
+        Assert.Contains("elsif !val_string_value.nil?", result);
+        // an unknown discriminator value falls back to every object member
+        Assert.Contains(result.Split('\n'), static x => x.Trim() == "else");
         Assert.Contains("ComplexType1.new", result);
-        Assert.Contains("return result", result);
+        Assert.Contains(result.Split('\n'), static x => x.Trim() == "result");
         Assert.DoesNotContain("ComplexType2.new", result);
+        AssertBalancedBlocks(result);
+    }
+    [Fact]
+    public void WritesUnionFactoryBodyCreatingEveryObjectMemberWithoutADiscriminator()
+    {
+        setup();
+        var pending = root.AddClass(new CodeClass { Name = "PendingGrant", Kind = CodeClassKind.Model }).First();
+        var approved = root.AddClass(new CodeClass { Name = "ApprovedGrant", Kind = CodeClassKind.Model }).First();
+        parentClass.OriginalComposedType = new CodeUnionType { Name = "UnionType" };
+        parentClass.AddProperty(new CodeProperty { Name = "pendingGrant", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "PendingGrant", TypeDefinition = pending } },
+                                new CodeProperty { Name = "approvedGrant", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "ApprovedGrant", TypeDefinition = approved } });
+        method.Kind = CodeMethodKind.Factory;
+        method.IsStatic = true;
+        method.ReturnType = new CodeType { Name = "ParentClass", TypeDefinition = parentClass };
+        method.AddParameter(new CodeParameter { Kind = CodeParameterKind.ParseNode, Name = "parseNode", Type = new CodeType { Name = "ParseNode" } });
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("result.pending_grant = PendingGrant.new", result);
+        Assert.Contains("result.approved_grant = ApprovedGrant.new", result);
+        Assert.DoesNotContain("if ", result.Replace("if parse_node.nil?", string.Empty, StringComparison.Ordinal));
         AssertBalancedBlocks(result);
     }
     [Fact]
@@ -1614,10 +2249,48 @@ public sealed class CodeMethodWriterTests : IDisposable
         method.AddParameter(new CodeParameter { Kind = CodeParameterKind.ParseNode, Name = "parseNode", Type = new CodeType { Name = "ParseNode" } });
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains("result = ParentClass.new", result);
-        Assert.DoesNotContain("mapping_value_node", result);
+        Assert.DoesNotContain("mapping_value", result);
         Assert.DoesNotContain("unless", result);
-        Assert.Contains("return result", result);
+        Assert.Contains("result.complex_type1_value = ComplexType1.new", result);
+    }
+    [Fact]
+    public void WritesUnionFactoryBodySkipsDiscriminatorWithoutAPropertyName()
+    {
+        setup();
+        var complexType1 = root.AddClass(new CodeClass { Name = "ComplexType1", Kind = CodeClassKind.Model }).First();
+        parentClass.OriginalComposedType = new CodeUnionType { Name = "UnionType" };
+        parentClass.DiscriminatorInformation.DiscriminatorPropertyName = string.Empty;
+        parentClass.DiscriminatorInformation.AddDiscriminatorMapping("ComplexType1", new CodeType { Name = "ComplexType1", TypeDefinition = complexType1 });
+        parentClass.AddProperty(new CodeProperty { Name = "complexType1Value", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "ComplexType1", TypeDefinition = complexType1 } });
+        parentClass.AddProperty(new CodeProperty { Name = "stringValue", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string" } });
+        method.Kind = CodeMethodKind.Factory;
+        method.ReturnType = new CodeType { Name = "ParentClass", TypeDefinition = parentClass };
+        method.AddParameter(new CodeParameter { Kind = CodeParameterKind.ParseNode, Name = "parseNode", Type = new CodeType { Name = "ParseNode" } });
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.DoesNotContain("get_child_node(\"\")", result);
+        Assert.DoesNotContain("mapping_value_node", result);
+        Assert.Contains("result.string_value = val", result);
+        Assert.Contains(result.Split('\n'), static x => x.Trim() == "result");
+        AssertBalancedBlocks(result);
+    }
+    [Fact]
+    public void WritesUnionFactoryBodyQualifyingMembersFromAnotherNamespace()
+    {
+        setup();
+        var modelsNS = root.AddNamespace("models");
+        var complexType1 = modelsNS.AddClass(new CodeClass { Name = "ComplexType1", Kind = CodeClassKind.Model }).First();
+        parentClass.OriginalComposedType = new CodeUnionType { Name = "UnionType" };
+        parentClass.DiscriminatorInformation.DiscriminatorPropertyName = "@odata.type";
+        parentClass.DiscriminatorInformation.AddDiscriminatorMapping("#kiota.complexType1", new CodeType { Name = "ComplexType1", TypeDefinition = complexType1 });
+        parentClass.AddProperty(new CodeProperty { Name = "complexType1Value", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "ComplexType1", TypeDefinition = complexType1 } });
+        method.Kind = CodeMethodKind.Factory;
+        method.ReturnType = new CodeType { Name = "ParentClass", TypeDefinition = parentClass };
+        method.AddParameter(new CodeParameter { Kind = CodeParameterKind.ParseNode, Name = "parseNode", Type = new CodeType { Name = "ParseNode" } });
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("result.complex_type1_value = Models::ComplexType1.new", result);
+        AssertBalancedBlocks(result);
     }
     [Fact]
     public void WritesIntersectionFactoryBody()
@@ -1633,7 +2306,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         Assert.Contains("ComplexType1.new", result);
         Assert.Contains("ComplexType3.new", result);
         Assert.Contains("else", result);
-        Assert.Contains("return result", result);
+        Assert.Contains(result.Split('\n'), static x => x.Trim() == "result");
     }
     [Fact]
     public void WritesIntersectionFactoryBodyOnlyComplex()
@@ -1667,6 +2340,24 @@ public sealed class CodeMethodWriterTests : IDisposable
         Assert.Contains("write_object_value", result);
         Assert.Contains("write_string_value", result);
         Assert.Contains("elsif", result);
+        AssertBalancedBlocks(result);
+    }
+    [Fact]
+    public void WritesUnionSerializerBodyWritingEveryObjectMember()
+    {
+        setup();
+        var complexType1 = root.AddClass(new CodeClass { Name = "ComplexType1", Kind = CodeClassKind.Model }).First();
+        var complexType3 = root.AddClass(new CodeClass { Name = "ComplexType3", Kind = CodeClassKind.Model }).First();
+        parentClass.OriginalComposedType = new CodeUnionType { Name = "UnionType" };
+        parentClass.AddProperty(new CodeProperty { Name = "complexType1Value", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "ComplexType1", TypeDefinition = complexType1 } });
+        parentClass.AddProperty(new CodeProperty { Name = "complexType3Value", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "ComplexType3", TypeDefinition = complexType3 } });
+        method.Kind = CodeMethodKind.Serializer;
+        method.AddParameter(new CodeParameter { Kind = CodeParameterKind.Serializer, Name = "writer", Type = new CodeType { Name = "SerializationWriter" } });
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("composed_values = [@complex_type1_value, @complex_type3_value].compact", result);
+        Assert.Contains("writer.write_object_value(nil, *composed_values) unless composed_values.empty?", result);
+        Assert.DoesNotContain("elsif", result);
         AssertBalancedBlocks(result);
     }
     [Fact]
@@ -1786,9 +2477,10 @@ public sealed class CodeMethodWriterTests : IDisposable
         writer.Write(method);
         var result = tw.ToString();
         Assert.DoesNotContain("super", result);
-        Assert.Contains("@complex_type1_value.get_field_deserializers()", result);
+        Assert.Contains("merge_deserializers_for_intersection_wrapper(@complex_type1_value) if @complex_type1_value", result);
+        Assert.DoesNotContain("get_field_deserializers()", result);
         Assert.DoesNotContain("complex_type2_value", result);
-        Assert.Contains("return {}", result);
+        Assert.Contains(result.Split('\n'), static x => x.Trim() == "{}");
         AssertBalancedBlocks(result);
     }
     [Fact]
@@ -1801,7 +2493,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         Assert.DoesNotContain("super", result);
         Assert.Contains("merge_deserializers_for_intersection_wrapper(@complex_type1_value, @complex_type3_value)", result);
         Assert.DoesNotContain("complex_type2_value", result);
-        Assert.Contains("return {}", result);
+        Assert.Contains(result.Split('\n'), static x => x.Trim() == "{}");
         AssertBalancedBlocks(result);
     }
     [Fact]

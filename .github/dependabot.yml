@@ -1,5 +1,10 @@
 version: 2
 updates:
+  - package-ecosystem: devcontainers
+    directory: /
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 10
   - package-ecosystem: nuget
     directory: /
     schedule:
@@ -10,7 +15,7 @@ updates:
     groups:
       kiota-dependencies:
         patterns:
-          - '*kiota*'
+          - "*kiota*"
       OpenTelemetry:
         patterns:
           - OpenTelemetry.*
@@ -18,9 +23,12 @@ updates:
       MicrosoftExtensions:
         patterns:
           - Microsoft.Extensions.*
-      coverlet:
+      testing-dependencies:
         patterns:
           - coverlet.*
+          - Microsoft.NET.Test.Sdk
+          - Microsoft.Testing.*
+          - xunit.*
     cooldown:
       default-days: 7
   - package-ecosystem: github-actions
@@ -44,7 +52,7 @@ updates:
     groups:
       kiota-dependencies:
         patterns:
-          - '*kiota*'
+          - "*kiota*"
     cooldown:
       default-days: 7
   - package-ecosystem: gomod
@@ -57,7 +65,7 @@ updates:
     groups:
       kiota-dependencies:
         patterns:
-          - '*kiota*'
+          - "*kiota*"
     cooldown:
       default-days: 7
   - package-ecosystem: composer
@@ -70,7 +78,7 @@ updates:
     groups:
       kiota-dependencies:
         patterns:
-          - '*kiota*'
+          - "*kiota*"
     cooldown:
       default-days: 7
   - package-ecosystem: pip
@@ -81,7 +89,7 @@ updates:
     groups:
       kiota-dependencies:
         patterns:
-          - '*kiota*'
+          - "*kiota*"
       pytest:
         patterns:
           - astroid*
@@ -98,7 +106,7 @@ updates:
     groups:
       kiota-dependencies:
         patterns:
-          - '*kiota*'
+          - "*kiota*"
     cooldown:
       default-days: 7
   - package-ecosystem: maven
@@ -111,7 +119,7 @@ updates:
     groups:
       kiota-dependencies:
         patterns:
-          - '*kiota*'
+          - "*kiota*"
     cooldown:
       default-days: 7
   - package-ecosystem: pub
@@ -122,7 +130,7 @@ updates:
     groups:
       kiota-dependencies:
         patterns:
-          - '*kiota*'
+          - "*kiota*"
     cooldown:
       default-days: 7
   - package-ecosystem: npm
@@ -133,10 +141,10 @@ updates:
     groups:
       kiota-dependencies:
         patterns:
-          - '*kiota*'
+          - "*kiota*"
       eslint:
         patterns:
-          - '*eslint*'
+          - "*eslint*"
     cooldown:
       default-days: 7
   - package-ecosystem: npm
@@ -147,7 +155,7 @@ updates:
     groups:
       eslint:
         patterns:
-          - '*eslint*'
+          - "*eslint*"
     cooldown:
       default-days: 7
   - package-ecosystem: dotnet-sdk
@@ -156,7 +164,7 @@ updates:
       interval: weekly
       day: wednesday
     ignore:
-      - dependency-name: '*'
+      - dependency-name: "*"
         update-types:
           - version-update:semver-major
           - version-update:semver-minor

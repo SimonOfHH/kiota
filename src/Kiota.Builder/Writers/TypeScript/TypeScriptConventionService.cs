@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.CompilerServices;
 
 using Kiota.Builder.CodeDOM;
 using Kiota.Builder.Extensions;
@@ -181,21 +182,40 @@ public class TypeScriptConventionService : CommonLanguageConventionService
         return collectionSuffix.Length > 0 ? $"({returnTypeString}){collectionSuffix}" : returnTypeString;
     }
 
+    /// <summary>
+    /// Caches the usings that are in scope for a block. GetTypeAlias is called for every type reference
+    /// that gets written, and gathering that set is the expensive part: a CodeFile aggregates the usings
+    /// of all of its children, so every call walked the whole file and copied a ConcurrentDictionary key
+    /// set per child. The set of usings a block holds is only ever built by the refiners, so it is safe to
+    /// gather once per block.
+    /// Only the set is cached. The alias of a using is assigned in place, after the using itself exists
+    /// (see AliasCollidingSymbols), so it is read on every lookup rather than captured here.
+    /// </summary>
+    private static readonly ConditionalWeakTable<IBlock, CodeUsing[]> usingsByBlock = new();
+
     private static string GetTypeAlias(CodeType targetType, CodeElement targetElement)
     {
+        if (targetType.TypeDefinition is null)
+            return string.Empty;
         var block = targetElement.GetImmediateParentOfType<IBlock>();
-        var usings = block is CodeFile cf ? cf.GetChildElements(true).SelectMany(GetUsingsFromCodeElement) : block?.Usings ?? Array.Empty<CodeUsing>();
-        return GetTypeAlias(targetType, usings);
+        if (block is null)
+            return string.Empty;
+        var usings = usingsByBlock.GetValue(block, static b => GatherUsings(b));
+        foreach (var codeUsing in usings)
+        {
+            if (!codeUsing.IsExternal &&
+                codeUsing.Declaration?.TypeDefinition is not null &&
+                codeUsing.Declaration.TypeDefinition == targetType.TypeDefinition &&
+                !string.IsNullOrEmpty(codeUsing.Alias))
+                return codeUsing.Alias;
+        }
+        return string.Empty;
     }
 
-    private static string GetTypeAlias(CodeType targetType, IEnumerable<CodeUsing> usings)
+    private static CodeUsing[] GatherUsings(IBlock block)
     {
-        var aliasedUsing = usings.FirstOrDefault(x => !x.IsExternal &&
-                                                      x.Declaration?.TypeDefinition != null &&
-                                                      x.Declaration.TypeDefinition == targetType.TypeDefinition &&
-                                                      !string.IsNullOrEmpty(x.Alias));
-
-        return aliasedUsing != null ? aliasedUsing.Alias : string.Empty;
+        var usings = block is CodeFile cf ? cf.GetChildElements(true).SelectMany(GetUsingsFromCodeElement) : block.Usings ?? Array.Empty<CodeUsing>();
+        return usings.ToArray();
     }
 
     public override string TranslateType(CodeType type)
@@ -207,6 +227,9 @@ public class TypeScriptConventionService : CommonLanguageConventionService
     {
         return type?.Name switch
         {
+            // a resolved model keeps the name the builder gave it, so the aliases below only
+            // rename types that were never resolved
+            _ when type is CodeType { TypeDefinition: not null } resolved => GetCodeTypeName(resolved),
             TYPE_INTEGER or TYPE_INT or TYPE_INT64 or TYPE_FLOAT or TYPE_DOUBLE or TYPE_BYTE or TYPE_SBYTE or TYPE_DECIMAL => TYPE_NUMBER,
             TYPE_BINARY or TYPE_BASE64 or TYPE_BASE64URL => TYPE_ARRAYBUFFER,
             TYPE_STRING or TYPE_OBJECT or TYPE_BOOLEAN or TYPE_VOID or TYPE_LOWERCASE_STRING or TYPE_LOWERCASE_OBJECT or TYPE_LOWERCASE_BOOLEAN or TYPE_LOWERCASE_VOID => type.Name.ToFirstCharacterLowerCase(),
@@ -258,6 +281,21 @@ public class TypeScriptConventionService : CommonLanguageConventionService
         };
     }
 
+    // Types the generated code narrows with "instanceof" instead of "typeof". "instanceof" is a value
+    // usage, so the imports for these types cannot be erased to "import type".
+    public static bool IsInstanceOfPrimitiveType(string typeName)
+    {
+        return typeName switch
+        {
+            TYPE_GUID or
+            TYPE_DATE or
+            TYPE_DATE_ONLY or
+            TYPE_TIME_ONLY or
+            TYPE_DURATION => true,
+            _ => false,
+        };
+    }
+
     public static string? GetPrimitiveAlias(string typeName)
     {
         return typeName switch
@@ -271,7 +309,7 @@ public class TypeScriptConventionService : CommonLanguageConventionService
 
     public static bool IsPrimitiveType(CodeType codeType, CodeComposedTypeBase codeComposedTypeBase, bool includeCollectionInformation) => IsPrimitiveType(GetTypescriptTypeString(codeType, codeComposedTypeBase, includeCollectionInformation));
 
-    private static bool IsPrimitiveTypeOrPrimitiveCollection(CodeType codeType, CodeComposedTypeBase codeComposedTypeBase) => IsPrimitiveType(codeType, codeComposedTypeBase, false);
+    internal static bool IsPrimitiveTypeOrPrimitiveCollection(CodeType codeType, CodeComposedTypeBase codeComposedTypeBase) => IsPrimitiveType(codeType, codeComposedTypeBase, false);
 
     private static Dictionary<string, string> InvalidCharactersReplacements = new(StringComparer.OrdinalIgnoreCase) {
         { "\\", "/"},
@@ -282,11 +320,12 @@ public class TypeScriptConventionService : CommonLanguageConventionService
     internal static string RemoveInvalidDescriptionCharacters(string originalDescription)
     {
         if (string.IsNullOrEmpty(originalDescription)) return string.Empty;
-        originalDescription = InvalidCharactersReplacements
-            .Aggregate(originalDescription, (current, replacement) => current.Replace(replacement.Key, replacement.Value, StringComparison.OrdinalIgnoreCase));
-        return originalDescription.Replace("\r", string.Empty, StringComparison.Ordinal)
+        originalDescription = originalDescription.Replace("\r", string.Empty, StringComparison.Ordinal)
             .Replace("\n", string.Empty, StringComparison.Ordinal)
             .Replace("\t", " ", StringComparison.Ordinal);
+        originalDescription = InvalidCharactersReplacements
+            .Aggregate(originalDescription, (current, replacement) => current.Replace(replacement.Key, replacement.Value, StringComparison.OrdinalIgnoreCase));
+        return originalDescription;
     }
     public override bool WriteShortDescription(IDocumentedElement element, LanguageWriter writer, string prefix = "", string suffix = "")
     {

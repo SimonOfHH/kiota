@@ -12,7 +12,203 @@ namespace Kiota.Builder.Tests.Refiners;
 public class DartLanguageRefinerTests
 {
     private readonly CodeNamespace root = CodeNamespace.InitRootNamespace();
+    [Theory]
+    [InlineData("union")]
+    [InlineData("intersection")]
+    [InlineData("inherited")]
+    public async Task ImportsOnlyDiscriminatorTypesUsedByDartFactoriesAsync(string kind)
+    {
+        var models = root.AddNamespace("client.models");
+        var otherModels = root.AddNamespace("client.other");
+        var mapped = otherModels.AddClass(new CodeClass { Name = "Mapped", Kind = CodeClassKind.Model }).First();
+        var member = otherModels.AddClass(new CodeClass { Name = "Member", Kind = CodeClassKind.Model }).First();
+        var model = models.AddClass(new CodeClass
+        {
+            Name = "Wrapper",
+            Kind = CodeClassKind.Model,
+            OriginalComposedType = kind switch
+            {
+                "union" => new CodeUnionType { Name = "Wrapper" },
+                "intersection" => new CodeIntersectionType { Name = "Wrapper" },
+                _ => null,
+            },
+        }).First();
+        if (kind == "inherited")
+            mapped.StartBlock.Inherits = new CodeType { Name = model.Name, TypeDefinition = model };
+        model.DiscriminatorInformation.DiscriminatorPropertyName = "kind";
+        model.DiscriminatorInformation.AddDiscriminatorMapping("mapped", new CodeType { Name = mapped.Name, TypeDefinition = mapped });
+        model.AddProperty(new CodeProperty { Name = "member", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = member.Name, TypeDefinition = member } });
+        var factory = model.AddMethod(new CodeMethod
+        {
+            Name = "createFromDiscriminatorValue",
+            Kind = CodeMethodKind.Factory,
+            IsStatic = true,
+            IsAsync = false,
+            ReturnType = new CodeType { Name = model.Name, TypeDefinition = model },
+        }).First();
+        factory.AddParameter(new CodeParameter { Name = "parseNode", Kind = CodeParameterKind.ParseNode, Type = new CodeType { Name = "IParseNode" } });
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Dart }, root, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(kind == "inherited", model.Usings.Any(x => x.Declaration?.TypeDefinition == mapped));
+        Assert.Contains(model.Usings, x => x.Declaration?.TypeDefinition == member);
+        Assert.Equal("ParseNode", factory.Parameters.Single().Type.Name);
+    }
+    [Theory]
+    [InlineData("\"value; injectedCall()\"")]
+    [InlineData("\"valueEscaped\"")]
+    [InlineData("\"\"value\"\"")]
+    public async Task DoesNotNormalizeInvalidDartDefaultIntoEnumMember(string input)
+    {
+        var models = root.AddNamespace("models");
+        var model = models.AddClass(new CodeClass { Name = "Settings", Kind = CodeClassKind.Model }).First();
+        var labels = models.AddEnum(new CodeEnum { Name = "Labels" }).First();
+        labels.AddOption(new CodeEnumOption { Name = "value", SerializationName = "value" });
+        var property = model.AddProperty(new CodeProperty
+        {
+            Name = "label",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { TypeDefinition = labels },
+            DefaultValue = input,
+        }).First();
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Dart }, root, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.False(new Kiota.Builder.Writers.Dart.DartConventionService().TryGetPropertyDefaultValue(property, property, out _));
+        Assert.Equal(input, property.DefaultValue);
+    }
+    [Theory]
+    [InlineData("\"value\"")]
+    [InlineData("")]
+    public async Task PreservesDartQueryParameterSchemaDefaults(string input)
+    {
+        var model = root.AddNamespace("models").AddClass(new CodeClass { Name = "QueryParameters", Kind = CodeClassKind.QueryParameters }).First();
+        var property = model.AddProperty(new CodeProperty
+        {
+            Name = "filter",
+            Kind = CodePropertyKind.QueryParameter,
+            Type = new CodeType { Name = "String", IsExternal = true },
+            DefaultValue = input,
+        }).First();
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Dart }, root, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(input, property.DefaultValue);
+    }
+    [Fact]
+    public async Task RefinesGeneratedDartDefaultsToRuntimeInitializers()
+    {
+        var model = root.AddNamespace("models").AddClass(new CodeClass { Name = "Configuration" }).First();
+        var property = model.AddProperty(new CodeProperty
+        {
+            Name = "headers",
+            Kind = CodePropertyKind.Headers,
+            Type = new CodeType { Name = "RequestHeaders", IsExternal = true },
+            DefaultValue = "injectedCall()",
+        }).First();
+        var options = model.AddProperty(new CodeProperty
+        {
+            Name = "options",
+            Kind = CodePropertyKind.Options,
+            Type = new CodeType { Name = "RequestOption", IsExternal = true, CollectionKind = CodeTypeBase.CodeTypeCollectionKind.Complex },
+            DefaultValue = "injectedCall()",
+        }).First();
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Dart }, root, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal("HttpHeaders", property.Type.Name);
+        Assert.Equal("HttpHeaders()", property.DefaultValue);
+        Assert.Contains(model.Usings, static x => x.Name == "HttpHeaders");
+        Assert.Equal("<RequestOption>[]", options.DefaultValue);
+        Assert.Contains(model.Usings, static x => x.Name == "RequestOption");
+    }
+
+    [Theory]
+    [InlineData("value", false, 2)]
+    [InlineData("values", false, 2)]
+    [InlineData("value", true, 2)]
+    [InlineData("values", true, 2)]
+    [InlineData("value", false, 4)]
+    [InlineData("values", false, 4)]
+    [InlineData("value", true, 4)]
+    [InlineData("values", true, 4)]
+    public async Task ResolvesEnumCollisionsAndDefaultsByWireValueAsync(string name, bool reverse, int count)
+    {
+        var models = root.AddNamespace("models");
+        var model = models.AddClass(new CodeClass { Name = "Settings", Kind = CodeClassKind.Model }).First();
+        var labels = models.AddEnum(new CodeEnum { Name = "Labels" }).First();
+        var wireValues = new[] { name, name + "Escaped", name + "Escaped0", name + "Escaped1" }.Take(count).ToArray();
+        foreach (var wireValue in reverse ? wireValues.Reverse() : wireValues)
+            labels.AddOption(new CodeEnumOption { Name = wireValue, SerializationName = wireValue });
+        var properties = wireValues.Select((wireValue, index) => model.AddProperty(new CodeProperty
+        {
+            Name = $"label{index}",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { TypeDefinition = labels },
+            DefaultValue = $"\"{wireValue}\"",
+        }).First()).ToArray();
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Dart }, root, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(wireValues.Length, labels.Options.Select(static x => x.Name).Distinct(StringComparer.Ordinal).Count());
+        for (var index = 0; index < wireValues.Length; index++)
+            Assert.Equal(labels.Options.Single(x => x.SerializationName == wireValues[index]).Name, properties[index].DefaultValue);
+    }
+    [Theory]
+    [InlineData("value", "valueEscaped")]
+    [InlineData("Value", "valueEscaped")]
+    [InlineData("VALUE", "valueEscaped")]
+    [InlineData("values", "valuesEscaped")]
+    [InlineData("label", "label")]
+    public async Task PreservesEnumWireValuesWhenEscapingMembersAsync(string wireValue, string expectedName)
+    {
+        var models = root.AddNamespace("models");
+        var labels = models.AddEnum(new CodeEnum { Name = "Labels" }).First();
+        var option = new CodeEnumOption { Name = wireValue, SerializationName = wireValue };
+        labels.AddOption(option);
+        var model = models.AddClass(new CodeClass { Name = "Settings", Kind = CodeClassKind.Model }).First();
+        var property = model.AddProperty(new CodeProperty
+        {
+            Name = "label",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { TypeDefinition = labels },
+            DefaultValue = $"\"{wireValue}\"",
+        }).First();
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Dart }, root, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(expectedName, option.Name);
+        Assert.Equal(wireValue, option.SerializationName);
+        Assert.Equal(expectedName, property.DefaultValue);
+    }
+    [Fact]
+    public async Task EscapesOverridePropertyAndPreservesWireName()
+    {
+        var model = root.AddClass(new CodeClass { Name = "Redirect", Kind = CodeClassKind.Model }).First();
+        var property = model.AddProperty(new CodeProperty
+        {
+            Name = "override",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { Name = "string", IsExternal = true },
+        }).First();
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Dart }, root, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal("override_", property.Name);
+        Assert.Equal("override", property.SerializationName);
+    }
     #region CommonLanguageRefinerTests
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PreservesInheritedErrorPropertyImports(bool separateNamespace)
+    {
+        var models = root.AddNamespace("client.models");
+        var dependencies = separateNamespace ? root.AddNamespace("client.details") : models;
+        var details = dependencies.AddClass(new CodeClass { Name = "Details", Kind = CodeClassKind.Model }).First();
+        var metadata = dependencies.AddClass(new CodeClass { Name = "Metadata", Kind = CodeClassKind.Model }).First();
+        var parent = models.AddClass(new CodeClass { Name = "ErrorBase", Kind = CodeClassKind.Model }).First();
+        parent.AddProperty(
+            new CodeProperty { Name = "details", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = details.Name, TypeDefinition = details } },
+            new CodeProperty { Name = "metadata", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = metadata.Name, TypeDefinition = metadata } });
+        var error = models.AddClass(new CodeClass { Name = "ErrorResponse", Kind = CodeClassKind.Model, IsErrorDefinition = true }).First();
+        error.StartBlock.Inherits = new CodeType { Name = parent.Name, TypeDefinition = parent };
+        // The child already imports one type from the same namespace as an inherited property.
+        error.AddProperty(new CodeProperty { Name = "ownDetails", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = details.Name, TypeDefinition = details } });
+
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Dart }, root, cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal("ApiException", error.StartBlock.Inherits.Name);
+        Assert.Contains(error.Properties, x => x.Name == "metadata" && x.Type is CodeType type && type.TypeDefinition == metadata);
+        Assert.Single(error.Usings, x => x.Declaration?.TypeDefinition == details);
+        Assert.Single(error.Usings, x => x.Declaration?.TypeDefinition == metadata);
+    }
     [Fact]
     public async Task AddsExceptionInheritanceOnErrorClasses()
     {

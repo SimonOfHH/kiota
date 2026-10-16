@@ -2747,6 +2747,177 @@ paths:
         Assert.Null(codeModel.FindChildByName<CodeClass>("tasks4XXError"));
         Assert.Null(codeModel.FindChildByName<CodeClass>("tasks5XXError"));
     }
+    private const string ErrorSchemaWithDiscriminatedErrorChildDocument = @"openapi: 3.0.3
+info:
+  title: Example API
+  version: 1.0.0
+servers:
+  - url: https://localhost:8080
+paths:
+  /messages:
+    post:
+      responses:
+        '204':
+          description: no content
+        '400':
+          $ref: '#/components/responses/Error400'
+        '500':
+          $ref: '#/components/responses/Error500'
+components:
+  schemas:
+    SrsError:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+        message:
+          type: string
+      discriminator:
+        propertyName: type
+        mapping:
+          InvalidMessage: '#/components/schemas/InvalidMessage'
+          InternalSRSError: '#/components/schemas/InternalSRSError'
+    InvalidMessage:
+      allOf:
+        - $ref: '#/components/schemas/SrsError'
+        - type: object
+          properties:
+            veto:
+              type: string
+    InternalSRSError:
+      allOf:
+        - $ref: '#/components/schemas/SrsError'
+        - type: object
+          properties:
+            detail:
+              type: string
+  responses:
+    Error400:
+      description: bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SrsError'
+    Error500:
+      description: internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/InternalSRSError'";
+    private const string ErrorSchemaDerivingFromNonErrorBaseDocument = @"openapi: 3.0.3
+info:
+  title: Example API
+  version: 1.0.0
+servers:
+  - url: https://localhost:8080
+paths:
+  /messages:
+    post:
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Audited'
+        '400':
+          description: bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationFailure'
+components:
+  schemas:
+    Audited:
+      type: object
+      properties:
+        createdAt:
+          type: string
+    ValidationFailure:
+      allOf:
+        - $ref: '#/components/schemas/Audited'
+        - type: object
+          properties:
+            reason:
+              type: string";
+    [Fact]
+    public async Task KeepsErrorDefinitionDerivingFromANonErrorBaseAsync()
+    {
+        // an error-response schema whose only ancestry is a plain base class must keep its
+        // error role: only deriving from another error definition may unmark it
+        await using var fs = await GetDocumentStreamAsync(ErrorSchemaDerivingFromNonErrorBaseDocument);
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "TestClient", ApiRootUrl = "https://localhost" }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs, cancellationToken: TestContext.Current.CancellationToken);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var baseClass = codeModel.FindChildByName<CodeClass>("Audited");
+        Assert.NotNull(baseClass);
+        Assert.False(baseClass.IsErrorDefinition);
+        var errorClass = codeModel.FindChildByName<CodeClass>("ValidationFailure");
+        Assert.NotNull(errorClass);
+        Assert.True(errorClass.IsErrorDefinition);
+        Assert.Equal(baseClass, errorClass.StartBlock.Inherits?.TypeDefinition);
+        var executorMethod = codeModel.FindChildByName<CodeMethod>("post");
+        Assert.NotNull(executorMethod);
+        Assert.Equal(errorClass, (executorMethod.ErrorMappings.FirstOrDefault(static x => "400".Equals(x.Key, StringComparison.OrdinalIgnoreCase)).Value as CodeType)?.TypeDefinition);
+    }
+    [Fact]
+    public async Task DoesntMarkErrorDefinitionDerivingFromAnotherErrorDefinitionAsync()
+    {
+        await using var fs = await GetDocumentStreamAsync(ErrorSchemaWithDiscriminatedErrorChildDocument);
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "TestClient", ApiRootUrl = "https://localhost" }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs, cancellationToken: TestContext.Current.CancellationToken);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var parentClass = codeModel.FindChildByName<CodeClass>("SrsError");
+        Assert.NotNull(parentClass);
+        Assert.True(parentClass.IsErrorDefinition);
+        Assert.Contains(parentClass.DiscriminatorInformation.DiscriminatorMappings, static x => "InternalSRSError".Equals(x.Key, StringComparison.OrdinalIgnoreCase));
+        var dualRoleChildClass = codeModel.FindChildByName<CodeClass>("InternalSRSError");
+        Assert.NotNull(dualRoleChildClass);
+        Assert.False(dualRoleChildClass.IsErrorDefinition); // it derives from the error definition through its parent
+        Assert.Equal(parentClass, dualRoleChildClass.StartBlock.Inherits?.TypeDefinition);
+        var singleRoleChildClass = codeModel.FindChildByName<CodeClass>("InvalidMessage");
+        Assert.NotNull(singleRoleChildClass);
+        Assert.False(singleRoleChildClass.IsErrorDefinition);
+        Assert.Equal(parentClass, singleRoleChildClass.StartBlock.Inherits?.TypeDefinition);
+        var executorMethod = codeModel.FindChildByName<CodeMethod>("post");
+        Assert.NotNull(executorMethod);
+        Assert.Equal(parentClass, (executorMethod.ErrorMappings.FirstOrDefault(static x => "400".Equals(x.Key, StringComparison.OrdinalIgnoreCase)).Value as CodeType)?.TypeDefinition);
+        Assert.Equal(dualRoleChildClass, (executorMethod.ErrorMappings.FirstOrDefault(static x => "500".Equals(x.Key, StringComparison.OrdinalIgnoreCase)).Value as CodeType)?.TypeDefinition);
+    }
+    [Theory]
+    [InlineData(GenerationLanguage.CSharp)]
+    [InlineData(GenerationLanguage.Java)]
+    [InlineData(GenerationLanguage.Python)]
+    [InlineData(GenerationLanguage.PHP)]
+    [InlineData(GenerationLanguage.Go)]
+    public async Task KeepsBaseClassOfErrorDefinitionDerivingFromAnotherErrorDefinitionAsync(GenerationLanguage language)
+    {
+        await using var fs = await GetDocumentStreamAsync(ErrorSchemaWithDiscriminatedErrorChildDocument);
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var generationConfiguration = new GenerationConfiguration { ClientClassName = "TestClient", ApiRootUrl = "https://localhost", Language = language };
+        var builder = new KiotaBuilder(mockLogger.Object, generationConfiguration, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs, cancellationToken: TestContext.Current.CancellationToken);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        await builder.ApplyLanguageRefinementAsync(generationConfiguration, codeModel, TestContext.Current.CancellationToken);
+        var parentClass = codeModel.FindChildByName<CodeClass>("SrsError");
+        Assert.NotNull(parentClass);
+        Assert.True(parentClass.IsErrorDefinition);
+        Assert.NotNull(parentClass.StartBlock.Inherits);
+        Assert.True(parentClass.StartBlock.Inherits.IsExternal); // the language specific base error class
+        var dualRoleChildClass = codeModel.FindChildByName<CodeClass>("InternalSRSError");
+        Assert.NotNull(dualRoleChildClass);
+        Assert.Equal(parentClass, dualRoleChildClass.StartBlock.Inherits?.TypeDefinition); // and not the language specific base error class
+        var singleRoleChildClass = codeModel.FindChildByName<CodeClass>("InvalidMessage");
+        Assert.NotNull(singleRoleChildClass);
+        Assert.Equal(parentClass, singleRoleChildClass.StartBlock.Inherits?.TypeDefinition);
+    }
     [Fact]
     public void UsesDefaultAs4XXAnd5XXWhenAbsent()
     {
@@ -6782,6 +6953,44 @@ components:
         Assert.NotNull(executor);
         Assert.Equal("void", executor.ReturnType.Name);
     }
+    [InlineData(new[] { 200 })]
+    [InlineData(new[] { 200, 304, 400 })]
+    [Theory]
+    public void GeneratesVoidReturnTypeForHeadRequests(int[] statusCodes)
+    {
+        var responses = new OpenApiResponses();
+        foreach (var statusCode in statusCodes)
+            responses[statusCode.ToString()] = new OpenApiResponse();
+        var document = new OpenApiDocument
+        {
+            Paths = new OpenApiPaths
+            {
+                ["answer"] = new OpenApiPathItem
+                {
+                    Operations = new()
+                    {
+                        [NetHttpMethod.Head] = new OpenApiOperation
+                        {
+                            Responses = responses
+                        }
+                    }
+                }
+            },
+        };
+        document.SetReferenceHostDocument();
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "TestClient", ClientNamespaceName = "TestSdk", ApiRootUrl = "https://localhost" }, _httpClient);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var rbNS = codeModel.FindNamespaceByName("TestSdk.Answer");
+        Assert.NotNull(rbNS);
+        var rbClass = rbNS.Classes.FirstOrDefault(x => x.IsOfKind(CodeClassKind.RequestBuilder));
+        Assert.NotNull(rbClass);
+        Assert.Single(rbClass.Methods, x => x.IsOfKind(CodeMethodKind.RequestExecutor));
+        var executor = rbClass.Methods.FirstOrDefault(x => x.IsOfKind(CodeMethodKind.RequestExecutor));
+        Assert.NotNull(executor);
+        Assert.Equal("void", executor.ReturnType.Name);
+    }
     [InlineData(new[] { "microsoft.graph.user", "microsoft.graph.termstore.term" }, "microsoft.graph")]
     [InlineData(new[] { "microsoft.graph.user", "odata.errors.error" }, "")]
     [InlineData(new string[] { }, "")]
@@ -9369,6 +9578,169 @@ components:
         Assert.NotNull(modelsNamespace);
         Assert.Equal(4, modelsNamespace.Classes.Count());// only 4 classes for user, member, group and directoryObject
     }
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task InlinePropertySchemaDoesNotOverwriteComponentWithTheSameNameAsync(bool componentIsGenerated)
+    {
+        var tempFilePath = Path.GetTempFileName();
+        // when no path uses the component, its class is not generated, but the inline name still gets the suffix
+        // so it stays the same whatever paths are included or excluded
+        var componentPath = componentIsGenerated ? @"
+  /tests_cases:
+    get:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/test_case'" : string.Empty;
+        await using var fs = await GetDocumentStreamAsync($@"openapi: 3.0.1
+info:
+  title: Test
+  version: 1.0.0
+servers:
+  - url: https://localhost
+paths:{componentPath}
+  /tests:
+    get:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/test'
+components:
+  schemas:
+    test_case:
+      type: object
+      properties:
+        name:
+          type: integer
+        uuid:
+          type: string
+    test:
+      type: object
+      properties:
+        case:
+          type: object
+          properties:
+            name2:
+              type: integer
+            uuid2:
+              type: string");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs, cancellationToken: TestContext.Current.CancellationToken);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var modelsNamespace = codeModel.FindChildByName<CodeNamespace>("ApiSdk.models");
+        Assert.NotNull(modelsNamespace);
+        var componentClass = modelsNamespace.FindChildByName<CodeClass>("test_case", false);
+        if (componentIsGenerated)
+        {
+            Assert.NotNull(componentClass);
+            Assert.NotNull(componentClass.FindChildByName<CodeProperty>("name", false));
+            Assert.NotNull(componentClass.FindChildByName<CodeProperty>("uuid", false));
+            Assert.Null(componentClass.FindChildByName<CodeProperty>("name2", false));
+        }
+        else
+            Assert.Null(componentClass);
+        var testClass = modelsNamespace.FindChildByName<CodeClass>("test", false);
+        Assert.NotNull(testClass);
+        var caseProperty = testClass.FindChildByName<CodeProperty>("case", false);
+        Assert.NotNull(caseProperty);
+        var inlineClass = Assert.IsType<CodeClass>(Assert.IsType<CodeType>(caseProperty.Type).TypeDefinition);
+        Assert.NotSame(componentClass, inlineClass);
+        Assert.Equal("test_case1", inlineClass.Name);
+        Assert.NotNull(inlineClass.FindChildByName<CodeProperty>("name2", false));
+        Assert.NotNull(inlineClass.FindChildByName<CodeProperty>("uuid2", false));
+        Assert.Same(modelsNamespace, inlineClass.Parent);
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InlinePropertySchemaSuffixDoesNotTakeASiblingInlinePropertyNameAsync(bool siblingIsReference)
+    {
+        var tempFilePath = Path.GetTempFileName();
+        var case1Schema = siblingIsReference ? @"          $ref: '#/components/schemas/other'" : @"          type: object
+          properties:
+            name3:
+              type: integer";
+        await using var fs = await GetDocumentStreamAsync($@"openapi: 3.0.1
+info:
+  title: Test
+  version: 1.0.0
+servers:
+  - url: https://localhost
+paths:
+  /tests_cases:
+    get:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/test_case'
+  /tests:
+    get:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/test'
+components:
+  schemas:
+    test_case:
+      type: object
+      properties:
+        name:
+          type: integer
+    other:
+      type: object
+      properties:
+        name3:
+          type: integer
+    test:
+      type: object
+      properties:
+        case:
+          type: object
+          properties:
+            name2:
+              type: integer
+        case1:
+{case1Schema}");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs, cancellationToken: TestContext.Current.CancellationToken);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var modelsNamespace = codeModel.FindChildByName<CodeNamespace>("ApiSdk.models");
+        Assert.NotNull(modelsNamespace);
+        var componentClass = modelsNamespace.FindChildByName<CodeClass>("test_case", false);
+        Assert.NotNull(componentClass);
+        Assert.NotNull(componentClass.FindChildByName<CodeProperty>("name", false));
+        Assert.Null(componentClass.FindChildByName<CodeProperty>("name2", false));
+        var testClass = modelsNamespace.FindChildByName<CodeClass>("test", false);
+        Assert.NotNull(testClass);
+        var caseProperty = testClass.FindChildByName<CodeProperty>("case", false);
+        Assert.NotNull(caseProperty);
+        var case1Property = testClass.FindChildByName<CodeProperty>("case1", false);
+        Assert.NotNull(case1Property);
+        var caseClass = Assert.IsType<CodeClass>(Assert.IsType<CodeType>(caseProperty.Type).TypeDefinition);
+        var case1Class = Assert.IsType<CodeClass>(Assert.IsType<CodeType>(case1Property.Type).TypeDefinition);
+        Assert.NotSame(caseClass, case1Class);
+        // test_case1 is the plain name of an inline case1 property, so the case property skips to test_case2,
+        // while a $ref case1 uses its component's class and leaves test_case1 free
+        Assert.Equal(siblingIsReference ? "test_case1" : "test_case2", caseClass.Name);
+        Assert.NotNull(caseClass.FindChildByName<CodeProperty>("name2", false));
+        Assert.Null(caseClass.FindChildByName<CodeProperty>("name3", false));
+        Assert.Equal(siblingIsReference ? "other" : "test_case1", case1Class.Name);
+        Assert.NotNull(case1Class.FindChildByName<CodeProperty>("name3", false));
+        Assert.Null(case1Class.FindChildByName<CodeProperty>("name2", false));
+    }
     [Fact]
     public async Task AllOfInheritanceModelReferencedViaComposedTypeKeepsItsPropertiesAsync()
     {
@@ -9794,6 +10166,75 @@ components:
         Assert.NotNull(withoutObjectClassTwoProperty);
         var withoutObjectClassClassAnotherTwoProperty = withoutObjectClass.FindChildByName<CodeProperty>("anotherTwo", false);
         Assert.NotNull(withoutObjectClassClassAnotherTwoProperty);
+    }
+
+    [Theory]
+    [InlineData("oneOf", false)]
+    [InlineData("oneOf", true)]
+    [InlineData("anyOf", false)]
+    [InlineData("anyOf", true)]
+    public async Task SingleUnionPreservesInheritedPropertiesAsync(string unionKeyword, bool hasDirectProperties)
+    {
+        await using var fs = await GetDocumentStreamAsync(
+        $$"""
+        {
+          "openapi": "3.0.0",
+          "info": { "title": "Single union of an allOf model", "version": "1.0.0" },
+          "servers": [{ "url": "https://example.org" }],
+          "paths": {
+            "/models": {
+              "get": {
+                "responses": {
+                  "200": {
+                    "description": "OK",
+                    "content": {
+                      "application/json": { "schema": { "$ref": "#/components/schemas/Wrapped" } }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "components": {
+            "schemas": {
+              "Base": {
+                "type": "object",
+                "properties": { "common": { "type": "string" } }
+              },
+              "Child": {
+                "type": "object",
+                {{(hasDirectProperties ? "\"properties\": {}," : string.Empty)}}
+                "allOf": [
+                  { "$ref": "#/components/schemas/Base" },
+                  { "type": "object", "properties": { "one": { "type": "string" } } }
+                ]
+              },
+              "Wrapped": {
+                "type": "object",
+                "{{unionKeyword}}": [{ "$ref": "#/components/schemas/Child" }],
+                "properties": { "kind": { "type": "string" } },
+                "discriminator": { "propertyName": "kind" }
+              }
+            }
+          }
+        }
+        """);
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph" }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs, cancellationToken: TestContext.Current.CancellationToken);
+        var codeModel = builder.CreateSourceModel(builder.CreateUriSpace(document));
+
+        var requestBuilder = codeModel.FindChildByName<CodeClass>("ModelsRequestBuilder");
+        Assert.NotNull(requestBuilder);
+        var executor = requestBuilder.Methods.First(static x => x.IsOfKind(CodeMethodKind.RequestExecutor));
+        var responseType = Assert.IsType<CodeType>(executor.ReturnType);
+        var wrappedClass = Assert.IsType<CodeClass>(responseType.TypeDefinition);
+        Assert.NotNull(wrappedClass.FindChildByName<CodeProperty>("one", false));
+        Assert.NotNull(wrappedClass.FindChildByName<CodeProperty>("kind", false));
+        Assert.Equal("kind", wrappedClass.DiscriminatorInformation.DiscriminatorPropertyName);
+        Assert.Equal("Wrapped", wrappedClass.Name);
+        Assert.Equal("Base", wrappedClass.BaseClass?.Name);
+        Assert.NotNull(wrappedClass.BaseClass.FindChildByName<CodeProperty>("common", false));
     }
 
     [Fact]

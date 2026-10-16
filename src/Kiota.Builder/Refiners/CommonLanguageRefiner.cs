@@ -1,21 +1,32 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Kiota.Builder.CodeDOM;
 using Kiota.Builder.Configuration;
 using Kiota.Builder.Extensions;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Kiota.Builder.Refiners;
 
 public abstract class CommonLanguageRefiner : ILanguageRefiner
 {
+    private static readonly CodeUsingDeclarationNameComparer usingDeclarationNameComparer = new();
     protected static readonly char[] UnderscoreArray = new[] { '_' };
-    protected CommonLanguageRefiner(GenerationConfiguration configuration)
+    protected ILogger Logger
+    {
+        get;
+    }
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    protected CommonLanguageRefiner(GenerationConfiguration configuration) : this(configuration, null) { }
+    protected CommonLanguageRefiner(GenerationConfiguration configuration, ILogger? logger)
     {
         ArgumentNullException.ThrowIfNull(configuration);
         _configuration = configuration;
+        Logger = logger ?? NullLogger.Instance;
     }
     public abstract Task RefineAsync(CodeNamespace generatedCode, CancellationToken cancellationToken);
     /// <summary>
@@ -117,6 +128,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
         bool enumNames = true)
     {
         ArgumentNullException.ThrowIfNull(refineName);
+        ArgumentNullException.ThrowIfNull(current);
         if (current is CodeClass currentClass && classNames &&
             refineName(currentClass.Name) is string refinedClassName &&
             !currentClass.Name.Equals(refinedClassName, StringComparison.Ordinal) &&
@@ -134,7 +146,15 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
         {
             parentBlock2.RenameChildElement(currentEnum.Name, refinedEnumName);
         }
-        CrawlTree(current, x => CorrectNames(x, refineName));
+        // Renaming mutates the tree that later elements are checked against, so when two names
+        // refine to the same value only the element reached first can take it. Children are stored
+        // in a dictionary whose enumeration order varies between runs, which made the winner, and
+        // therefore the generated output, differ from one run to the next (kiota#7997). Ordering
+        // the walk keeps it reproducible.
+        // classNames and enumNames are deliberately left to their defaults below the root, as
+        // callers rely on that: Ruby passes classNames false yet expects its models pascal-cased.
+        foreach (var childElement in current.GetChildElements(true).OrderBy(static x => x.Name, StringComparer.Ordinal))
+            CorrectNames(childElement, refineName);
     }
     protected static void ReplacePropertyNames(CodeElement current, HashSet<CodePropertyKind> propertyKindsToReplace, Func<string, string> refineAccessorName)
     {
@@ -415,18 +435,22 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
         CrawlTree(current, c => AddDefaultImports(c, evaluators));
     }
     private static readonly HashSet<string> BinaryTypes = new(StringComparer.OrdinalIgnoreCase) { "binary", "base64", "base64url" };
+    // CodeType.Name writes through to TypeDefinition.Name, so renaming a resolved type would rename
+    // the model class itself rather than retype the reference to it
+    private static bool IsCoreBinaryType(CodeTypeBase? type) =>
+        type is CodeType { TypeDefinition: null } && BinaryTypes.Contains(type.Name);
     protected static void ReplaceBinaryByNativeType(CodeElement currentElement, string symbol, string ns, bool addDeclaration = false, bool isNullable = false)
     {
         if (currentElement is CodeMethod currentMethod)
         {
             var shouldInsertUsing = false;
-            if (!string.IsNullOrEmpty(currentMethod.ReturnType?.Name) && BinaryTypes.Contains(currentMethod.ReturnType.Name))
+            if (IsCoreBinaryType(currentMethod.ReturnType))
             {
                 currentMethod.ReturnType.Name = symbol;
                 currentMethod.ReturnType.IsNullable = isNullable;
                 shouldInsertUsing = !string.IsNullOrWhiteSpace(ns);
             }
-            var binaryParameter = currentMethod.Parameters.FirstOrDefault(static x => BinaryTypes.Contains(x.Type?.Name ?? string.Empty));
+            var binaryParameter = currentMethod.Parameters.FirstOrDefault(static x => IsCoreBinaryType(x.Type));
             if (binaryParameter != null)
             {
                 binaryParameter.Type.Name = symbol;
@@ -957,7 +981,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
 
                 foreach (var u in currentParent
                     .Usings
-                    .Where(pu => !currentClass.Usings.Any(cu => cu.Name.Equals(pu.Name, StringComparison.OrdinalIgnoreCase))))
+                    .Where(pu => !currentClass.Usings.Contains(pu, usingDeclarationNameComparer)))
                 {
                     var newU = (CodeUsing)u.Clone();
                     newU.Parent = currentClass;
@@ -1023,7 +1047,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
         }
         CrawlTree(currentElement, x => AddParentClassToErrorClasses(x, parentClassName, parentClassNamespace, addNamespaceToInheritDeclaration, isInterface, isErasable));
     }
-    protected static void AddDiscriminatorMappingsUsingsToParentClasses(CodeElement currentElement, string parseNodeInterfaceName, bool addFactoryMethodImport = false, bool addUsings = true, bool includeParentNamespace = false)
+    protected static void AddDiscriminatorMappingsUsingsToParentClasses(CodeElement currentElement, string parseNodeInterfaceName, bool addFactoryMethodImport = false, bool addUsings = true, bool includeParentNamespace = false, bool addUsingsForComposedTypes = true)
     {
         if (currentElement is CodeMethod currentMethod &&
             currentMethod.Parent is CodeClass parentClass &&
@@ -1033,7 +1057,8 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                 (parentClass.DiscriminatorInformation?.HasBasicDiscriminatorInformation ?? false) &&
                 parentClass.GetImmediateParentOfType<CodeNamespace>() is CodeNamespace parentClassNamespace)
             {
-                if (addUsings && includeParentNamespace)
+                var shouldAddUsings = addUsings && (addUsingsForComposedTypes || parentClass.OriginalComposedType is null);
+                if (shouldAddUsings && includeParentNamespace)
                     declaration.AddUsings(parentClass.DiscriminatorInformation.DiscriminatorMappings
                         .Select(static x => x.Value)
                         .OfType<CodeType>()
@@ -1047,7 +1072,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                                 TypeDefinition = x.TypeDefinition,
                             },
                         }).ToArray());
-                else if (addUsings && !includeParentNamespace)
+                else if (shouldAddUsings && !includeParentNamespace)
                     declaration.AddUsings(parentClass.DiscriminatorInformation.DiscriminatorMappings
                         .Select(static x => x.Value)
                         .OfType<CodeType>()
@@ -1082,7 +1107,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                 });
             }
         }
-        CrawlTree(currentElement, x => AddDiscriminatorMappingsUsingsToParentClasses(x, parseNodeInterfaceName, addFactoryMethodImport, addUsings, includeParentNamespace));
+        CrawlTree(currentElement, x => AddDiscriminatorMappingsUsingsToParentClasses(x, parseNodeInterfaceName, addFactoryMethodImport, addUsings, includeParentNamespace, addUsingsForComposedTypes));
     }
     protected static void ReplaceLocalMethodsByGlobalFunctions(CodeElement currentElement, Func<CodeMethod, string> nameUpdateCallback, Func<CodeMethod, CodeUsing[]>? usingsCallback, params CodeMethodKind[] kindsToReplace)
     {

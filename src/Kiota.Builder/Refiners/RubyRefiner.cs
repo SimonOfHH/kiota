@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -8,12 +9,16 @@ using Kiota.Builder.CodeDOM;
 using Kiota.Builder.Configuration;
 using Kiota.Builder.Extensions;
 using Kiota.Builder.PathSegmenters;
+using Kiota.Builder.Writers.Ruby;
+using Microsoft.Extensions.Logging;
 
 namespace Kiota.Builder.Refiners;
 
 public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
 {
-    public RubyRefiner(GenerationConfiguration configuration) : base(configuration) { }
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public RubyRefiner(GenerationConfiguration configuration) : this(configuration, null) { }
+    public RubyRefiner(GenerationConfiguration configuration, ILogger? logger) : base(configuration, logger) { }
     public override Task RefineAsync(CodeNamespace generatedCode, CancellationToken cancellationToken)
     {
         return Task.Run(() =>
@@ -37,10 +42,7 @@ public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
                     }
                 });
             RemoveRequestConfigurationClasses(generatedCode);
-            var classesToDisambiguate = new HashSet<CodeClass>();
-            var suffix = "Model";
-            DisambiguateClassesWithNamespaceNames(generatedCode, classesToDisambiguate, suffix);
-            UpdateReferencesToDisambiguatedClasses(generatedCode, classesToDisambiguate, suffix);
+            DisambiguateClassesWithNamespaceNames(generatedCode, "Model");
             ConvertUnionTypesToWrapper(generatedCode,
                 _configuration.UsesBackingStore,
                 static s => s,
@@ -61,11 +63,14 @@ public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
             if (generatedCode.FindNamespaceByName(_configuration.ModelsNamespaceName) is CodeNamespace modelsNS)
                 FlattenModelsNamespaces(modelsNS, modelsNS);
             AddPropertiesAndMethodTypesImports(generatedCode, false, false, true);
+            // a type in the same or a parent namespace is not always reachable through a barrel
+            AddPropertiesAndMethodTypesImports(generatedCode, true, true, true, static x => x.Where(static y => y.AllTypes.Any(static z => z.TypeDefinition is CodeClass { Kind: CodeClassKind.Model or CodeClassKind.RequestBuilder } or CodeEnum)));
             RemoveCancellationParameter(generatedCode);
             cancellationToken.ThrowIfCancellationRequested();
             AddParsableImplementsForModelClasses(generatedCode, "MicrosoftKiotaAbstractions::Parsable");
             AddDefaultImports(generatedCode, defaultUsingEvaluators);
             RemoveUntypedNodeTypeValues(generatedCode);
+            ReplaceBinaryByNativeType(generatedCode, "StringIO", "stringio", true);
             CorrectCoreType(generatedCode, CorrectMethodType, CorrectPropertyType, CorrectImplements);
             cancellationToken.ThrowIfCancellationRequested();
             ReplacePropertyNames(generatedCode,
@@ -80,24 +85,19 @@ public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
                 "MicrosoftKiotaAbstractions",
                 true
             );
+            AddPrimaryErrorMessage(generatedCode,
+                "message",
+                () => new CodeType { Name = "string", IsNullable = false, IsExternal = true },
+                true
+            );
             ReplaceReservedNames(generatedCode, reservedNamesProvider, x => $"{x}_escaped");
-            AddGetterAndSetterMethods(generatedCode,
-                [
-                    CodePropertyKind.Custom,
-                    CodePropertyKind.AdditionalData,
-                    CodePropertyKind.BackingStore,
-                ],
-                static (_, s) => s.ToSnakeCase(),
-                _configuration.UsesBackingStore,
-                true,
-                string.Empty,
-                string.Empty,
-                string.Empty);
+            // Ruby inherits initialize, so a subclass needs one only for defaults of its own
             AddConstructorsForDefaultValues(
                 generatedCode,
-                true,
+                false,
                 false,
                 [CodeClassKind.RequestConfiguration]);
+            RemoveDeserializersThatOnlyCallSuper(generatedCode);
             ShortenLongNamespaceNames(generatedCode);
             if (generatedCode.FindNamespaceByName(_configuration.ClientNamespaceName)?.Parent is CodeNamespace parentOfClientNS)
                 AddNamespaceModuleImports(parentOfClientNS, generatedCode);
@@ -126,6 +126,7 @@ public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
                 "ParseNode",
                 addUsings: true
             );
+            RequireBarrelsOfAutoloadedTypes(generatedCode, _configuration.ClientNamespaceName);
         }, cancellationToken);
     }
     private static void ShortenLongNamespaceNames(CodeElement currentElement)
@@ -144,7 +145,13 @@ public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
         }
         CrawlTree(currentElement, ShortenLongNamespaceNames);
     }
-    private static void DisambiguateClassesWithNamespaceNames(CodeElement currentElement, HashSet<CodeClass> classesToUpdate, string suffix)
+    /// <summary>
+    /// A model sharing its name with a sibling namespace is suffixed so the two do not collide.
+    /// References need no separate pass: CodeType.Name delegates to TypeDefinition.Name for a
+    /// resolved, non-external type, so every reference already reports the new name. A pass that
+    /// assigned to those names instead renamed the class again, once per reference it walked.
+    /// </summary>
+    private static void DisambiguateClassesWithNamespaceNames(CodeElement currentElement, string suffix)
     {
         if (currentElement is CodeClass currentClass &&
             currentClass.IsOfKind(CodeClassKind.Model) &&
@@ -154,51 +161,8 @@ public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
             currentNamespace.RemoveChildElement(currentClass);
             currentClass.Name = $"{currentClass.Name}{suffix}";
             currentNamespace.AddClass(currentClass);
-            classesToUpdate.Add(currentClass);
         }
-        CrawlTree(currentElement, x => DisambiguateClassesWithNamespaceNames(x, classesToUpdate, suffix));
-    }
-    private static void UpdateReferencesToDisambiguatedClasses(CodeElement currentElement, HashSet<CodeClass> classesToUpdate, string suffix)
-    {
-        if (classesToUpdate.Count == 0) return;
-        if (currentElement is CodeProperty currentProperty &&
-            currentProperty.Type is CodeType propertyType &&
-            propertyType.TypeDefinition is CodeClass propertyTypeClass &&
-            classesToUpdate.Contains(propertyTypeClass))
-            propertyType.Name = $"{propertyType.Name}{suffix}";
-        else if (currentElement is CodeMethod currentMethod)
-        {
-            if (currentMethod.ReturnType is CodeType returnType &&
-                returnType.TypeDefinition is CodeClass returnTypeClass &&
-                classesToUpdate.Contains(returnTypeClass))
-                returnType.Name = $"{returnType.Name}{suffix}";
-            currentMethod.Parameters.Where(x => x.Type is CodeType parameterType &&
-                                                parameterType.TypeDefinition is CodeClass parameterTypeClass &&
-                                                classesToUpdate.Contains(parameterTypeClass))
-                                    .ToList()
-                                    .ForEach(x => x.Type.Name = $"{x.Type.Name}{suffix}");
-        }
-        else if (currentElement is CodeClass currentClass)
-        {
-            if (currentClass.StartBlock.Inherits?.TypeDefinition is CodeClass parentClass &&
-                    classesToUpdate.Contains(parentClass))
-                currentClass.StartBlock.Inherits.Name = $"{currentClass.StartBlock.Inherits.Name}{suffix}";
-            currentClass.DiscriminatorInformation
-                        .DiscriminatorMappings
-                        .Select(static x => x.Value)
-                        .OfType<CodeType>()
-                        .Where(x => x.TypeDefinition is CodeClass typeClass && classesToUpdate.Contains(typeClass))
-                        .ToList()
-                        .ForEach(x => x.Name = $"{x.Name}{suffix}");
-            currentClass.Usings
-                        .Where(static x => !x.IsExternal)
-                        .Select(static x => x.Declaration)
-                        .OfType<CodeType>()
-                        .Where(x => x.TypeDefinition is CodeClass typeClass && classesToUpdate.Contains(typeClass))
-                        .ToList()
-                        .ForEach(x => x.Name = $"{x.Name}{suffix}");
-        }
-        CrawlTree(currentElement, x => UpdateReferencesToDisambiguatedClasses(x, classesToUpdate, suffix));
+        CrawlTree(currentElement, x => DisambiguateClassesWithNamespaceNames(x, suffix));
     }
     // `\\.` matches a literal backslash and `(<letter>...)` is an ordinary group capturing the text
     // "<letter>", so the original pattern never matched and every nested model kept the dots from
@@ -269,7 +233,7 @@ public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
         {
             currentProperty.Type.IsNullable = true;
             if (!string.IsNullOrEmpty(currentProperty.DefaultValue))
-                currentProperty.DefaultValue = "Hash.new";
+                currentProperty.DefaultValue = "{}";
         }
 
         CorrectCoreTypes(currentProperty.Parent as CodeClass, DateTypesReplacements, types: currentProperty.Type);
@@ -298,44 +262,78 @@ public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
         new (static x => x is CodeProperty prop && prop.IsOfKind(CodePropertyKind.BackingStore),
             "microsoft_kiota_abstractions", "BackingStore", "BackedModel", "BackingStoreFactorySingleton" ),
     };
-    private static void AddInheritedAndMethodTypesImports(CodeElement currentElement)
+    // a subclass with no fields of its own inherits the deserializer map unchanged
+    private static void RemoveDeserializersThatOnlyCallSuper(CodeElement currentElement)
     {
-        if (currentElement is CodeClass currentClass && currentClass.IsOfKind(CodeClassKind.Model)
-            && currentClass.StartBlock.Inherits != null)
-        {
-            currentClass.AddUsing(new CodeUsing { Name = currentClass.StartBlock.Inherits.Name, Declaration = currentClass.StartBlock.Inherits });
-        }
-        CrawlTree(currentElement, AddInheritedAndMethodTypesImports);
+        if (currentElement is CodeClass currentClass &&
+            currentClass.IsOfKind(CodeClassKind.Model) &&
+            currentClass.StartBlock.Inherits is not null &&
+            currentClass.OriginalComposedType is null &&
+            !currentClass.Properties.Any(static x => x.IsOfKind(CodePropertyKind.Custom) && !x.ExistsInBaseType))
+            currentClass.RemoveMethodByKinds(CodeMethodKind.Deserializer);
+        CrawlTree(currentElement, RemoveDeserializersThatOnlyCallSuper);
     }
     private static void AddNamespaceModuleImports(CodeNamespace clientNamespaceParent, CodeElement current)
     {
         if (current is CodeClass currentClass)
         {
             var module = currentClass.GetImmediateParentOfType<CodeNamespace>();
-            AddModules(clientNamespaceParent, module, (usingToAdd) =>
+            // loading its own barrel would register this file for autoload while it is still loading
+            AddModules(clientNamespaceParent, RubyConventionService.IsAutoloaded(currentClass) ? module.Parent as CodeNamespace : module, (usingToAdd) =>
             {
                 currentClass.AddUsing(usingToAdd);
             });
         }
         CrawlTree(current, c => AddNamespaceModuleImports(clientNamespaceParent, c));
     }
-    private static void AddModules(CodeNamespace clientNamespaceParent, CodeNamespace module, Action<CodeUsing> callback)
+    private static void AddModules(CodeNamespace clientNamespaceParent, CodeNamespace? module, Action<CodeUsing> callback)
     {
         var definition = module;
         while (definition != clientNamespaceParent && !string.IsNullOrEmpty(definition?.Name))
         {
-            callback(new CodeUsing
-            {
-                Name = definition.Name,
-                Declaration = new CodeType
-                {
-                    IsExternal = false,
-                    Name = definition.Name,
-                    TypeDefinition = definition,
-                }
-            });
+            callback(GetNamespaceUsing(definition));
             definition = definition.Parent as CodeNamespace;
         }
+    }
+    private static CodeUsing GetNamespaceUsing(CodeNamespace codeNamespace) => new()
+    {
+        Name = codeNamespace.Name,
+        Declaration = new CodeType
+        {
+            IsExternal = false,
+            Name = codeNamespace.Name,
+            TypeDefinition = codeNamespace,
+        }
+    };
+    // an autoloaded file is only ever loaded through its barrel, so other files require the barrel
+    private static void RequireBarrelsOfAutoloadedTypes(CodeElement currentElement, string clientNamespaceName)
+    {
+        if (currentElement is CodeClass { Parent: CodeNamespace currentNamespace } currentClass)
+        {
+            // a namespace with nothing to autoload gets no barrel file, so nothing may require one;
+            // the client's root file always exists and only the client requires it, for eager_load!
+            var isClient = currentClass.Methods.Any(static x => x.IsOfKind(CodeMethodKind.ClientConstructor));
+            currentClass.StartBlock.RemoveUsings(currentClass.Usings
+                                        .Where(x => !x.IsExternal && x.Declaration?.TypeDefinition is CodeNamespace ns && !RubyConventionService.HasAutoloadedMembers(ns) &&
+                                                    !(isClient && ns.Name.Equals(clientNamespaceName, StringComparison.OrdinalIgnoreCase)))
+                                        .ToArray());
+            var typeUsings = currentClass.Usings
+                                        .Where(static x => !x.IsExternal && x.Declaration?.TypeDefinition is CodeElement definition && RubyConventionService.IsAutoloaded(definition))
+                                        .ToArray();
+            if (typeUsings.Length != 0)
+            {
+                currentClass.StartBlock.RemoveUsings(typeUsings);
+                var isAutoloaded = RubyConventionService.IsAutoloaded(currentClass);
+                var barrels = typeUsings.Select(static x => x.Declaration!.TypeDefinition!.GetImmediateParentOfType<CodeNamespace>())
+                                        .Where(x => !(isAutoloaded && x == currentNamespace))
+                                        .Distinct()
+                                        .Where(x => !currentClass.Usings.Any(y => y.Declaration?.TypeDefinition == x))
+                                        .Select(GetNamespaceUsing)
+                                        .ToArray();
+                currentClass.AddUsing(barrels);
+            }
+        }
+        CrawlTree(currentElement, x => RequireBarrelsOfAutoloadedTypes(x, clientNamespaceName));
     }
     private static void CorrectImplements(ProprietableBlockDeclaration block)
     {

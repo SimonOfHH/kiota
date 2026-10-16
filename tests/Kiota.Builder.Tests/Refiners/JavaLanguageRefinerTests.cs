@@ -12,6 +12,46 @@ namespace Kiota.Builder.Tests.Refiners;
 public class JavaLanguageRefinerTests
 {
     private readonly CodeNamespace root = CodeNamespace.InitRootNamespace();
+    [Theory]
+    [InlineData("union")]
+    [InlineData("intersection")]
+    [InlineData("inherited")]
+    public async Task ImportsOnlyDiscriminatorTypesUsedByJavaFactoriesAsync(string kind)
+    {
+        var models = root.AddNamespace("client.models");
+        var otherModels = root.AddNamespace("client.other");
+        var mapped = otherModels.AddClass(new CodeClass { Name = "Mapped", Kind = CodeClassKind.Model }).First();
+        var member = otherModels.AddClass(new CodeClass { Name = "Member", Kind = CodeClassKind.Model }).First();
+        var model = models.AddClass(new CodeClass
+        {
+            Name = "Wrapper",
+            Kind = CodeClassKind.Model,
+            OriginalComposedType = kind switch
+            {
+                "union" => new CodeUnionType { Name = "Wrapper" },
+                "intersection" => new CodeIntersectionType { Name = "Wrapper" },
+                _ => null,
+            },
+        }).First();
+        if (kind == "inherited")
+            mapped.StartBlock.Inherits = new CodeType { Name = model.Name, TypeDefinition = model };
+        model.DiscriminatorInformation.DiscriminatorPropertyName = "kind";
+        model.DiscriminatorInformation.AddDiscriminatorMapping("mapped", new CodeType { Name = mapped.Name, TypeDefinition = mapped });
+        model.AddProperty(new CodeProperty { Name = "member", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = member.Name, TypeDefinition = member } });
+        var factory = model.AddMethod(new CodeMethod
+        {
+            Name = "createFromDiscriminatorValue",
+            Kind = CodeMethodKind.Factory,
+            IsStatic = true,
+            IsAsync = false,
+            ReturnType = new CodeType { Name = model.Name, TypeDefinition = model },
+        }).First();
+        factory.AddParameter(new CodeParameter { Name = "parseNode", Kind = CodeParameterKind.ParseNode, Type = new CodeType { Name = "IParseNode" } });
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Java }, root, TestContext.Current.CancellationToken);
+        Assert.Equal(kind == "inherited", model.Usings.Any(x => x.Declaration?.TypeDefinition == mapped));
+        Assert.Contains(model.Usings, x => x.Declaration?.TypeDefinition == member);
+        Assert.Equal("ParseNode", factory.Parameters.Single().Type.Name);
+    }
     #region CommonLanguageRefinerTests
     [Fact]
     public async Task DoesNotReplacesReservedEnumOptionsAsync()
@@ -315,6 +355,29 @@ public class JavaLanguageRefinerTests
         await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Java }, root, cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotEmpty(model.StartBlock.Usings);
         Assert.NotEqual("binary", method.ReturnType.Name);
+    }
+    [Fact]
+    public async Task DoesNotReplaceAResolvedModelNamedBinaryAsync()
+    {
+        var model = root.AddClass(new CodeClass
+        {
+            Name = "binary",
+            Kind = CodeClassKind.Model
+        }).First();
+        var requestBuilder = root.AddClass(new CodeClass
+        {
+            Name = "requestBuilder",
+            Kind = CodeClassKind.RequestBuilder
+        }).First();
+        var method = requestBuilder.AddMethod(new CodeMethod
+        {
+            Name = "get",
+            Kind = CodeMethodKind.RequestExecutor,
+            ReturnType = new CodeType { Name = "binary", TypeDefinition = model },
+        }).First();
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Java }, root, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal("Binary", model.Name);
+        Assert.Equal("Binary", method.ReturnType.Name);
     }
     [Fact]
     public async Task ReplacesIndexersByMethodsWithParameterAsync()

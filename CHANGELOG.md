@@ -13,6 +13,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+## [1.36.1] - 2026-10-12
+
+### Added
+
+### Changed
+
+- Fixed small issues with release pipelines
+
+## [1.36.0] - 2026-10-08
+
+### Added
+
+- Ruby: an error's `message` returns the property the description marks with `x-ms-primary-error-message`, as the other languages do. An error property named `message` is renamed `message_escaped`, like `MessageEscaped` in C#; when it is a string, `message` still returns it. [kiota-ruby#63](https://github.com/microsoft/kiota-ruby/issues/63)
+
+### Changed
+
+- Fixed relative description paths when opening or selecting clients in the VS Code Kiota workspace.
+- Removed the retired lock-search command from the VS Code command palette. Lock-file migration remains available.
+
+- Preserve inherited properties when a single `oneOf` or `anyOf` member defines its properties only through `allOf`. Fixes [#6778](https://github.com/microsoft/kiota/issues/6778).
+- Python: preserve false, zero, empty strings, and empty collections when parsing and serializing union type wrappers.
+
+- All language refiners accept a generation logger consistently, retaining configuration-only compatibility constructors hidden from IntelliSense.
+- Reject plugin-manifest file references whose path components become parent-directory traversal after Windows trims trailing spaces or dots.
+- Fixed a stack overflow when generating API plugins from descriptions with cyclic `allOf` schemas.
+- Dart: omit unsupported schema defaults with a generation warning, preserve supported literal and enum property and parameter defaults (including empty strings), initialize query parameters from schema defaults, and keep constructor initialization valid with or without backing stores.
+- Dart: preserve nullable optional request-builder constructor parameters, including UUIDs and collections, so cloning accepts null arguments without overwriting existing path parameters.
+- Dart: escape URL templates once at final emission to preserve literal dollar signs and backslashes in constructor defaults and method overrides.
+- Dart: preserve schema string defaults named `null`, including enum wire values, without treating them as JSON-null sentinels.
+- Dart: preserve query-parameter defaults inside single-member `allOf` wrappers, retaining outer-default precedence and explicit JSON-null defaults.
+- Dart: validate parser-backed date, time, and UUID defaults before emission, omitting unsupported values with a generation warning.
+- Ruby: a union of object types that no discriminator decides, such as a oneOf without a discriminator, now reads the payload into every object member, as TypeScript does, instead of returning an empty wrapper. A union whose discriminator matched no member does the same, and its array member is only read when no other member was picked. Requires the runtime gems at 0.24.0.
+- Ruby: enum members hold their wire value, so a value such as `incoming-payment` or `read` is sent and read as the description declares it instead of as `IncomingPayment` or `Read`. `Enum[:Name]` now returns the wire value as a string. Requires the runtime gems at 0.24.0.
+- Go: keep escaped namespace segments lowercase so imports match generated package directories on case-sensitive filesystems. Fixes [#7828](https://github.com/microsoft/kiota/issues/7828).
+- TypeScript: import response enum objects for request builders reached through path parameters. [#6884](https://github.com/microsoft/kiota/issues/6884)
+- Resolve enum query parameters wrapped in single-member `allOf` schemas, including enum array items.
+- Go: cast scalar enum values in union factories and avoid reading an empty discriminator name for undiscriminated unions. Addresses [#7808](https://github.com/microsoft/kiota/issues/7808).
+- Preserve models for multipart properties with default content types when other properties specify an encoding. [#7342](https://github.com/microsoft/kiota/issues/7342)
+- Dart: escape enum options named value or values to avoid conflicts with generated and built-in enum members. [#7807](https://github.com/microsoft/kiota/issues/7807)
+- Ruby: the client's root module has an `eager_load!` method that loads every autoloaded model, for servers that preload before forking.
+- Ruby: generated files start with `# frozen_string_literal: true`, so string default values handed to user code are frozen.
+- Ruby: generated string literals are double quoted, the StandardRB convention.
+- Ruby: namespaces with nothing to autoload no longer get an empty barrel file, and generated files no longer require them (561 fewer files in a GitHub client).
+- Ruby: a client generated with a multi-segment `--namespace-name`, such as `integration_test.client`, failed to load because its root file was written one directory too deep.
+- Ruby: namespace barrels register their models and enums with `autoload` instead of requiring them, so a subclass no longer fails to load when its base class file is required first. Other files require the barrel rather than an individual model file, and models now load on first use. A type no barrel autoloads, such as a model named after its namespace, is now required directly: 1,315 constants referenced by a Meraki client never loaded, and a client generated from the current GitHub description failed to load because it required a file that is never written. [#7956](https://github.com/microsoft/kiota/issues/7956)
+- Ruby: model properties are declared with `attr_accessor`, which removes the thousands of "possibly useless use of a variable" warnings `ruby -w` printed while loading a client.
+- Ruby: enum hashes are frozen. [kiota-ruby#68](https://github.com/microsoft/kiota-ruby/issues/68)
+- C#: escape Unicode line and paragraph separators in generated string literals so generated clients remain valid C# source.
+- External reference allowlist wildcards no longer cross the URI authority boundary, so a wildcard in the scheme or host cannot match text in the path, the user information or the port.
+- Initialize inherited Dart model fields in constructor initializer lists.
+- Replace only unresolved binary types with a native stream type, and translate a resolved model by its definition rather than its name, so a model whose schema is named `binary`, `base64` or `base64url` keeps its own name across every language instead of being rendered as the native binary type. Generation no longer fails for C# and Java.
+- Avoid redundant parsing branches for equivalent binary alternatives in Dart and PHP composed models.
+- Preserve imports for distinct types from the same namespace when inlining error model inheritance.
+- Dart: qualify model fields named `node` or `deserializerMap` during deserialization so local variables do not shadow them; escape `override` model members to preserve Dart annotations. Fixes [#7822](https://github.com/microsoft/kiota/issues/7822).
+- PHP: disambiguate enum constants that normalize to the same name while preserving wire values and existing constant names.
+- Java: omit unused discriminator-mapping imports for union/intersection wrappers, avoiding imports of nonexistent models while retaining member and inherited-factory imports.
+- Dart: omit unused discriminator-mapping imports for composed wrappers while preserving member and inherited-factory imports. Addresses [#7821](https://github.com/microsoft/kiota/issues/7821).
+- Preserve endpoints whose static path segments collide after name sanitization, such as /v1.1 and /v11. [#7143](https://github.com/microsoft/kiota/issues/7143)
+
+- Ruby: a path with an escaped suffix, such as `/domains/{domainName}!quote`, generated a request builder method that passed the raw path parameter name where the signature had snake cased it, and referenced the builder class without its namespace. Both raised `NameError` on first use. [#7956](https://github.com/microsoft/kiota/issues/7956)
+- TypeScript: `GetTypeAlias` rebuilt the set of usings of the enclosing block for every type reference written, so the cost of the file writing step grew quadratically with the number of models in a `CodeFile`. That set is now gathered once per block, while the alias of each using is still read on every lookup. On the GitHub API description this drops the writing step from 19.5 s to 1.9 s, and on the Stripe description from 93.5 s to 7.8 s, with byte-identical output.
+
+- Ruby: generated clients can now execute every response shape. The request adapter was only ever called with `send_async`, so a void operation raised `factory cannot be null`, a binary one raised on an undefined `Binary` constant, a scalar or primitive collection emitted a bare lowercase type name, and a collection of models silently returned a single empty model. Enum collections, scalar and binary request bodies, and the `int64`, `double`, `decimal`, `int8`, `uint8` and base64 formats are handled too. Requires the runtime gems at 0.22.0. [kiota-ruby#42](https://github.com/microsoft/kiota-ruby/issues/42) [kiota-ruby#54](https://github.com/microsoft/kiota-ruby/issues/54) [kiota-ruby#67](https://github.com/microsoft/kiota-ruby/issues/67) [kiota-ruby#125](https://github.com/microsoft/kiota-ruby/issues/125) [#7956](https://github.com/microsoft/kiota/issues/7956)
+
+- Go: nullable UUID path parameters now dereference the pointer before calling `String()`, so generated request builders compile.
+
+- Ruby: a composed type without a discriminator generated `parse_node.get_child_node("")`, which raises, and composed type wrappers referenced their member classes unqualified so the constants did not resolve. Completes the composed type support added in [#8065](https://github.com/microsoft/kiota/pull/8065). [kiota-ruby#73](https://github.com/microsoft/kiota-ruby/issues/73)
+
+- Fixed TypeScript request metadata to use string response factories for UUID values and collections.
+
+- TypeScript: a composed type holding one of the runtime primitives imported from `@microsoft/kiota-abstractions` (`Guid`, `DateOnly`, `TimeOnly`, `Duration`) generated a client that did not compile, with `error TS1361: 'DateOnly' cannot be used as a value because it was imported using 'import type'`. The serializer narrows those types with `instanceof`, which is a value usage, but a value import was only forced for properties carrying a default value. Composed types now force it as well. [#8177](https://github.com/microsoft/kiota/issues/8177)
+
+- Fixed the generation of a schema used in two roles at once: as the schema of an error response and as an `allOf` child in the discriminator mapping of another error schema. The error refiner replaced its `allOf` base class with the language error base class while the parent's factory method still returned it as a derived type, so the generated C# and Java clients did not compile (`CS0029` / `incompatible types`). Such a schema now keeps its base class and inherits the error base class through its parent, like every other mapped child.
+
+- Dart: an error model's constructor declared the named `additionalData` parameter as `required`, but the generated callers never pass it — inherited error models call a bare `super()` and `createFromDiscriminatorValue` instantiates the class without arguments — so a document with a discriminated error hierarchy generated a client that did not compile. The parameter is now optional and defaults to an empty map in the initializer list.
+- Dart: models whose names differ only in where a separator falls (e.g. the inline property type `Process_error` and the component schema `ProcessError`) snake-cased to the same file name, so one silently overwrote the other and the client did not compile (`Undefined class 'Process_error'`). Colliding file names are now disambiguated, leaving the generated type names unchanged. Same defect as the one fixed for Ruby, part of [#7821](https://github.com/microsoft/kiota/issues/7821).
+- TypeScript: a model property typed as a union with primitive collection members, such as `string[] | number[]`, was serialized as an object: the whole union went to `writeObjectValue`, and in a mixed union the `string[]` member was folded into `writeCollectionOfObjectValues`. Those members are now classified as primitives, guarded with `Array.isArray` and written with `writeCollectionOfPrimitiveValues`, matching how the composed type serializer already treats them. Collections of `binary`, `base64` and `base64url` members are not covered and are still handled as objects: the TypeScript parse node has no reader for a collection of byte arrays, and the generated deserializer reads such a member with the scalar `getByteArrayValue()`. [#8018](https://github.com/microsoft/kiota/issues/8018)
+- TypeScript: a composed type property carrying a default value placed its cast on the default literal instead of on the property, because `a ?? b as T` parses as `a ?? (b as T)`. The writer was then handed the whole union rather than the narrowed member, so the generated client did not compile. The type checks also tested the property without its default, so a property left unset sent nothing, or sent its default to `writeObjectValue` when the union had object members. The property and its default now go into one local that the checks and the casts both read. This affects scalar members as well as the collection members classified above.
+
+- Name correction now walks the code model in a fixed order. Where two names correct to the same value only the element reached first can take it, and the walk followed a dictionary whose order varies between runs, so the winner, and with it the generated output, differed from one run to the next. This removes one source of the non-reproducible generation tracked in [#7997](https://github.com/microsoft/kiota/issues/7997); other sources remain, so the descriptions suppressed for it stay suppressed.
+
+- Ruby: a model sharing its name with a sibling namespace had the disambiguation suffix applied once per reference to it rather than once, so generation failed with `The element to rename was not found available_phone_number_countryModelModelModelModel`. The reference pass was removed: `CodeType.Name` already delegates to the type definition, so references follow the rename on their own. Un-suppresses the Twilio integration and idempotency tests. [kiota-abstractions-ruby#66](https://github.com/microsoft/kiota-abstractions-ruby/issues/66)
+- C#: create property "EqualsEscaped" instead of "Equals" for model properties "equals" to avoid a compiler warning [#8133](https://github.com/microsoft/kiota/issues/8133)
+- A HEAD operation with no response schema generated an executor returning a `Stream`. The default return type was picked from the response codes alone, so a HEAD declaring only a `200` fell through to binary, while one that happened to list `304` returned void by accident. The request method is now checked first, so a HEAD that falls through to the default returns void. [#4245](https://github.com/microsoft/kiota/issues/4245)
+- TypeScript: the discriminator switch in a composed type serializer was built from the wire name, but model properties are camel cased by the refiner, so a discriminator such as `pet_type` was emitted as `.pet_type` where the generated interface declares `petType` and the client did not compile. The accessor is now resolved from the model property, which also corrects `@odata.type` from `.OdataType` to `.odataType`. [#7862](https://github.com/microsoft/kiota/issues/7862)
+- TypeScript: the factory generated for a collection of a primitive union was declared returning the collection but its body read a scalar, so `(number | string)[] | undefined` came back from `parseNode?.getNumberValue() ?? parseNode?.getStringValue()` and only the first item of the payload survived. The collection reads are now emitted for that case, matching what the deserializer already does for the same shape. [#8178](https://github.com/microsoft/kiota/issues/8178)
+- Golang: Fix comment format [#8186](https://github.com/microsoft/kiota/pull/8186)
+- An inline property schema is named after its parent model and property, so the inline `case` property of a `test` schema was named `test_case`, the name of a `test_case` component in the same namespace. Both schemas then resolved to one class and one of them silently lost its properties, depending on the order models were generated in. The inline schema now gets a numeric suffix (`test_case1`) when a component in the description has its name, even one not generated for the selected paths, so the name stays the same whatever paths are included or excluded. [#5967](https://github.com/microsoft/kiota/issues/5967)
+
 ## [1.35.0] - 2026-09-01
 
 ### Added

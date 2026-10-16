@@ -12,16 +12,27 @@ public class CodePropertyWriter : BaseElementWriter<CodeProperty, RubyConvention
         ArgumentNullException.ThrowIfNull(codeElement);
         ArgumentNullException.ThrowIfNull(writer);
         if (codeElement.ExistsInExternalBaseType) return;
-        conventions.WriteShortDescription(codeElement, writer);
-        var returnType = conventions.GetTypeString(codeElement.Type, codeElement);
         if (codeElement.Parent is not CodeClass parentClass) throw new InvalidOperationException("The parent of a property should be a class");
+        var primaryMessageCodePath = codeElement.Kind is CodePropertyKind.ErrorMessageOverride && parentClass.IsErrorDefinition ?
+            parentClass.GetPrimaryMessageCodePath(static x => x.Name.ToSnakeCase(), static x => x.Name.ToSnakeCase(), "&.") :
+            string.Empty;
+        // without a primary message the inherited StandardError#message already applies
+        if (codeElement.Kind is CodePropertyKind.ErrorMessageOverride && string.IsNullOrEmpty(primaryMessageCodePath)) return;
+        RubyConventionService.WriteMemberSeparator(writer);
+        conventions.WriteShortDescription(codeElement, writer);
         switch (codeElement.Kind)
         {
-            case CodePropertyKind.RequestBuilder:
-                writer.WriteLine($"def {codeElement.Name.ToSnakeCase()}()");
+            case CodePropertyKind.ErrorMessageOverride:
+                writer.WriteLine($"def {codeElement.Name.ToSnakeCase()}");
                 writer.IncreaseIndent();
-                var prefix = conventions.GetNormalizedNamespacePrefixForType(codeElement.Type);
-                conventions.AddRequestBuilderBody(parentClass, returnType, writer, prefix: $"return {prefix}");
+                writer.WriteLine($"{primaryMessageCodePath} || \"\"");
+                writer.DecreaseIndent();
+                writer.WriteLine("end");
+                break;
+            case CodePropertyKind.RequestBuilder:
+                writer.WriteLine($"def {codeElement.Name.ToSnakeCase()}");
+                writer.IncreaseIndent();
+                conventions.AddRequestBuilderBody(parentClass, conventions.GetQualifiedTypeName(codeElement.Type), writer);
                 writer.DecreaseIndent();
                 writer.WriteLine("end");
                 break;
@@ -29,6 +40,9 @@ public class CodePropertyWriter : BaseElementWriter<CodeProperty, RubyConvention
             case CodePropertyKind.QueryParameters:
             case CodePropertyKind.Headers:
             case CodePropertyKind.Options:
+            case CodePropertyKind.Custom:
+            case CodePropertyKind.AdditionalData:
+            case CodePropertyKind.BackingStore:
                 writer.WriteLine($"attr_accessor :{codeElement.Name.ToSnakeCase()}");
                 break;
             default:

@@ -569,6 +569,7 @@ public partial class KiotaBuilder
     private CodeNamespace? rootNamespace;
     private CodeNamespace? modelsNamespace;
     private string? modelNamespacePrefixToTrim;
+    private HashSet<string> componentModelNames = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Convert UriSpace of OpenApiPathItems into conceptual SDK Code model
@@ -586,16 +587,21 @@ public partial class KiotaBuilder
             rootNamespace.CustomData["openapi-info-version"] = descriptionVersion;
         var codeNamespace = rootNamespace.AddNamespace(config.ClientNamespaceName);
         modelsNamespace = rootNamespace.AddNamespace(config.ModelsNamespaceName);
+        componentModelNames = GetComponentModelNames();
         InitializeInheritanceIndex();
         StopLogAndReset(stopwatch, nameof(InitializeInheritanceIndex));
         if (root != null)
         {
             stopwatch.Start();
+            root.DisambiguateStaticSegments(config.StructuredMimeTypes);
             CreateRequestBuilderClass(codeNamespace, root, root);
             StopLogAndReset(stopwatch, nameof(CreateRequestBuilderClass));
             stopwatch.Start();
             CreateWebhookModels();
             StopLogAndReset(stopwatch, nameof(CreateWebhookModels));
+            stopwatch.Start();
+            UnmarkDerivedErrorDefinitions();
+            StopLogAndReset(stopwatch, nameof(UnmarkDerivedErrorDefinitions));
             stopwatch.Start();
             MapTypeDefinitions(codeNamespace);
             StopLogAndReset(stopwatch, nameof(MapTypeDefinitions));
@@ -703,10 +709,12 @@ public partial class KiotaBuilder
     /// <param name="token"></param>
     public async Task ApplyLanguageRefinementAsync(GenerationConfiguration config, CodeNamespace generatedCode, CancellationToken token)
     {
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(generatedCode);
         var stopwatch = new Stopwatch();
         stopwatch.Start();
 
-        await ILanguageRefiner.RefineAsync(config, generatedCode, token).ConfigureAwait(false);
+        await ILanguageRefiner.RefineAsync(config, generatedCode, logger, token).ConfigureAwait(false);
 
         stopwatch.Stop();
         LogLanguageRefinementApplied(stopwatch.ElapsedMilliseconds);
@@ -1266,26 +1274,7 @@ public partial class KiotaBuilder
         if (prop.IsOfKind(CodePropertyKind.Custom, CodePropertyKind.QueryParameter) &&
             !propertyName.Equals(childIdentifier, StringComparison.Ordinal))
             prop.SerializationName = childIdentifier;
-        if (kind == CodePropertyKind.Custom &&
-            propertySchema?.Default is JsonValue stringDefaultJsonValue &&
-            !stringDefaultJsonValue.IsJsonNullSentinel() &&
-            stringDefaultJsonValue.TryGetValue<string>(out var stringDefaultValue) &&
-            !string.IsNullOrEmpty(stringDefaultValue) &&
-            !"null".Equals(stringDefaultValue, StringComparison.OrdinalIgnoreCase))
-        {
-            if (TryNormalizeStringDefaultValue(resultType, stringDefaultValue, out var normalizedDefaultValue))
-                prop.DefaultValue = normalizedDefaultValue;
-            else
-                LogInvalidDefaultValue(propertyName, resultType.Name);
-        }
-        else if (kind == CodePropertyKind.Custom &&
-            propertySchema?.Default is JsonValue stringDefaultJsonValue2 &&
-            !stringDefaultJsonValue2.IsJsonNullSentinel() &&
-            (stringDefaultJsonValue2.GetValueKind() == JsonValueKind.Number || stringDefaultJsonValue2.GetValueKind() == JsonValueKind.True || stringDefaultJsonValue2.GetValueKind() == JsonValueKind.False))
-        {
-            //Values not placed in quotes (number and boolean): just forward the value.
-            prop.DefaultValue = stringDefaultJsonValue2.ToString();
-        }
+        SetPropertyDefaultValue(prop, propertySchema);
 
         if (existingType == null)
         {
@@ -1293,6 +1282,30 @@ public partial class KiotaBuilder
             LogCreatingProperty(prop.Name, prop.Type.Name);
         }
         return prop;
+    }
+    private void SetPropertyDefaultValue(CodeProperty prop, IOpenApiSchema? propertySchema)
+    {
+        if (!prop.IsOfKind(CodePropertyKind.Custom) &&
+            !(config.Language == GenerationLanguage.Dart && prop.IsOfKind(CodePropertyKind.QueryParameter)))
+            return;
+        if (propertySchema?.Default is JsonValue stringDefaultJsonValue &&
+            !stringDefaultJsonValue.IsJsonNullSentinel() &&
+            stringDefaultJsonValue.TryGetValue<string>(out var stringDefaultValue) &&
+            (config.Language == GenerationLanguage.Dart || !string.IsNullOrEmpty(stringDefaultValue)) &&
+            (config.Language == GenerationLanguage.Dart || !"null".Equals(stringDefaultValue, StringComparison.OrdinalIgnoreCase)))
+        {
+            if (TryNormalizeStringDefaultValue(prop.Type, stringDefaultValue, out var normalizedDefaultValue))
+                prop.DefaultValue = normalizedDefaultValue;
+            else
+                LogInvalidDefaultValue(prop.Name, prop.Type.Name);
+        }
+        else if (propertySchema?.Default is JsonValue stringDefaultJsonValue2 &&
+            !stringDefaultJsonValue2.IsJsonNullSentinel() &&
+            (stringDefaultJsonValue2.GetValueKind() == JsonValueKind.Number || stringDefaultJsonValue2.GetValueKind() == JsonValueKind.True || stringDefaultJsonValue2.GetValueKind() == JsonValueKind.False))
+        {
+            //Values not placed in quotes (number and boolean): just forward the value.
+            prop.DefaultValue = stringDefaultJsonValue2.ToString();
+        }
     }
     private static readonly HashSet<string> primitiveNumericTypeNames = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -1413,6 +1426,21 @@ public partial class KiotaBuilder
                 LogCouldNotCreateErrorType(errorCode, operation.OperationId);
         }
     }
+    /// <summary>
+    /// Unmarks error definitions that derive from another error definition so they keep their inheritance hierarchy.
+    /// A schema can be used both as the schema of an error response and as a child of another discriminated error schema.
+    /// Since such a class already derives from the error base class through its parent, replacing its base class would
+    /// break the discriminator factory method of the parent which returns the derived types.
+    /// </summary>
+    private void UnmarkDerivedErrorDefinitions()
+    {
+        if (rootNamespace is null) return;
+        foreach (var derivedErrorDefinition in GetAllModels(rootNamespace)
+                                                .OfType<CodeClass>()
+                                                .Where(static x => x.IsErrorDefinition && x.BaseClass is { } baseClass && baseClass.GetInheritanceTree().Any(static y => y.IsErrorDefinition))
+                                                .ToArray())
+            derivedErrorDefinition.IsErrorDefinition = false;
+    }
     private (CodeTypeBase?, CodeTypeBase?) GetExecutorMethodReturnType(OpenApiUrlTreeNode currentNode, IOpenApiSchema? schema, OpenApiOperation operation, CodeClass parentClass, NetHttpMethod operationType)
     {
         if (schema != null)
@@ -1463,19 +1491,21 @@ public partial class KiotaBuilder
             }
             else if (modelType is null)
             {
-                return (GetExecutorMethodDefaultReturnType(operation), null);
+                return (GetExecutorMethodDefaultReturnType(operation, operationType), null);
             }
             return (modelType, null);
         }
         else
         {
-            return (GetExecutorMethodDefaultReturnType(operation), null);
+            return (GetExecutorMethodDefaultReturnType(operation, operationType), null);
         }
     }
-    private static CodeType GetExecutorMethodDefaultReturnType(OpenApiOperation operation)
+    private static CodeType GetExecutorMethodDefaultReturnType(OpenApiOperation operation, NetHttpMethod operationType)
     {
         string returnType;
-        if (operation.Responses?.Any(static x => (x.Value.Content?.ContainsKey(RequestBodyOctetStreamContentType) ?? false) && redirectStatusCodes.Contains(x.Key)) is true)
+        if (operationType == NetHttpMethod.Head)
+            returnType = VoidType;
+        else if (operation.Responses?.Any(static x => (x.Value.Content?.ContainsKey(RequestBodyOctetStreamContentType) ?? false) && redirectStatusCodes.Contains(x.Key)) is true)
             returnType = "binary";
         else if (operation.Responses?.Any(static x => noContentStatusCodes.Contains(x.Key)) is true)
             returnType = VoidType;
@@ -1685,11 +1715,12 @@ public partial class KiotaBuilder
                     if (mediaType.Encoding is not null && mediaType.Encoding.Count != 0)
                     {
                         requestBodyType = new CodeType { Name = "MultipartBody", IsExternal = true, };
-                        foreach (var encodingEntry in mediaType.Encoding
-                                    .Where(x => !string.IsNullOrEmpty(x.Value.ContentType) &&
-                                                config.StructuredMimeTypes.Contains(x.Value.ContentType)))
+                        foreach (var property in requestBodySchema.Properties
+                                    .Where(x => mediaType.Encoding.TryGetValue(x.Key, out var encoding) && !string.IsNullOrEmpty(encoding.ContentType)
+                                        ? config.StructuredMimeTypes.Contains(encoding.ContentType)
+                                        : IsSupportedMultipartDefault(x.Value, config.StructuredMimeTypes)))
                         {
-                            if (CreateModelDeclarations(currentNode, requestBodySchema.Properties[encodingEntry.Key],
+                            if (CreateModelDeclarations(currentNode, property.Value,
                                     operation, method, $"{operationType.Method.ToLowerInvariant().ToFirstCharacterUpperCase()}RequestBody",
                                     isRequestBody: true) is CodeType propertyType &&
                                 propertyType.TypeDefinition is not null)
@@ -2757,6 +2788,28 @@ public partial class KiotaBuilder
         }
         return result;
     }
+    private HashSet<string> GetComponentModelNames()
+    {
+        if (openApiDocument?.Components?.Schemas is not { Count: > 0 } schemas)
+            return new(StringComparer.OrdinalIgnoreCase);
+        return schemas.Keys
+                    .Select(x => $"{GetModelsNamespaceNameFromReferenceId(x)}{NsNameSeparator}{x.Split('/').Last().Split(NsNameSeparator).Last().CleanupSymbolName()}")
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+    /// <summary>
+    /// Returns the class name for an inline property schema, which is named after its parent model and property and can match a component schema
+    /// in the same namespace (e.g. the inline property "case" of "test" and the component "test_case"). A numeric suffix is appended until no component
+    /// uses the name, skipping suffixed names that are the plain name of a sibling inline property (e.g. "case1"), so the result does not depend on
+    /// the order models are generated in.
+    /// </summary>
+    private string GetClassNameNotUsedByComponent(string className, CodeNamespace targetNamespace, HashSet<string> siblingClassNames)
+    {
+        var result = className;
+        var index = 0;
+        while (componentModelNames.Contains($"{targetNamespace.Name}{NsNameSeparator}{result}") || (index > 0 && siblingClassNames.Contains(result)))
+            result = $"{className}{++index}";
+        return result;
+    }
     private static readonly ThreadLocal<int> modelCreationDepth = new(() => 0);
     // Parallel.ForEach may inline tasks on the calling thread, so this depth counter can be
     // inflated across unrelated URL tree nodes sharing a thread. 50 is conservative enough
@@ -2772,14 +2825,19 @@ public partial class KiotaBuilder
         modelCreationDepth.Value++;
         try
         {
+            // a $ref property doesn't take the inline name (see CreateModelDeclarations) unless it's a $dynamicRef, so only these can collide with a suffixed name
+            var inlineClassNames = schema.Properties?
+                    .Where(static x => !x.Value.IsReferencedSchema() || !string.IsNullOrEmpty(x.Value.DynamicRef))
+                    .Select(x => $"{model.Name}_{x.Key.CleanupSymbolName()}")
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var propertiesToAdd = schema.Properties
                     ?.Select(x =>
                     {
                         var propertySchema = x.Value;
-                        var className = $"{model.Name}_{x.Key.CleanupSymbolName()}";
                         var shortestNamespaceName = GetModelsNamespaceNameFromReferenceId(propertySchema.GetReferenceId());
                         var targetNamespace = string.IsNullOrEmpty(shortestNamespaceName) ? ns :
                                             rootNamespace?.FindOrAddNamespace(shortestNamespaceName) ?? ns;
+                        var className = GetClassNameNotUsedByComponent($"{model.Name}_{x.Key.CleanupSymbolName()}", targetNamespace, inlineClassNames);
                         var definition = CreateModelDeclarations(currentNode, propertySchema, default, targetNamespace, string.Empty, typeNameForInlineSchema: className);
                         if (definition == null)
                         {
@@ -2947,10 +3005,13 @@ public partial class KiotaBuilder
     {
         CodeType? resultType = default;
         var addBackwardCompatibleParameter = false;
-
-        if (parameter.Schema is not null && (parameter.Schema.IsEnum() || (parameter.Schema.IsArray() && parameter.Schema.Items.IsEnum())))
+        var parameterSchema = UnwrapQueryParameterSchema(parameter.Schema, out var defaultValueSchema);
+        var itemSchema = UnwrapQueryParameterSchema(parameterSchema?.Items, out _);
+        var isArray = parameterSchema.IsArray() ||
+            parameterSchema is { Type: JsonSchemaType.Array or (JsonSchemaType.Array | JsonSchemaType.Null) } && itemSchema.IsEnum();
+        var enumSchema = isArray ? itemSchema : parameterSchema;
+        if (enumSchema is not null && enumSchema.IsEnum())
         {
-            var enumSchema = parameter.Schema.IsArray() ? parameter.Schema.Items! : parameter.Schema;
             var codeNamespace = enumSchema.IsReferencedSchema() switch
             {
                 true => GetShortestNamespace(parameterClass.GetImmediateParentOfType<CodeNamespace>(), enumSchema), // referenced schema
@@ -2965,19 +3026,19 @@ public partial class KiotaBuilder
                 resultType = new CodeType
                 {
                     TypeDefinition = enumDeclaration,
-                    IsNullable = !parameter.Schema.IsArray()
+                    IsNullable = !isArray
                 };
                 addBackwardCompatibleParameter = true;
             }
         }
-        resultType ??= GetPrimitiveType(parameter.Schema) ?? new CodeType()
+        resultType ??= GetPrimitiveType(parameterSchema) ?? new CodeType()
         {
             // since its a query parameter default to string if there is no schema
             // it also be an object type, but we'd need to create the model in that case and there's no standard on how to serialize those as query parameters
             Name = "string",
             IsExternal = true,
         };
-        resultType.CollectionKind = parameter.Schema.IsArray() ? CodeTypeBase.CodeTypeCollectionKind.Array : default;
+        resultType.CollectionKind = isArray ? CodeTypeBase.CodeTypeCollectionKind.Array : default;
         if (parameter.Name?.SanitizeParameterNameForCodeSymbols() is not string propName) return;
         var prop = new CodeProperty
         {
@@ -2990,6 +3051,7 @@ public partial class KiotaBuilder
             Type = resultType,
             Deprecation = parameter.GetDeprecationInformation(),
         };
+        SetPropertyDefaultValue(prop, defaultValueSchema);
 
         if (!parameter.Name.Equals(prop.Name, StringComparison.OrdinalIgnoreCase))
         {
@@ -3019,6 +3081,22 @@ public partial class KiotaBuilder
         }
     }
 
+    private static IOpenApiSchema? UnwrapQueryParameterSchema(IOpenApiSchema? schema, out IOpenApiSchema? defaultValueSchema)
+    {
+        defaultValueSchema = null;
+        var visited = new HashSet<IOpenApiSchema>();
+        while (schema is not null)
+        {
+            if (defaultValueSchema is null && schema.Default is not null)
+                defaultValueSchema = schema;
+            if (schema is { AllOf.Count: 1 } && schema.AnyOf is not { Count: > 0 } && schema.OneOf is not { Count: > 0 } &&
+                !schema.IsSemanticallyMeaningful() && visited.Add(schema))
+                schema = schema.AllOf[0];
+            else
+                break;
+        }
+        return schema;
+    }
     private static CodeType GetDefaultQueryParameterType()
     {
         return new()

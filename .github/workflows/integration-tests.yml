@@ -20,7 +20,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: 10.0.x
+          global-json-file: global.json
       - name: Restore dependencies
         run: dotnet restore kiota.slnx
       - name: Build
@@ -88,11 +88,13 @@ jobs:
           - dart
         description:
           - "./tests/Kiota.Builder.IntegrationTests/InheritingErrors.yaml"
+          - "./tests/Kiota.Builder.IntegrationTests/InheritingThreeLevels.yaml"
           - "./tests/Kiota.Builder.IntegrationTests/EnumHandling.yaml"
           - "./tests/Kiota.Builder.IntegrationTests/NoUnderscoresInModel.yaml"
           - "./tests/Kiota.Builder.IntegrationTests/ToDoApi.yaml"
           - "./tests/Kiota.Builder.IntegrationTests/GeneratesUritemplateHints.yaml"
           - "./tests/Kiota.Builder.IntegrationTests/DiscriminatorSample.yaml"
+          - "./tests/Kiota.Builder.IntegrationTests/UnionWithoutDiscriminator.yaml"
           - "./tests/Kiota.Builder.IntegrationTests/ModelWithDefaultValues.json"
           - "oas::petstore"
           - "https://api.twitter.com/2/openapi.json"
@@ -124,7 +126,7 @@ jobs:
       - run: chmod a+x ./publish/kiota
       # Common dependency needed to run MockServer
       - name: Set up JDK 17
-        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           java-version: "17"
           distribution: "temurin"
@@ -134,7 +136,7 @@ jobs:
         if: matrix.language == 'csharp'
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: 10.0.x
+          global-json-file: global.json
       - name: Setup Go
         if: matrix.language == 'go'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -144,10 +146,10 @@ jobs:
         if: matrix.language == 'typescript'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.x
+          node-version: 24.x
       - name: Setup Ruby
         if: matrix.language == 'ruby'
-        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
         with:
           ruby-version: "3.3"
           bundler-cache: true
@@ -164,7 +166,7 @@ jobs:
           python-version: "3.14"
       - name: Setup Dart
         if: matrix.language == 'dart'
-        uses: dart-lang/setup-dart@7654d458321ee25acccccfdb86cd48bd95768ff1 # v1.8.0
+        uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
         with:
           sdk: "stable"
 
@@ -189,7 +191,7 @@ jobs:
         if: always()
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
+        if: always() && github.event_name != 'merge_group'
         with:
           name: generation-results-${{ matrix.language }}-${{ steps.replace_url.outputs.ARTKEY }}
           path: it/${{ matrix.language }}.zip
