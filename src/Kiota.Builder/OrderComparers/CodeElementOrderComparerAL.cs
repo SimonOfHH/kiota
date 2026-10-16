@@ -8,6 +8,16 @@ public class CodeElementOrderComparerAL : CodeElementOrderComparer
 {
     protected override int methodKindWeight => 200;
 
+    public override int Compare(CodeElement? x, CodeElement? y)
+    {
+        var result = base.Compare(x, y);
+        // Same-name overloads (e.g. backward-compatible ToJson overloads) can tie on every base factor;
+        // break the tie deterministically instead of falling back to ConcurrentDictionary enumeration order.
+        if (result != 0 || x is not CodeMethod xMethod || y is not CodeMethod yMethod)
+            return result;
+        return xMethod.GetInt(ALCustomDataKeys.OverloadRank, 0).CompareTo(yMethod.GetInt(ALCustomDataKeys.OverloadRank, 0));
+    }
+
     protected override int GetMethodKindFactor(CodeElement element)
     {
         if (element is CodeMethod method)

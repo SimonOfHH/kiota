@@ -207,6 +207,55 @@ them on the next run whenever the *same* object is seen again.
     migration guessed wrong (e.g. an ambiguous legacy match) and should be
     investigated before committing.
 
+#### Backward-compatible `ToJson` overloads (`toJsonSignatures`)
+
+Every model codeunit has a `ToJson(...)` overload that takes **one parameter
+per property**. Adding a property to a schema — harmless for a REST API — would
+therefore change that procedure's signature and break every AL caller. When
+`objectMapPath` is configured, each model's map entry additionally records the
+history of that overload's parameter sets:
+
+```json
+"ApiSdk.models::Alpha": {
+  "objectId": 50001,
+  "objectType": "codeunit",
+  "assignedName": "Alpha",
+  "tombstoned": false,
+  "toJsonSignatures": [
+    { "parameters": [ { "name": "foo", "type": "Text" } ], "supersededInSpecVersion": "1.1.0" },
+    { "parameters": [ { "name": "bar", "type": "Integer" }, { "name": "foo", "type": "Text" } ] }
+  ]
+}
+```
+
+- The entry without `supersededInSpecVersion` is the **current** parameter set.
+  When it changes, the previous one is marked with the OpenAPI document's
+  `info.version` of *that* generation run. The version is captured **once** and
+  never changes afterwards, so regenerating in a pipeline is deterministic and
+  needs no manual version bump (it is the **spec version**, not the AL app
+  version). If `info.version` is empty the tag is omitted.
+- For every superseded set, an additional `ToJson` overload is generated with
+  `[Obsolete('<reason>', '<spec version>')]`. It serializes exactly the
+  properties it takes, so the JSON produced for existing callers is unchanged.
+- A superseded set is **skipped** (kept in the history, but not emitted) when:
+  it has no parameters (would clash with `ToJson()`); any of its properties was
+  removed or changed type (the property's getter/setter is already a breaking
+  change in that case); or its AL parameter *type* sequence equals the current
+  overload's or a newer emitted one's (AL resolves overloads by parameter types
+  only, so it would not compile — the newer set wins).
+- History entries are never removed. A set that becomes current again (e.g. a
+  property removed and later re-added) simply loses its
+  `supersededInSpecVersion`.
+- **History starts with the first run that has this feature.** To capture a
+  parameter set that was already superseded before that (e.g. a property was
+  added in the spec you are about to generate), regenerate once against the
+  *previous* spec with the existing map (this records the old set; objects that
+  only exist in the newer spec are temporarily tombstoned, keeping their
+  ids/names), then regenerate against the current spec.
+- **Pipelines:** as with the rest of the map, the updated map file must be
+  persisted between runs (e.g. committed back together with the generated
+  output), otherwise the history is lost.
+
 ### Open for discussion
 
 The `al-config.json` side-file approach is a **pragmatic first cut**, not a

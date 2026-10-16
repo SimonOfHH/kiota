@@ -987,6 +987,153 @@ public class ALLanguageRefinerTests
         }
     }
 
+    /// <summary>
+    /// Runs the AL refiner once per entry in <paramref name="runs"/> against a shared, persisted object
+    /// map. Each run builds a fresh tree with a single "Alpha" model class carrying the given string/
+    /// integer properties (name -> Kiota type name), with the root namespace tagged with the given
+    /// OpenAPI info.version. Returns the refined "Alpha" class of every run plus the map file path.
+    /// </summary>
+    private static async Task<(CodeClass[] Classes, string MapPath)> RefineAlphaAcrossRunsWithObjectMapAsync(string tempDir, params (string? SpecVersion, (string Name, string Type)[] Properties)[] runs)
+    {
+        System.IO.File.WriteAllText(
+            System.IO.Path.Combine(tempDir, "al-config.json"),
+            "{\"objectMapPath\":\"obj-map.json\"}");
+        var classes = new CodeClass[runs.Length];
+        for (var i = 0; i < runs.Length; i++)
+        {
+            var config = new GenerationConfiguration
+            {
+                Language = GenerationLanguage.AL,
+                OutputPath = System.IO.Path.Combine(tempDir, "output"),
+                ClientClassName = "ApiClient",
+                ClientNamespaceName = "ApiSdk",
+            };
+            var runRoot = CodeNamespace.InitRootNamespace();
+            if (runs[i].SpecVersion is not null)
+                runRoot.CustomData[ALCustomDataKeys.OpenApiInfoVersion] = runs[i].SpecVersion!;
+            var alpha = TestHelper.CreateModelClassInModelsNamespace(config, runRoot, "Alpha");
+            foreach (var (name, type) in runs[i].Properties)
+                alpha.AddProperty(new CodeProperty { Name = name, Kind = CodePropertyKind.Custom, Type = new CodeType { Name = type, IsExternal = true } });
+            await ILanguageRefiner.RefineAsync(config, runRoot, cancellationToken: TestContext.Current.CancellationToken);
+            classes[i] = alpha;
+        }
+        return (classes, System.IO.Path.Combine(tempDir, "obj-map.json"));
+    }
+
+    private static CodeMethod[] GetLegacyToJsonOverloads(CodeClass codeClass) =>
+        codeClass.Methods
+            .Where(static m => m.GetCategory() == ALMethodCategory.ToJsonLegacyOverload)
+            .OrderBy(static m => m.GetInt(ALCustomDataKeys.OverloadRank, 0))
+            .ToArray();
+
+    private static string[] GetParameterNames(CodeMethod method) =>
+        method.OrderedParameters().Select(static p => p.Name).ToArray();
+
+    [Fact]
+    public async Task AddsObsoleteBackwardCompatibleToJsonOverloadWhenAModelGainsAPropertyAsync()
+    {
+        var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tempDir);
+        try
+        {
+            var (classes, mapPath) = await RefineAlphaAcrossRunsWithObjectMapAsync(tempDir,
+                ("1.0.0", [("foo", "string")]),
+                ("1.1.0", [("foo", "string"), ("bar", "integer")]),
+                ("1.2.0", [("foo", "string"), ("bar", "integer")]));
+
+            // Run 1: nothing superseded yet.
+            Assert.Empty(GetLegacyToJsonOverloads(classes[0]));
+
+            // Run 2: the earlier (foo) parameter set is kept as an obsolete overload, tagged with the
+            // spec version that superseded it.
+            var legacy2 = Assert.Single(GetLegacyToJsonOverloads(classes[1]));
+            Assert.Equal(CodeMethodKind.Serializer, legacy2.Kind);
+            Assert.Equal("ToJson", legacy2.Name);
+            Assert.Equal(["foo"], GetParameterNames(legacy2));
+            Assert.Equal("1.1.0", legacy2.Deprecation?.Version);
+
+            // The current overload still takes all properties.
+            var current2 = Assert.Single(classes[1].Methods, m => m.Kind == CodeMethodKind.Serializer && m.GetCategory() != ALMethodCategory.ToJsonLegacyOverload && m.OrderedParameters().Any());
+            Assert.Equal(["bar", "foo"], GetParameterNames(current2));
+
+            // Run 3 (newer spec version, unchanged model): the superseded version is captured once and stays stable.
+            var legacy3 = Assert.Single(GetLegacyToJsonOverloads(classes[2]));
+            Assert.Equal("1.1.0", legacy3.Deprecation?.Version);
+
+            var savedMap = ALObjectMap.LoadFromDisk(mapPath);
+            var signatures = Assert.Single(savedMap.Objects.Values, e => e.AssignedName == "Alpha").ToJsonSignatures;
+            Assert.NotNull(signatures);
+            Assert.Equal(2, signatures!.Count);
+            Assert.Equal("1.1.0", signatures[0].SupersededInSpecVersion);
+            Assert.True(signatures[1].IsCurrent);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task SkipsBackwardCompatibleToJsonOverloadWhenAPropertyWasRemovedAsync()
+    {
+        var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tempDir);
+        try
+        {
+            var (classes, mapPath) = await RefineAlphaAcrossRunsWithObjectMapAsync(tempDir,
+                ("1.0.0", [("foo", "string"), ("bar", "integer")]),
+                ("1.1.0", [("foo", "string")]));
+
+            // The superseded (bar, foo) set references a property that no longer exists - not emitted.
+            Assert.Empty(GetLegacyToJsonOverloads(classes[1]));
+
+            // ...but it is still kept in the persisted history.
+            var savedMap = ALObjectMap.LoadFromDisk(mapPath);
+            var signatures = Assert.Single(savedMap.Objects.Values, e => e.AssignedName == "Alpha").ToJsonSignatures;
+            Assert.Equal(2, signatures!.Count);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task EmitsOnlyTheNewestBackwardCompatibleToJsonOverloadForCollidingAlSignaturesAsync()
+    {
+        var tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tempDir);
+        try
+        {
+            // (a, b) and (a, c) are both (Text, Text) - AL resolves overloads by parameter types only,
+            // so only one of them can exist next to the current (a, b, c) overload.
+            var (classes, _) = await RefineAlphaAcrossRunsWithObjectMapAsync(tempDir,
+                ("1.0.0", [("a", "string"), ("b", "string")]),
+                ("2.0.0", [("a", "string"), ("c", "string")]),
+                ("3.0.0", [("a", "string"), ("b", "string"), ("c", "string")]));
+
+            var legacy = Assert.Single(GetLegacyToJsonOverloads(classes[2]));
+            Assert.Equal(["a", "c"], GetParameterNames(legacy));
+            Assert.Equal("3.0.0", legacy.Deprecation?.Version);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task DoesNotAddBackwardCompatibleToJsonOverloadsWithoutAnObjectMapAsync()
+    {
+        var config = CreateConfiguration();
+        var alpha = TestHelper.CreateModelClassInModelsNamespace(config, root, "Alpha");
+        alpha.AddProperty(new CodeProperty { Name = "foo", Kind = CodePropertyKind.Custom, Type = new CodeType { Name = "string", IsExternal = true } });
+
+        await ILanguageRefiner.RefineAsync(config, root, cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Empty(GetLegacyToJsonOverloads(alpha));
+    }
+
     [Fact]
     public async Task PersistedObjectMapKeepsIdAndNameWhenAnEnumGainsAnOptionAsync()
     {

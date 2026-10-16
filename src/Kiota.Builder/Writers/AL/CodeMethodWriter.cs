@@ -32,6 +32,8 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
     private void WriteMethodPrototype(CodeMethod method, LanguageWriter writer)
     {
         WriteMethodDocumentation(method, writer);
+        if (method.IsCategory(ALMethodCategory.ToJsonLegacyOverload))
+            WriteLegacyToJsonObsoleteAttribute(method, writer);
 
         // Access modifier
         var access = method.Access == AccessModifier.Private ? "local " :
@@ -90,6 +92,24 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, ALConventionServic
 
         writer.WriteLine("begin");
         writer.IncreaseIndent();
+    }
+
+    /// <summary>
+    /// Emits the <c>[Obsolete('reason', 'tag')]</c> attribute for a backward-compatible ToJson overload.
+    /// The tag is the OpenAPI spec version (<c>info.version</c>) the parameter set was superseded in;
+    /// it is omitted when unknown. Both values are schema/map derived and sanitized for AL literals.
+    /// </summary>
+    private static void WriteLegacyToJsonObsoleteAttribute(CodeMethod method, LanguageWriter writer)
+    {
+        var specVersion = method.Deprecation?.Version;
+        if (string.IsNullOrEmpty(specVersion))
+        {
+            const string reason = "Kept for backward compatibility with an earlier API spec version. Use the ToJson overload with all properties instead.";
+            writer.WriteLine($"[Obsolete('{reason.SanitizeAlSingleQuote()}')]");
+            return;
+        }
+        var reasonWithVersion = $"Kept for backward compatibility. Superseded in API spec version {specVersion}. Use the ToJson overload with all properties instead.";
+        writer.WriteLine($"[Obsolete('{reasonWithVersion.SanitizeAlSingleQuote()}', '{specVersion.SanitizeAlSingleQuote()}')]");
     }
 
     private string FormatParameter(CodeParameter param)

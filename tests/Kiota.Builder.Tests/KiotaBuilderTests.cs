@@ -2843,6 +2843,25 @@ paths:
         Assert.True(dictionaryWrapperClass.CustomData.TryGetValue("AdditionalPropertiesValueTypeName", out var taggedValueTypeName));
         Assert.Equal("PriceComponentType", taggedValueTypeName);
     }
+    [Theory]
+    [InlineData("1.66.1", true)]
+    [InlineData("", false)]
+    public void TagsRootNamespaceWithDescriptionInfoVersion(string version, bool expectTag)
+    {
+        var document = new OpenApiDocument
+        {
+            Info = new OpenApiInfo { Title = "Test", Version = version },
+            Paths = new OpenApiPaths(),
+        };
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", ApiRootUrl = "https://localhost" }, _httpClient);
+        builder.SetOpenApiDocument(document);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        Assert.Equal(expectTag, codeModel.CustomData.TryGetValue("openapi-info-version", out var taggedVersion));
+        if (expectTag)
+            Assert.Equal(version, taggedVersion);
+    }
     [Fact]
     public void SquishesLonelyNullables()
     {

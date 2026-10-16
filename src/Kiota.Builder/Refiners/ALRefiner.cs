@@ -75,7 +75,10 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
             // Step 5: Class augmentation
             UpdateApiClientClass(generatedCode, alConfig, conventionService, _configuration);
-            UpdateModelClasses(generatedCode, alConfig, conventionService);
+            var toJsonHistory = objectMap is null
+                ? null
+                : new ToJsonHistoryContext(objectMap, generatedCode.GetData(ALCustomDataKeys.OpenApiInfoVersion), new Dictionary<string, IReadOnlyList<ALToJsonSignature>>(StringComparer.Ordinal));
+            UpdateModelClasses(generatedCode, alConfig, conventionService, toJsonHistory);
             UpdateRequestBuilderClasses(generatedCode, alConfig, conventionService);
 
             // Step 5.5: Value-wrapper convenience overloads
@@ -105,7 +108,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             if (objectMap is not null && objectMapPath is not null)
             {
                 var seenKeys = new HashSet<string>(StringComparer.Ordinal);
-                CollectObjectMapEntries(generatedCode, objectMap, seenKeys);
+                CollectObjectMapEntries(generatedCode, objectMap, seenKeys, toJsonHistory?.Pending);
                 objectMap.MarkTombstonesExcept(seenKeys);
                 objectMap.FormatVersion = 2;
                 objectMap.SaveToDisk(objectMapPath);
@@ -223,7 +226,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
     /// legacy entry is re-keyed (not tombstoned) to the new key first - see
     /// <see cref="ALObjectMap.Rekey"/> remarks and the class-level "REKEY, not tombstone" decision.
     /// </summary>
-    private static void CollectObjectMapEntries(CodeElement currentElement, ALObjectMap map, HashSet<string> seenKeys)
+    private static void CollectObjectMapEntries(CodeElement currentElement, ALObjectMap map, HashSet<string> seenKeys, IReadOnlyDictionary<string, IReadOnlyList<ALToJsonSignature>>? pendingToJsonSignatures)
     {
         if (currentElement is CodeClass { Parent: CodeNamespace parentNs } c && c.HasData(ALCustomDataKeys.ObjectId))
         {
@@ -234,7 +237,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             if (c.TryGetData(ALCustomDataKeys.ObjectMapLegacyKey, out var legacyKey) && legacyKey != key)
                 map.Rekey(legacyKey, key);
             seenKeys.Add(key);
-            map.Upsert(key, c.GetInt(ALCustomDataKeys.ObjectId, 0), "codeunit", c.Name);
+            map.Upsert(key, c.GetInt(ALCustomDataKeys.ObjectId, 0), "codeunit", c.Name, pendingToJsonSignatures?.GetValueOrDefault(key));
         }
         else if (currentElement is CodeEnum { Parent: CodeNamespace parentNsEnum } e && e.HasData(ALCustomDataKeys.ObjectId))
         {
@@ -244,7 +247,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
             seenKeys.Add(key);
             map.Upsert(key, e.GetInt(ALCustomDataKeys.ObjectId, 0), "enum", e.Name);
         }
-        CrawlTree(currentElement, x => CollectObjectMapEntries(x, map, seenKeys));
+        CrawlTree(currentElement, x => CollectObjectMapEntries(x, map, seenKeys, pendingToJsonSignatures));
     }
 
     #region Step 1: ModifyNamespaces
@@ -1227,7 +1230,7 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
         CrawlTree(currentElement, x => UpdateApiClientClass(x, alConfig, conventionService, configuration));
     }
 
-    private static void UpdateModelClasses(CodeElement currentElement, ALConfiguration alConfig, ALConventionService conventionService)
+    private static void UpdateModelClasses(CodeElement currentElement, ALConfiguration alConfig, ALConventionService conventionService, ToJsonHistoryContext? toJsonHistory)
     {
         if (currentElement is CodeClass codeClass && codeClass.IsOfKind(CodeClassKind.Model))
         {
@@ -1286,67 +1289,171 @@ public class ALRefiner : CommonLanguageRefiner, ILanguageRefiner
 
             // Add ToJson (with parameters - overload)
             var getters = codeClass.Methods.Where(m => m.IsGetterMethod()).ToList();
+            CodeMethod? toJson2 = null;
             if (getters.Count != 0)
             {
-                var toJson2 = CreateMethod("ToJson-overload", CodeMethodKind.Serializer, codeClass, "JsonObject");
-                toJson2.SimpleName = "ToJson";
-                toJson2.OriginalMethod = toJson1;
+                toJson2 = CreateToJsonOverload("ToJson-overload", codeClass, toJson1, getters);
                 toJson2.SetData(ALCustomDataKeys.SortingValue, "104");
-                toJson2.SetData(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.ParameterNameClash);
-
-                // Add TargetJson local var
-                AddLocalVariable(toJson2, "TargetJson", "JsonObject");
-
-                foreach (var getter in getters)
-                {
-                    var paramType = (CodeTypeBase)getter.ReturnType.Clone();
-                    var paramName = getter.SimpleName.ToFirstCharacterLowerCase() ?? getter.Name.ToFirstCharacterLowerCase();
-                    var param = new CodeParameter
-                    {
-                        Name = paramName,
-                        Kind = CodeParameterKind.Custom,
-                        Type = paramType,
-                    };
-                    param.SetData(ALCustomDataKeys.PropertyName, getter.GetData(ALCustomDataKeys.PropertyName, string.Empty));
-                    if (paramType.IsDictionaryType())
-                    {
-                        var singularName = CodeMethodExtensions.GetSingularName(paramName, toJson2.Parameters);
-                        param.SetData(ALCustomDataKeys.KeyVariable, $"{singularName}Key");
-                        param.SetData(ALCustomDataKeys.ValueVariable, $"{singularName}Value");
-                        param.SetData(ALCustomDataKeys.ObjectVariable, $"{paramName}Object");
-
-                        AddLocalVariable(toJson2, $"{singularName}Key", "Text");
-
-                        var type = (CodeTypeBase)getter.ReturnType.Clone();
-                        if (type is CodeType et) et.RemoveData(ALCustomDataKeys.AlDictionary);
-                        AddLocalVariable(toJson2, $"{singularName}Value", type);
-
-                        AddLocalVariable(toJson2, $"{paramName}Object", "JsonObject");
-                    }
-                    // For codeunit collections, add array + foreach vars
-                    else if (paramType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None &&
-                        paramType is CodeType pt && pt.TypeDefinition is CodeClass)
-                    {
-                        var singularName = CodeMethodExtensions.GetSingularName(paramName, toJson2.Parameters);
-                        param.SetData(ALCustomDataKeys.ForeachVariable, singularName);
-
-                        var arrayName = $"{paramName}Array";
-                        param.SetData(ALCustomDataKeys.CorrespondingArray, arrayName);
-
-                        AddLocalVariable(toJson2, arrayName, "JsonArray");
-
-                        var elementType = (CodeTypeBase)paramType.Clone();
-                        elementType.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.None;
-                        AddLocalVariable(toJson2, singularName, elementType);
-                    }
-
-                    toJson2.AddParameter(param);
-                }
-
                 codeClass.AddMethod(toJson2);
             }
+
+            if (toJsonHistory is not null)
+                AddBackwardCompatibleToJsonOverloads(codeClass, toJson1, toJson2, getters, conventionService, toJsonHistory);
         }
-        CrawlTree(currentElement, x => UpdateModelClasses(x, alConfig, conventionService));
+        CrawlTree(currentElement, x => UpdateModelClasses(x, alConfig, conventionService, toJsonHistory));
+    }
+
+    /// <summary>
+    /// Run-scoped state for the persisted ToJson parameter-set history (only created when an object
+    /// map is configured). <see cref="Pending"/> collects each model's merged history keyed by its
+    /// <see cref="ALCustomDataKeys.ObjectMapKey"/>, written back by <see cref="CollectObjectMapEntries"/>.
+    /// </summary>
+    private sealed record ToJsonHistoryContext(ALObjectMap Map, string? SpecVersion, Dictionary<string, IReadOnlyList<ALToJsonSignature>> Pending);
+
+    private static string GetToJsonParameterName(CodeMethod getter) =>
+        getter.SimpleName.ToFirstCharacterLowerCase() ?? getter.Name.ToFirstCharacterLowerCase();
+
+    /// <summary>
+    /// Creates a <c>ToJson(...)</c> overload taking one parameter per getter in <paramref name="getters"/>
+    /// (plus the local variables the writer needs to serialize dictionaries/codeunit collections).
+    /// </summary>
+    private static CodeMethod CreateToJsonOverload(string name, CodeClass codeClass, CodeMethod toJson1, IEnumerable<CodeMethod> getters)
+    {
+        var overload = CreateMethod(name, CodeMethodKind.Serializer, codeClass, "JsonObject");
+        overload.SimpleName = "ToJson";
+        overload.OriginalMethod = toJson1;
+        overload.SetData(ALCustomDataKeys.Pragmas, ALCustomDataKeys.PragmaCodes.ParameterNameClash);
+
+        // Add TargetJson local var
+        AddLocalVariable(overload, "TargetJson", "JsonObject");
+
+        foreach (var getter in getters)
+        {
+            var paramType = (CodeTypeBase)getter.ReturnType.Clone();
+            var paramName = GetToJsonParameterName(getter);
+            var param = new CodeParameter
+            {
+                Name = paramName,
+                Kind = CodeParameterKind.Custom,
+                Type = paramType,
+            };
+            param.SetData(ALCustomDataKeys.PropertyName, getter.GetData(ALCustomDataKeys.PropertyName, string.Empty));
+            if (paramType.IsDictionaryType())
+            {
+                var singularName = CodeMethodExtensions.GetSingularName(paramName, overload.Parameters);
+                param.SetData(ALCustomDataKeys.KeyVariable, $"{singularName}Key");
+                param.SetData(ALCustomDataKeys.ValueVariable, $"{singularName}Value");
+                param.SetData(ALCustomDataKeys.ObjectVariable, $"{paramName}Object");
+
+                AddLocalVariable(overload, $"{singularName}Key", "Text");
+
+                var type = (CodeTypeBase)getter.ReturnType.Clone();
+                if (type is CodeType et) et.RemoveData(ALCustomDataKeys.AlDictionary);
+                AddLocalVariable(overload, $"{singularName}Value", type);
+
+                AddLocalVariable(overload, $"{paramName}Object", "JsonObject");
+            }
+            // For codeunit collections, add array + foreach vars
+            else if (paramType.CollectionKind != CodeTypeBase.CodeTypeCollectionKind.None &&
+                paramType is CodeType pt && pt.TypeDefinition is CodeClass)
+            {
+                var singularName = CodeMethodExtensions.GetSingularName(paramName, overload.Parameters);
+                param.SetData(ALCustomDataKeys.ForeachVariable, singularName);
+
+                var arrayName = $"{paramName}Array";
+                param.SetData(ALCustomDataKeys.CorrespondingArray, arrayName);
+
+                AddLocalVariable(overload, arrayName, "JsonArray");
+
+                var elementType = (CodeTypeBase)paramType.Clone();
+                elementType.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.None;
+                AddLocalVariable(overload, singularName, elementType);
+            }
+
+            overload.AddParameter(param);
+        }
+        return overload;
+    }
+
+    /// <summary>The (name, AL type) parameter list of a ToJson overload, in emitted order.</summary>
+    private static List<ALToJsonParameter> GetToJsonSignature(CodeMethod? overload, ALConventionService conventionService) =>
+        overload is null
+            ? []
+            : overload.OrderedParameters()
+                .Select(p => new ALToJsonParameter { Name = p.Name, Type = conventionService.GetTypeString(p.Type, p) })
+                .ToList();
+
+    private static string GetTypeSequence(IEnumerable<ALToJsonParameter> parameters) =>
+        string.Join("|", parameters.Select(static p => p.Type));
+
+    /// <summary>
+    /// Merges the model's current full ToJson parameter set into its persisted history (see
+    /// <see cref="ALObjectMap.MergeToJsonSignatures"/>) and emits one backward-compatible,
+    /// <c>[Obsolete]</c> <c>ToJson</c> overload per superseded parameter set, so callers compiled
+    /// against an earlier version of the spec keep compiling after a property was added.
+    /// <para>
+    /// A superseded set is skipped when it has no parameters (would clash with <c>ToJson()</c>), when
+    /// any of its (name, type) parameters no longer exists on the model (removed/retyped property - the
+    /// getter/setter API is already broken in that case), or when its AL type sequence equals the
+    /// current overload's or an already emitted one's (AL overloads are resolved by parameter types
+    /// only, so it would not compile). Newer sets win over older ones.
+    /// </para>
+    /// </summary>
+    private static void AddBackwardCompatibleToJsonOverloads(CodeClass codeClass, CodeMethod toJson1, CodeMethod? currentOverload, IReadOnlyList<CodeMethod> getters, ALConventionService conventionService, ToJsonHistoryContext context)
+    {
+        if (!codeClass.TryGetData(ALCustomDataKeys.ObjectMapKey, out var mapKey) || string.IsNullOrEmpty(mapKey))
+            return;
+
+        IReadOnlyList<ALToJsonSignature>? existing = null;
+        if (context.Map.Objects.TryGetValue(mapKey, out var entry))
+            existing = entry.ToJsonSignatures;
+        else if (codeClass.TryGetData(ALCustomDataKeys.ObjectMapLegacyKey, out var legacyKey) && context.Map.Objects.TryGetValue(legacyKey, out var legacyEntry))
+            existing = legacyEntry.ToJsonSignatures;
+
+        var currentSignature = GetToJsonSignature(currentOverload, conventionService);
+        // Don't start a history for a model that never had any properties.
+        if (currentSignature.Count == 0 && (existing is null || existing.Count == 0))
+            return;
+
+        var history = ALObjectMap.MergeToJsonSignatures(existing, currentSignature, context.SpecVersion);
+        context.Pending[mapKey] = history;
+
+        var gettersByParameterName = new Dictionary<string, CodeMethod>(StringComparer.Ordinal);
+        foreach (var getter in getters)
+            gettersByParameterName.TryAdd(GetToJsonParameterName(getter), getter);
+        var currentTypesByName = currentSignature
+            .GroupBy(static p => p.Name, StringComparer.Ordinal)
+            .ToDictionary(static g => g.Key, static g => g.First().Type, StringComparer.Ordinal);
+
+        var emittedTypeSequences = new HashSet<string>(StringComparer.Ordinal) { GetTypeSequence(currentSignature) };
+        var rank = 0;
+        for (var i = history.Count - 1; i >= 0; i--)
+        {
+            var signature = history[i];
+            if (signature.IsCurrent || signature.Parameters.Count == 0)
+                continue;
+            if (!signature.Parameters.All(p => currentTypesByName.TryGetValue(p.Name, out var type) &&
+                                               string.Equals(type, p.Type, StringComparison.Ordinal) &&
+                                               gettersByParameterName.ContainsKey(p.Name)))
+                continue;
+            if (!emittedTypeSequences.Add(GetTypeSequence(signature.Parameters)))
+                continue;
+
+            rank++;
+            var legacyOverload = CreateToJsonOverload(
+                $"ToJson-overload-legacy-{rank.ToString(CultureInfo.InvariantCulture)}",
+                codeClass,
+                toJson1,
+                signature.Parameters.Select(p => gettersByParameterName[p.Name]));
+            // Defensive: the rebuilt overload must reproduce the persisted signature exactly.
+            if (!signature.HasSameParameters(GetToJsonSignature(legacyOverload, conventionService)))
+                continue;
+            legacyOverload.SetCategory(ALMethodCategory.ToJsonLegacyOverload);
+            legacyOverload.SetData(ALCustomDataKeys.SortingValue, "104");
+            legacyOverload.SetData(ALCustomDataKeys.OverloadRank, rank.ToString(CultureInfo.InvariantCulture));
+            legacyOverload.Deprecation = new DeprecationInformation(null, Version: signature.SupersededInSpecVersion);
+            codeClass.AddMethod(legacyOverload);
+        }
     }
 
     private static void UpdateRequestBuilderClasses(CodeElement currentElement, ALConfiguration alConfig, ALConventionService conventionService)

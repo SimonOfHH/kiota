@@ -91,6 +91,60 @@ public sealed class CodeMethodWriterTests : IDisposable
         Assert.Contains("procedure DoThing(id: Text)", result);
     }
 
+    private CodeMethod AddLegacyToJsonOverload(string? specVersion)
+    {
+        var method = parentClass.AddMethod(new CodeMethod
+        {
+            Name = "ToJson-overload-legacy-1",
+            SimpleName = "ToJson",
+            Kind = CodeMethodKind.Serializer,
+            ReturnType = new CodeType { Name = "JsonObject", IsExternal = true },
+            Deprecation = new DeprecationInformation(null, Version: specVersion),
+        }).First();
+        method.SetCategory(ALMethodCategory.ToJsonLegacyOverload);
+        method.AddParameter(new CodeParameter { Name = "foo", Kind = CodeParameterKind.Custom, Type = new CodeType { Name = "string" } });
+        return method;
+    }
+
+    [Fact]
+    public void WritesObsoleteAttributeWithSpecVersionTagOnLegacyToJsonOverload()
+    {
+        var method = AddLegacyToJsonOverload("1.66.1");
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("[Obsolete('Kept for backward compatibility. Superseded in API spec version 1.66.1. Use the ToJson overload with all properties instead.', '1.66.1')]", result);
+        Assert.True(result.IndexOf("[Obsolete(", StringComparison.Ordinal) < result.IndexOf("procedure ToJson(foo: Text)", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void WritesObsoleteAttributeWithoutTagWhenSpecVersionIsUnknown()
+    {
+        var method = AddLegacyToJsonOverload(string.Empty);
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("[Obsolete('Kept for backward compatibility with an earlier API spec version. Use the ToJson overload with all properties instead.')]", result);
+    }
+
+    [Fact]
+    public void SanitizesHostileSpecVersionInObsoleteAttribute()
+    {
+        var method = AddLegacyToJsonOverload("1.0'); Error('x\r\n");
+        writer.Write(method);
+        var result = tw.ToString();
+        var obsoleteLine = Assert.Single(result.Split('\n'), l => l.Contains("[Obsolete(", StringComparison.Ordinal));
+        Assert.Contains("'1.0''); Error(''x  ')]", obsoleteLine);
+        Assert.DoesNotContain("'1.0');", obsoleteLine);
+    }
+
+    [Fact]
+    public void DoesNotWriteObsoleteAttributeOnRegularMethods()
+    {
+        var method = AddMethod();
+        method.Deprecation = new DeprecationInformation("deprecated in spec", Version: "1.0");
+        writer.Write(method);
+        Assert.DoesNotContain("[Obsolete(", tw.ToString());
+    }
+
     [Fact]
     public void WritesByRefParameterWithVarKeyword()
     {

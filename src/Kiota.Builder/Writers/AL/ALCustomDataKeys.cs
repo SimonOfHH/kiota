@@ -32,6 +32,9 @@ internal static class ALCustomDataKeys
     public const string Deduplicated = "deduplicated";
     /// <summary>Records the ancestor type a flattened (inherited) property originated from.</summary>
     public const string InheritedFrom = "inherited-from";
+    /// <summary>The OpenAPI document's <c>info.version</c>, set on the root namespace by
+    /// <c>KiotaBuilder.CreateSourceModel</c> (language-agnostic key, same literal value).</summary>
+    public const string OpenApiInfoVersion = "openapi-info-version";
 
     // --- Pragmas ---
     /// <summary>Comma-separated AL warning codes to suppress around the object/member.</summary>
@@ -66,6 +69,9 @@ internal static class ALCustomDataKeys
     public const string SourceType = "source-type";
     /// <summary>Stable ordering hint used by the AL order comparer.</summary>
     public const string SortingValue = "sorting-value";
+    /// <summary>Final tie-breaker used by the AL order comparer for same-name overloads that would
+    /// otherwise compare equal on every other factor (e.g. backward-compatible ToJson overloads).</summary>
+    public const string OverloadRank = "overload-rank";
     /// <summary>Explicit parameter ordering index (lower sorts first; absent means insertion order).</summary>
     public const string OrderIndex = "order-index";
     /// <summary>Explicit AL return variable name for a method.</summary>

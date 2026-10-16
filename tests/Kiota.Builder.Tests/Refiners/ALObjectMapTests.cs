@@ -255,4 +255,115 @@ public class ALObjectMapTests
         Assert.Equal(1, map.Objects["ApiSdk.models::Alpha::foo"].ObjectId);
         Assert.Equal(2, map.Objects["ApiSdk.models::Alpha"].ObjectId);
     }
+
+    private static List<ALToJsonParameter> Params(params string[] nameTypePairs)
+    {
+        var result = new List<ALToJsonParameter>();
+        for (var i = 0; i < nameTypePairs.Length; i += 2)
+            result.Add(new ALToJsonParameter { Name = nameTypePairs[i], Type = nameTypePairs[i + 1] });
+        return result;
+    }
+
+    [Fact]
+    public void MergeToJsonSignaturesStartsHistoryWithCurrentSet()
+    {
+        var history = ALObjectMap.MergeToJsonSignatures(null, Params("foo", "Text"), "1.0.0");
+
+        var only = Assert.Single(history);
+        Assert.True(only.IsCurrent);
+        Assert.True(only.HasSameParameters(Params("foo", "Text")));
+    }
+
+    [Fact]
+    public void MergeToJsonSignaturesSupersedesPreviousCurrentSetWithSpecVersion()
+    {
+        var run1 = ALObjectMap.MergeToJsonSignatures(null, Params("foo", "Text"), "1.0.0");
+        var run2 = ALObjectMap.MergeToJsonSignatures(run1, Params("bar", "Integer", "foo", "Text"), "1.1.0");
+
+        Assert.Equal(2, run2.Count);
+        Assert.Equal("1.1.0", run2[0].SupersededInSpecVersion);
+        Assert.True(run2[0].HasSameParameters(Params("foo", "Text")));
+        Assert.True(run2[1].IsCurrent);
+        // The input history is not mutated.
+        Assert.True(run1[0].IsCurrent);
+    }
+
+    [Fact]
+    public void MergeToJsonSignaturesKeepsTheFirstCapturedSupersededVersion()
+    {
+        var run1 = ALObjectMap.MergeToJsonSignatures(null, Params("foo", "Text"), "1.0.0");
+        var run2 = ALObjectMap.MergeToJsonSignatures(run1, Params("bar", "Integer", "foo", "Text"), "1.1.0");
+        var run3 = ALObjectMap.MergeToJsonSignatures(run2, Params("bar", "Integer", "foo", "Text"), "1.2.0");
+
+        Assert.Equal(2, run3.Count);
+        Assert.Equal("1.1.0", run3[0].SupersededInSpecVersion);
+        Assert.True(run3[1].IsCurrent);
+    }
+
+    [Fact]
+    public void MergeToJsonSignaturesReactivatesAPreviouslySupersededSet()
+    {
+        var run1 = ALObjectMap.MergeToJsonSignatures(null, Params("foo", "Text"), "1.0.0");
+        var run2 = ALObjectMap.MergeToJsonSignatures(run1, Params("bar", "Integer", "foo", "Text"), "1.1.0");
+        var run3 = ALObjectMap.MergeToJsonSignatures(run2, Params("foo", "Text"), "1.2.0");
+
+        Assert.Equal(2, run3.Count);
+        Assert.True(run3[0].IsCurrent);
+        Assert.Equal("1.2.0", run3[1].SupersededInSpecVersion);
+    }
+
+    [Fact]
+    public void MergeToJsonSignaturesUsesEmptyVersionWhenSpecVersionIsUnknown()
+    {
+        var run1 = ALObjectMap.MergeToJsonSignatures(null, Params("foo", "Text"), null);
+        var run2 = ALObjectMap.MergeToJsonSignatures(run1, Params("bar", "Integer", "foo", "Text"), null);
+
+        Assert.Equal(string.Empty, run2[0].SupersededInSpecVersion);
+        Assert.False(run2[0].IsCurrent);
+    }
+
+    [Fact]
+    public void UpsertPreservesToJsonSignaturesWhenNoneAreSupplied()
+    {
+        var map = new ALObjectMap();
+        var history = ALObjectMap.MergeToJsonSignatures(null, Params("foo", "Text"), "1.0.0");
+        map.Upsert("ApiSdk.models::Alpha", 1, "codeunit", "Alpha", history);
+
+        map.Upsert("ApiSdk.models::Alpha", 1, "codeunit", "Alpha");
+
+        Assert.Same(history, map.Objects["ApiSdk.models::Alpha"].ToJsonSignatures);
+    }
+
+    [Fact]
+    public void SaveOmitsToJsonSignaturesForEntriesWithoutHistoryAndRoundTripsHistory()
+    {
+        var path = Path.Combine(Path.GetTempPath(), System.Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var map = new ALObjectMap();
+            map.Upsert("ApiSdk.models::Color", 1, "enum", "Color");
+            var run1 = ALObjectMap.MergeToJsonSignatures(null, Params("foo", "Text"), "1.0.0");
+            map.Upsert("ApiSdk.models::Alpha", 2, "codeunit", "Alpha", ALObjectMap.MergeToJsonSignatures(run1, Params("bar", "Integer", "foo", "Text"), "1.1.0"));
+
+            map.SaveToDisk(path);
+            var json = File.ReadAllText(path);
+            var reloaded = ALObjectMap.LoadFromDisk(path);
+
+            // Only one entry carries a history, and the current set has no supersededInSpecVersion.
+            Assert.Equal(1, json.Split("toJsonSignatures").Length - 1);
+            Assert.Equal(1, json.Split("supersededInSpecVersion").Length - 1);
+            Assert.Null(reloaded.Objects["ApiSdk.models::Color"].ToJsonSignatures);
+            var signatures = reloaded.Objects["ApiSdk.models::Alpha"].ToJsonSignatures;
+            Assert.NotNull(signatures);
+            Assert.Equal(2, signatures!.Count);
+            Assert.Equal("1.1.0", signatures[0].SupersededInSpecVersion);
+            Assert.True(signatures[0].HasSameParameters(Params("foo", "Text")));
+            Assert.True(signatures[1].IsCurrent);
+            Assert.True(signatures[1].HasSameParameters(Params("bar", "Integer", "foo", "Text")));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 }

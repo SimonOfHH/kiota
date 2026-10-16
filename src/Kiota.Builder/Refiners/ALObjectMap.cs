@@ -38,6 +38,71 @@ public class ALObjectMapEntry
     {
         get; set;
     }
+
+    /// <summary>
+    /// History of the parameter sets the model codeunit's full <c>ToJson(...)</c> overload has had
+    /// across generation runs (model codeunits only; <see langword="null"/> for every other object).
+    /// Used to keep emitting backward-compatible, <c>[Obsolete]</c> <c>ToJson</c> overloads for
+    /// earlier parameter sets after a property was added to the schema. Entries are never removed.
+    /// </summary>
+    [JsonPropertyName("toJsonSignatures")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<ALToJsonSignature>? ToJsonSignatures
+    {
+        get; set;
+    }
+}
+
+/// <summary>A single parameter of a persisted <see cref="ALToJsonSignature"/>.</summary>
+public class ALToJsonParameter
+{
+    /// <summary>Parameter name as derived from the model property (before reserved-name escaping).</summary>
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>The AL type string the parameter was emitted with.</summary>
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// One historical parameter set of a model codeunit's full <c>ToJson(...)</c> overload, in emitted
+/// parameter order.
+/// </summary>
+public class ALToJsonSignature
+{
+    [JsonPropertyName("parameters")]
+    public IReadOnlyList<ALToJsonParameter> Parameters { get; set; } = [];
+
+    /// <summary>
+    /// The OpenAPI spec version (<c>info.version</c>) of the generation run in which this parameter set
+    /// stopped being the current one. <see langword="null"/> while it is still the current parameter
+    /// set; an empty string when it was superseded by a spec without a version.
+    /// </summary>
+    [JsonPropertyName("supersededInSpecVersion")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SupersededInSpecVersion
+    {
+        get; set;
+    }
+
+    [JsonIgnore]
+    public bool IsCurrent => SupersededInSpecVersion is null;
+
+    /// <summary>Ordinal, order-sensitive comparison of the (name, type) parameter list.</summary>
+    public bool HasSameParameters(IReadOnlyList<ALToJsonParameter> other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        if (Parameters.Count != other.Count)
+            return false;
+        for (var i = 0; i < other.Count; i++)
+        {
+            if (!string.Equals(Parameters[i].Name, other[i].Name, StringComparison.Ordinal) ||
+                !string.Equals(Parameters[i].Type, other[i].Type, StringComparison.Ordinal))
+                return false;
+        }
+        return true;
+    }
 }
 
 /// <summary>
@@ -232,17 +297,70 @@ public class ALObjectMap
         Objects[newKey] = entry;
     }
 
-    /// <summary>Inserts or overwrites the (active, non-tombstoned) entry for <paramref name="key"/>.</summary>
-    public void Upsert(string key, int objectId, string objectType, string assignedName)
+    /// <summary>
+    /// Inserts or overwrites the (active, non-tombstoned) entry for <paramref name="key"/>. When
+    /// <paramref name="toJsonSignatures"/> is <see langword="null"/>, an existing entry's
+    /// <see cref="ALObjectMapEntry.ToJsonSignatures"/> history is preserved rather than wiped.
+    /// </summary>
+    public void Upsert(string key, int objectId, string objectType, string assignedName, IReadOnlyList<ALToJsonSignature>? toJsonSignatures = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(key);
+        var signatures = toJsonSignatures ?? (Objects.TryGetValue(key, out var existing) ? existing.ToJsonSignatures : null);
         Objects[key] = new ALObjectMapEntry
         {
             ObjectId = objectId,
             ObjectType = objectType,
             AssignedName = assignedName,
             Tombstoned = false,
+            ToJsonSignatures = signatures,
         };
+    }
+
+    /// <summary>
+    /// Merges <paramref name="current"/> (the model's current full <c>ToJson</c> parameter set) into
+    /// <paramref name="existing"/> history and returns the new history (the input list is not mutated).
+    /// <list type="bullet">
+    /// <item>If an identical parameter set already exists, it becomes current again (its
+    /// <see cref="ALToJsonSignature.SupersededInSpecVersion"/> is cleared) - e.g. a property that was
+    /// removed and later re-added.</item>
+    /// <item>Otherwise it is appended as the current set.</item>
+    /// <item>Every OTHER set that was still current is marked as superseded in
+    /// <paramref name="specVersion"/> (empty string if unknown). Sets already superseded keep their
+    /// original version - it is captured exactly once.</item>
+    /// </list>
+    /// Entries are never removed.
+    /// </summary>
+    public static IReadOnlyList<ALToJsonSignature> MergeToJsonSignatures(IReadOnlyList<ALToJsonSignature>? existing, IReadOnlyList<ALToJsonParameter> current, string? specVersion)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        var result = new List<ALToJsonSignature>();
+        var foundCurrent = false;
+        foreach (var signature in existing ?? [])
+        {
+            var copy = new ALToJsonSignature
+            {
+                Parameters = signature.Parameters.Select(static p => new ALToJsonParameter { Name = p.Name, Type = p.Type }).ToList(),
+                SupersededInSpecVersion = signature.SupersededInSpecVersion,
+            };
+            if (!foundCurrent && copy.HasSameParameters(current))
+            {
+                foundCurrent = true;
+                copy.SupersededInSpecVersion = null;
+            }
+            else if (copy.IsCurrent)
+            {
+                copy.SupersededInSpecVersion = specVersion ?? string.Empty;
+            }
+            result.Add(copy);
+        }
+        if (!foundCurrent)
+        {
+            result.Add(new ALToJsonSignature
+            {
+                Parameters = current.Select(static p => new ALToJsonParameter { Name = p.Name, Type = p.Type }).ToList(),
+            });
+        }
+        return result;
     }
 
     /// <summary>

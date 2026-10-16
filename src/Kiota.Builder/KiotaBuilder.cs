@@ -576,6 +576,9 @@ public partial class KiotaBuilder
         stopwatch.Start();
 
         rootNamespace = CodeNamespace.InitRootNamespace();
+        // Language-agnostic: exposes the description's info.version to refiners (used by the AL refiner).
+        if (openApiDocument?.Info?.Version is { Length: > 0 } descriptionVersion)
+            rootNamespace.CustomData["openapi-info-version"] = descriptionVersion;
         var codeNamespace = rootNamespace.AddNamespace(config.ClientNamespaceName);
         modelsNamespace = rootNamespace.AddNamespace(config.ModelsNamespaceName);
         InitializeInheritanceIndex();

@@ -48,6 +48,9 @@ internal enum ALMethodCategory
     // --- Serialization helper ---
     /// <summary><c>ValidateBody</c> helper that round-trips every property to trigger validation.</summary>
     ValidateBody,
+    /// <summary>Backward-compatible, <c>[Obsolete]</c> <c>ToJson(...)</c> overload for an earlier
+    /// parameter set of the model (persisted in the object map).</summary>
+    ToJsonLegacyOverload,
 
     // --- AL synthetic client / request-builder methods ---
     /// <summary>Client codeunit <c>Initialize</c> procedure.</summary>
