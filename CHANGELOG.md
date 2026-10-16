@@ -13,7 +13,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+## [1.32.5] - 2026-07-03
+
+### Added
+
+- Added the `--allowed-external-origins` parameter to commands that load OpenAPI descriptions. External references are now not loaded by default to improve security; use this parameter to allow `*`, full URIs, URI patterns, full paths, relative paths, or path patterns.
+- Added support for the `isNonConsequential` confirmation property in the AI capabilities extension (`x-ai-capabilities`) and mapped it to the generated plugin manifest confirmation object (plugin manifest 2.4). [#7857](https://github.com/microsoft/kiota/pull/7857)
+- Added a DOM-surface regression integration test that diffs the kiota public API export between the published NuGet generator and the current changeset to catch breaking changes in generated SDKs. [#7858](https://github.com/microsoft/kiota/issues/7858)
+
+### Changed
+
+- Rejected unsafe `static_template.file` references in generated plugin manifests, preventing path traversal outside the manifest package.
+- Workspace client and plugin generation now rejects workspace configuration entries whose `outputPath` is rooted or escapes the workspace.
+- Sanitized client class and namespace names loaded from settings or the `x-ms-kiota-info` OpenAPI extension before using them in generated code and file paths.
+- Removed support for specifying dependency install commands through the `x-ms-kiota-info` OpenAPI description extension.
+
+## [1.32.4] - 2026-06-26
+
+### Added
+
+### Changed
+
+- Fixed a code injection vulnerability in PHP generation by escaping `$` in double-quoted string literals. [#7863](https://github.com/microsoft/kiota/pull/7863)
+
+## [1.32.3] - 2026-06-24
+
+### Added
+
+### Changed
+
+- Fixed a generated-source code injection vulnerability (CWE-94) in the C# emitter where newlines in an OpenAPI `externalDocs.description` could break out of the `///` doc comment and inject arbitrary code. [#7831](https://github.com/microsoft/kiota/pull/7831)
 - Fixed a bug that generares an empty model when allOf inheritance schema is reached via a composed type [#7791](https://github.com/microsoft/kiota/issues/7791)
+- Fixed a bug in PHP generation where `parent::__construct()` was generated for parent classes without a constructor [#7809](https://github.com/microsoft/kiota/issues/7809) [#7810](https://github.com/microsoft/kiota/pull/7810) 
 
 ## [1.32.2] - 2026-06-05
 
@@ -1756,5 +1787,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Initial GitHub release
-
 

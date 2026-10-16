@@ -122,16 +122,16 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, PhpConventionServi
         var requestHeadersParameter = currentMethod.Parameters.OfKind(CodeParameterKind.Headers);
         var pathParametersProperty = parentClass.Properties.FirstOrDefaultOfKind(CodePropertyKind.PathParameters);
         var urlTemplateProperty = parentClass.Properties.FirstOrDefaultOfKind(CodePropertyKind.UrlTemplate);
-
+        var baseClass = parentClass.StartBlock.Inherits?.TypeDefinition as CodeClass;
+        var hasConstructor = baseClass?.Methods.Any(static x => x.IsOfKind(CodeMethodKind.Constructor)) ?? false;
         if (parentClass.IsOfKind(CodeClassKind.RequestBuilder))
         {
             writer.WriteLine($"parent::__construct(${(requestAdapterParameter?.Name ?? "requestAdapter")}, {(pathParametersProperty?.DefaultValue ?? "[]")}, {(urlTemplateProperty?.DefaultValue.ReplaceDoubleQuoteWithSingleQuote() ?? "")});");
         }
         else if (parentClass.IsOfKind(CodeClassKind.RequestConfiguration))
             writer.WriteLine($"parent::__construct(${(requestHeadersParameter?.Name ?? "headers")} ?? [], ${(requestOptionParameter?.Name ?? "options")} ?? []);");
-        else
+        else if (hasConstructor)
             writer.WriteLine("parent::__construct();");
-
     }
 
     private static string? GetDefaultValue(string defaultValue, CodeType propertyType, out bool checkParsedValue)
@@ -622,7 +622,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, PhpConventionServi
         if (requestParams.requestBody != null)
         {
             var suffix = requestParams.requestBody.Type.IsCollection ? "Collection" : string.Empty;
-            var sanitizedRequestBodyContentType = codeElement.RequestBodyContentType.SanitizeDoubleQuote();
+            var sanitizedRequestBodyContentType = PhpConventionService.SanitizePhpDoubleQuoteLiteral(codeElement.RequestBodyContentType);
             if (requestParams.requestBody.Type.Name.Equals(conventions.StreamTypeName, StringComparison.OrdinalIgnoreCase))
             {
                 if (requestParams.requestContentType is not null)
@@ -667,7 +667,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, PhpConventionServi
     private void WriteAcceptHeaderDef(CodeMethod codeMethod, LanguageWriter writer)
     {
         if (codeMethod.ShouldAddAcceptHeader)
-            writer.WriteLine($"{RequestInfoVarName}->tryAddHeader('Accept', \"{codeMethod.AcceptHeaderValue.SanitizeDoubleQuote()}\");");
+            writer.WriteLine($"{RequestInfoVarName}->tryAddHeader('Accept', \"{PhpConventionService.SanitizePhpDoubleQuoteLiteral(codeMethod.AcceptHeaderValue)}\");");
     }
     private void WriteDeserializerBody(CodeClass parentClass, LanguageWriter writer, CodeMethod method, bool extendsModelClass = false)
     {
@@ -906,7 +906,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, PhpConventionServi
         if (writeDiscriminatorValueRead &&
             codeElement.Parameters.OfKind(CodeParameterKind.ParseNode) is CodeParameter parseNodeParameter)
         {
-            writer.WriteLines($"$mappingValueNode = ${parseNodeParameter.Name.ToFirstCharacterLowerCase()}->getChildNode(\"{parentClass.DiscriminatorInformation.DiscriminatorPropertyName.SanitizeDoubleQuote()}\");",
+            writer.WriteLines($"$mappingValueNode = ${parseNodeParameter.Name.ToFirstCharacterLowerCase()}->getChildNode(\"{PhpConventionService.SanitizePhpDoubleQuoteLiteral(parentClass.DiscriminatorInformation.DiscriminatorPropertyName)}\");",
                 "if ($mappingValueNode !== null) {");
             writer.IncreaseIndent();
             writer.WriteLines($"{DiscriminatorMappingVarName} = $mappingValueNode->getStringValue();");
