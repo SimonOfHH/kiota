@@ -1,6 +1,7 @@
 <Project>
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
     <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1507</WarningsNotAsErrors>
   </PropertyGroup>
   <ItemGroup>
@@ -29,6 +30,8 @@
     <PackageVersion Include="Microsoft.Testing.Extensions.AzureDevOpsReport" Version="2.4.1" />
     <PackageVersion Include="Microsoft.Testing.Extensions.GitHubActionsReport" Version="2.4.1" />
     <PackageVersion Include="Microsoft.VisualStudio.Threading.Analyzers" Version="17.14.15" />
+    <!-- Transitive via StreamJsonRpc; pinned to the patched release for GHSA-qhrr-8q5h-9q3h -->
+    <PackageVersion Include="MessagePack" Version="2.5.307" />
     <PackageVersion Include="Moq" Version="4.21.0" />
     <PackageVersion Include="OpenTelemetry" Version="1.19.1" />
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.19.1" />
