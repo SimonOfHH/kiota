@@ -18,11 +18,11 @@ using Kiota.Builder.Writers.TypeScript;
 
 namespace Kiota.Builder.Writers;
 
-public abstract class LanguageWriter
+public abstract class LanguageWriter(string indentationChar = " ", int indentationSize = 4)
 {
     private TextWriter? writer;
-    private const int IndentSize = 4;
-    private static readonly string indentString = Enumerable.Repeat(" ", 1000).Aggregate(static (x, y) => x + y);
+    private readonly int indentSize = indentationSize > 0 ? indentationSize : throw new ArgumentOutOfRangeException(nameof(indentationSize));
+    private readonly string indentString = string.Concat(Enumerable.Repeat(!string.IsNullOrEmpty(indentationChar) ? indentationChar : throw new ArgumentException("Indentation character must be non-empty.", nameof(indentationChar)), 1000));
     private int currentIndent;
 
     /// <summary>
@@ -34,8 +34,16 @@ public abstract class LanguageWriter
     /// By making this a separate step, we can instantiate the LanguageWriter, then get the suffix, then create the writer.</remarks>
     public void SetTextWriter(TextWriter writer)
     {
+        ArgumentNullException.ThrowIfNull(writer);
+        writer.NewLine = LineSeparator;
         this.writer = writer;
     }
+    /// <summary>
+    /// The line ending used to terminate the lines written to the output.
+    /// Defaults to the host OS newline; languages whose tooling mandates a specific
+    /// line ending (e.g. Go, whose gofmt requires LF) override this.
+    /// </summary>
+    protected virtual string LineSeparator => Environment.NewLine;
     public IPathSegmenter? PathSegmenter
     {
         get; protected set;
@@ -45,13 +53,13 @@ public abstract class LanguageWriter
     public void IncreaseIndent(int factor = 1)
     {
         factorStack.Push(factor);
-        currentIndent += IndentSize * factor;
+        currentIndent += indentSize * factor;
     }
 
     public void DecreaseIndent()
     {
         var popped = factorStack.TryPop(out var factor);
-        currentIndent -= IndentSize * (popped ? factor : 1);
+        currentIndent -= indentSize * (popped ? factor : 1);
     }
 
     public string GetIndent()
@@ -108,6 +116,31 @@ public abstract class LanguageWriter
     internal void Write(string text, bool includeIndent = true)
     {
         writer?.Write(includeIndent ? GetIndent() + text : text);
+    }
+    /// <summary>
+    /// Runs <paramref name="write"/> against a temporary buffer and returns the lines it produced
+    /// instead of writing them out. This lets a writer that owns a whole block post-process
+    /// sibling lines that are normally written one element at a time — e.g. the Go writers must
+    /// see every struct field before any is written to column-align them the way gofmt does.
+    /// Indentation state is shared with the real writer, so captured lines carry their indent.
+    /// </summary>
+    internal IReadOnlyList<string> CaptureLines(Action write)
+    {
+        ArgumentNullException.ThrowIfNull(write);
+        var previousWriter = writer;
+        using var buffer = new StringWriter();
+        writer = buffer;
+        try
+        {
+            write();
+        }
+        finally
+        {
+            writer = previousWriter;
+        }
+        var lines = buffer.GetStringBuilder().ToString().Split(buffer.NewLine);
+        // WriteLine terminates every line, so a trailing separator is not an extra empty line
+        return lines.Length > 0 && lines[^1].Length == 0 ? lines[..^1] : lines;
     }
     /// <summary>
     /// Dispatch call to Write the code element to the proper derivative write method

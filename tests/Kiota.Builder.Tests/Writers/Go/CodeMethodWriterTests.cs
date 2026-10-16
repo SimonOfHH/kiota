@@ -635,7 +635,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         };
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains("(error)", result);
+        Assert.Contains("() error {", result);
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
@@ -724,6 +724,51 @@ public sealed class CodeMethodWriterTests : IDisposable
         Assert.Contains("if res == nil", result);
         Assert.Contains("return nil, nil", result);
         Assert.Contains("returns", result);
+        AssertExtensions.CurlyBracesAreClosed(result);
+    }
+    [Fact]
+    public void WritesRequestExecutorBodyForErrorModelNamedWithAbleSuffix()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestExecutor;
+        method.HttpMethod = HttpMethod.Get;
+        var providerUnavailable = root.AddClass(new CodeClass
+        {
+            Name = "ProviderUnavailable",
+        }).First();
+        var error5XX = root.AddClass(new CodeClass
+        {
+            Name = "Error5XX",
+        }).First();
+        var error5XXInterface = root.AddInterface(new CodeInterface
+        {
+            Name = "Error5XXable",
+            Kind = CodeInterfaceKind.Model,
+            OriginalClass = error5XX,
+        }).First();
+        method.AddErrorMapping("503", new CodeType { Name = "ProviderUnavailable", TypeDefinition = providerUnavailable });
+        method.AddErrorMapping("5XX", new CodeType { Name = "Error5XXable", TypeDefinition = error5XXInterface });
+        AddRequestBodyParameters();
+        method.AddParameter(new CodeParameter
+        {
+            Name = "ctx",
+            Kind = CodeParameterKind.Cancellation,
+            Type = new CodeType
+            {
+                Name = "context.Context",
+                IsExternal = true,
+                IsNullable = false,
+            },
+            Optional = false,
+        });
+        writer.Write(method);
+        var result = tw.ToString();
+        // a model class whose own name ends in "able" must keep its full name: the factory is named
+        // after the class, so trimming would reference a symbol that is never generated
+        Assert.Contains("\"503\": CreateProviderUnavailableFromDiscriminatorValue", result);
+        Assert.DoesNotContain("CreateProviderUnavailFromDiscriminatorValue", result);
+        // a mapping through the model's inserted interface still trims the interface suffix
+        Assert.Contains("\"5XX\": CreateError5XXFromDiscriminatorValue", result);
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
@@ -1042,7 +1087,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         writer.Write(methodForTest);
         var result = tw.ToString();
         Assert.Contains("m.BaseRequestBuilder.RequestAdapter", result);
-        Assert.Contains("WithId(id i561e97a8befe7661a44c8f54600992b4207a3a0cf6770e5559949bc276de2e22.UUID)(Somecustomtype)", result);
+        Assert.Contains("WithId(id i561e97a8befe7661a44c8f54600992b4207a3a0cf6770e5559949bc276de2e22.UUID) Somecustomtype", result);
         Assert.Contains("m.BaseRequestBuilder.PathParameters", result);
         Assert.Contains("[\"id\"] = id.String()", result);
         Assert.Contains("return", result);
@@ -1484,7 +1529,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         method.AcceptedResponseTypes.Add("application/json");
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains($"func (m *ParentClass) MethodName(ctx context.Context, b []RequestOption, c *RequestConfig)([]i878a80d2330e89d26896388a3f487eef27b0a0e6c010c493bf80be1452208f91.DateOnly, error)", result);
+        Assert.Contains($"func (m *ParentClass) MethodName(ctx context.Context, b []RequestOption, c *RequestConfig) ([]i878a80d2330e89d26896388a3f487eef27b0a0e6c010c493bf80be1452208f91.DateOnly, error)", result);
         Assert.Contains("res, err := m.BaseRequestBuilder.RequestAdapter.SendPrimitiveCollection(ctx, requestInfo, \"dateonly\", nil)", result);
         Assert.Contains($"val := make([]i878a80d2330e89d26896388a3f487eef27b0a0e6c010c493bf80be1452208f91.DateOnly, len(res))", result);
         Assert.Contains("return val, nil", result);
@@ -1789,7 +1834,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         writer.Write(method);
         var result = tw.ToString();
         Assert.Contains("[see more]: ", result);
-        Assert.DoesNotContain($"{Environment.NewLine}more", result);
+        Assert.DoesNotContain($"{GoTestConstants.LineFeed}more", result);
     }
     [Fact]
     public void Defensive()
@@ -1817,7 +1862,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         setup();
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains($"{MethodName.ToFirstCharacterUpperCase()}()(*{ReturnTypeName}, error)", result);// async default
+        Assert.Contains($"{MethodName.ToFirstCharacterUpperCase()}() (*{ReturnTypeName}, error)", result);// async default
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
@@ -2142,6 +2187,57 @@ public sealed class CodeMethodWriterTests : IDisposable
         var result = tw.ToString();
         Assert.Contains("propWithDefaultValueValue := \"line1\\nline2\"", result);
         Assert.Contains("m.SetPropWithDefaultValue(&propWithDefaultValueValue)", result);
+    }
+    [Fact]
+    public void DoesNotWriteInvalidPrimitiveDefaultValues()
+    {
+        setup();
+        method.Kind = CodeMethodKind.Constructor;
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = "hostileBoolean",
+            DefaultValue = "\"false; injectedCall()\\\r\n\t$\"",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { Name = "boolean" }
+        });
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = "hostileNumber",
+            DefaultValue = "1; injectedCall()",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { Name = "integer" }
+        });
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = "hostileByte",
+            DefaultValue = "1; injectedCall()",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { Name = "byte" }
+        });
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = "wrongKindNumber",
+            DefaultValue = "true",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { Name = "double" }
+        });
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = "overflowingNumber",
+            DefaultValue = "1e400",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { Name = "double" }
+        });
+
+        writer.Write(method);
+        var result = tw.ToString();
+
+        Assert.DoesNotContain("injectedCall", result);
+        Assert.DoesNotContain("hostileBooleanValue", result);
+        Assert.DoesNotContain("hostileNumberValue", result);
+        Assert.DoesNotContain("hostileByteValue", result);
+        Assert.DoesNotContain("wrongKindNumberValue", result);
+        Assert.DoesNotContain("overflowingNumberValue", result);
     }
     [Fact]
     public void WritesConstructorWithEnumValue()
@@ -2560,10 +2656,10 @@ public sealed class CodeMethodWriterTests : IDisposable
     public void SanitizesDeprecationVersionInComments()
     {
         setup();
-        method.Deprecation = new("This method is deprecated", DateTimeOffset.Parse("2020-01-01T00:00:00Z"), DateTimeOffset.Parse("2021-01-01T00:00:00Z"), $"v2.0{Environment.NewLine}VERSION_MARKER");
+        method.Deprecation = new("This method is deprecated", DateTimeOffset.Parse("2020-01-01T00:00:00Z"), DateTimeOffset.Parse("2021-01-01T00:00:00Z"), $"v2.0{GoTestConstants.LineFeed}VERSION_MARKER");
         writer.Write(method);
         var result = tw.ToString();
-        Assert.DoesNotContain($"as of v2.0{Environment.NewLine}VERSION_MARKER", result);
+        Assert.DoesNotContain($"as of v2.0{GoTestConstants.LineFeed}VERSION_MARKER", result);
         Assert.Contains("as of v2.0VERSION_MARKER", result);
     }
     [Fact]
@@ -2653,7 +2749,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         var result = tw.ToString();
 
         // Then
-        Assert.Contains("Error()(string) {", result);
+        Assert.Contains("Error() string {", result);
         Assert.Contains("return *(m.GetProp1()", result);
     }
 

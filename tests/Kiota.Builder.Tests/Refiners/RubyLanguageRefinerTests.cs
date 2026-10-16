@@ -123,6 +123,34 @@ public class RubyLanguageRefinerTests
         Assert.Contains("escaped", model.Name);
     }
     [Fact]
+    public async Task EscapesInitializeAsync()
+    {
+        // the real-world case is an API path segment (e.g. /media/upload/initialize) becoming a
+        // request-builder property, which emitted a second `def initialize` in a class that
+        // already had one -- returning a value and skipping super
+        var requestBuilder = root.AddClass(new CodeClass
+        {
+            Name = "uploadRequestBuilder",
+            Kind = CodeClassKind.RequestBuilder
+        }).First();
+        var navProperty = requestBuilder.AddProperty(new CodeProperty
+        {
+            Name = "initialize",
+            Kind = CodePropertyKind.RequestBuilder,
+            Type = new CodeType { Name = "initializeRequestBuilder" },
+        }).First();
+        var model = root.AddClass(new CodeClass
+        {
+            Name = "initialize",
+            Kind = CodeClassKind.Model
+        }).First();
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Ruby, ClientNamespaceName = graphNS.Name }, root, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.NotEqual("initialize", navProperty.Name);
+        Assert.Contains("escaped", navProperty.Name);
+        Assert.NotEqual("initialize", model.Name);
+        Assert.Contains("escaped", model.Name);
+    }
+    [Fact]
     public async Task ConvertEnumsToPascalCaseAsync()
     {
         var model = root.AddEnum(new CodeEnum
@@ -324,6 +352,31 @@ public class RubyLanguageRefinerTests
         Assert.Empty(subModelsNS.Classes);
         Assert.Single(modelsNS.Enums);
         Assert.Empty(subModelsNS.Enums);
+    }
+    [Fact]
+    public async Task FlattensNestedModelsNamespaceIntoACamelCasedNameAsync()
+    {
+        // a namespace more than one level below models keeps its separators in the flattened name,
+        // and a dot is not legal in a Ruby constant: stripe generated `class S.v2.billingMeterEvent`
+        var config = new GenerationConfiguration { Language = GenerationLanguage.Ruby };
+        var modelsNS = root.AddNamespace(config.ModelsNamespaceName);
+        var nestedNS = modelsNS.AddNamespace($"{config.ModelsNamespaceName}.sub.deep");
+        nestedNS.AddClass(new CodeClass
+        {
+            Name = "somemodel",
+            Kind = CodeClassKind.Model,
+        });
+        nestedNS.AddEnum(new CodeEnum
+        {
+            Name = "someenum",
+        });
+        await ILanguageRefiner.RefineAsync(config, root, cancellationToken: TestContext.Current.CancellationToken);
+        var flattenedClass = Assert.Single(modelsNS.Classes);
+        var flattenedEnum = Assert.Single(modelsNS.Enums);
+        Assert.DoesNotContain('.', flattenedClass.Name);
+        Assert.DoesNotContain('.', flattenedEnum.Name);
+        Assert.Equal("subDeepSomemodel", flattenedClass.Name);
+        Assert.Equal("subDeepSomeenum", flattenedEnum.Name);
     }
     [Fact]
     public async Task DoesNotCorrectNamesWhenCollisionOccursAsync()

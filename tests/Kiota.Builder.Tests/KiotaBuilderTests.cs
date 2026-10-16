@@ -677,6 +677,107 @@ components:
         Assert.NotNull(innerRequestBuilderNS.FindChildByName<CodeClass>("InnerRequestBuilder", false));
 
     }
+    [Fact]
+    public async Task GeneratesModelsReferencedByWebhookSchemasAsync()
+    {
+        var tempFilePath = Path.GetTempFileName();
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.1.0
+info:
+  title: Webhook API
+  version: 1.0.0
+paths: {}
+webhooks:
+  orderCreated:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderCreated'
+      responses:
+        '200':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookAcknowledgement'
+components:
+  schemas:
+    OrderCreated:
+      type: object
+      required:
+        - orderId
+      properties:
+        orderId:
+          type: string
+    WebhookAcknowledgement:
+      type: object
+      properties:
+        accepted:
+          type: boolean");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Webhook", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.NotNull(document.Webhooks);
+        Assert.True(document.Webhooks.ContainsKey("orderCreated"));
+
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var modelsNS = codeModel.FindNamespaceByName("ApiSdk.models");
+        Assert.NotNull(modelsNS);
+        var webhookModel = modelsNS.FindChildByName<CodeClass>("OrderCreated", false);
+        Assert.NotNull(webhookModel);
+        Assert.Contains(webhookModel.Properties, static x => x.Name.Equals("orderId", StringComparison.OrdinalIgnoreCase));
+        var responseModel = modelsNS.FindChildByName<CodeClass>("WebhookAcknowledgement", false);
+        Assert.NotNull(responseModel);
+        Assert.Contains(responseModel.Properties, static x => x.Name.Equals("accepted", StringComparison.OrdinalIgnoreCase));
+    }
+    [Fact]
+    public async Task GeneratesModelsForInlineWebhookSchemasAsync()
+    {
+        var tempFilePath = Path.GetTempFileName();
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.1.0
+info:
+  title: Webhook API
+  version: 1.0.0
+paths: {}
+webhooks:
+  deliveryFailed:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted:
+                    type: boolean");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Webhook", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs, cancellationToken: TestContext.Current.CancellationToken);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var modelsNS = codeModel.FindNamespaceByName("ApiSdk.models");
+        Assert.NotNull(modelsNS);
+
+        var requestModel = modelsNS.FindChildByName<CodeClass>("DeliveryFailedPostRequestBody", false);
+        Assert.NotNull(requestModel);
+        Assert.Contains(requestModel.Properties, static x => x.Name.Equals("reason", StringComparison.OrdinalIgnoreCase));
+        var responseModel = modelsNS.FindChildByName<CodeClass>("DeliveryFailedPost200Response", false);
+        Assert.NotNull(responseModel);
+        Assert.Contains(responseModel.Properties, static x => x.Name.Equals("accepted", StringComparison.OrdinalIgnoreCase));
+    }
     [Theory]
     [InlineData(GenerationLanguage.CSharp)]
     [InlineData(GenerationLanguage.Java)]
@@ -1803,6 +1904,81 @@ paths:
         Assert.NotNull(unknownProp);
         Assert.Equal(KiotaBuilder.UntypedNodeName, unknownProp.Type.Name);// left out property is an UntypedNode
     }
+#nullable enable
+    [Theory]
+    [InlineData(JsonSchemaType.Integer | JsonSchemaType.String, "int32", "integer")]
+    [InlineData(JsonSchemaType.Integer | JsonSchemaType.String, "int64", "int64")]
+    [InlineData(JsonSchemaType.Integer | JsonSchemaType.String | JsonSchemaType.Null, "int32", "integer")]
+    [InlineData(JsonSchemaType.Number | JsonSchemaType.String, "double", "double")]
+    [InlineData(JsonSchemaType.Number | JsonSchemaType.String, "float", "float")]
+    [InlineData(JsonSchemaType.Number | JsonSchemaType.String | JsonSchemaType.Null, "double", "double")]
+    [InlineData(JsonSchemaType.Integer | JsonSchemaType.String, "uint16", "integer")]
+    // without a format, the scalar union keeps being generated as a composed type wrapper
+    [InlineData(JsonSchemaType.Integer | JsonSchemaType.String, null, "forecastGetResponse_temperature")]
+    [InlineData(JsonSchemaType.Number | JsonSchemaType.String, null, "forecastGetResponse_temperature")]
+    // with a non-numeric format, the union is not mappable and keeps falling back to untyped
+    [InlineData(JsonSchemaType.Integer | JsonSchemaType.String, "uuid", KiotaBuilder.UntypedNodeName)]
+    [InlineData(JsonSchemaType.Number | JsonSchemaType.String, "date-time", KiotaBuilder.UntypedNodeName)]
+    public void NumericStringScalarUnionsMapToNumericTypes(JsonSchemaType schemaType, string? format, string expectedTypeName)
+    {
+        // System.Text.Json's JsonNumberHandling.AllowReadingFromString (the ASP.NET Core default)
+        // advertises numeric members as type ["integer"/"number", "string"] with a digit pattern.
+        // https://github.com/microsoft/kiota/issues/6541
+        var document = new OpenApiDocument
+        {
+            Paths = new OpenApiPaths
+            {
+                ["forecast"] = new OpenApiPathItem
+                {
+                    Operations = new()
+                    {
+                        [NetHttpMethod.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["200"] = new OpenApiResponse
+                                {
+                                    Content = new Dictionary<string, IOpenApiMediaType>()
+                                    {
+                                        ["application/json"] = new OpenApiMediaType
+                                        {
+                                            Schema = new OpenApiSchema
+                                            {
+                                                Type = JsonSchemaType.Object,
+                                                Properties = new Dictionary<string, IOpenApiSchema> {
+                                                    {
+                                                        "temperature", new OpenApiSchema {
+                                                            Type = schemaType,
+                                                            Format = format,
+                                                            Pattern = "^-?(?:0|[1-9]\\d*)$"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            },
+        };
+        document.SetReferenceHostDocument();
+        var mockLogger = new CountLogger<KiotaBuilder>();
+        var builder = new KiotaBuilder(mockLogger, new GenerationConfiguration { ClientClassName = "Graph", ApiRootUrl = "https://localhost" }, _httpClient);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        Assert.NotNull(codeModel);
+        var responseNamespace = codeModel.FindNamespaceByName("ApiSdk.forecast");
+        Assert.NotNull(responseNamespace);
+        var responseClass = responseNamespace.FindChildByName<CodeClass>("ForecastGetResponse", false);
+        Assert.NotNull(responseClass);
+        var temperatureProp = responseClass.FindChildByName<CodeProperty>("temperature", false);
+        Assert.NotNull(temperatureProp);
+        Assert.Equal(expectedTypeName, temperatureProp.Type.Name);
+    }
+#nullable restore
     [Fact]
     public void TextPlainEndpointsAreSupported()
     {
@@ -3176,6 +3352,282 @@ paths:
         else
         {
             Assert.Equal(2, unionType.Types.Count());
+            Assert.Contains(unionType.Types, x => x.Name.Equals("string", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(unionType.Types, x => x.Name.Equals("int64", StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    [Fact]
+    public void SquishesNullableOneOfReferenceProperty()
+    {
+        // ASP.NET Core 10 emits nullable reference types as a oneOf with the target type and a { type: null } branch.
+        var childSchema = new OpenApiSchema
+        {
+            Type = JsonSchemaType.Object,
+            Properties = new Dictionary<string, IOpenApiSchema> {
+                { "id", new OpenApiSchema { Type = JsonSchemaType.String } }
+            },
+        };
+        var parentSchema = new OpenApiSchema
+        {
+            Type = JsonSchemaType.Object,
+            Properties = new Dictionary<string, IOpenApiSchema> {
+                {
+                    "child", new OpenApiSchema {
+                        OneOf = [
+                            new OpenApiSchemaReference("child"),
+                            new OpenApiSchema { Type = JsonSchemaType.Null }
+                        ]
+                    }
+                }
+            },
+        };
+        var document = new OpenApiDocument
+        {
+            Paths = new OpenApiPaths
+            {
+                ["thing"] = new OpenApiPathItem
+                {
+                    Operations = new()
+                    {
+                        [NetHttpMethod.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["200"] = new OpenApiResponse
+                                {
+                                    Content = new Dictionary<string, IOpenApiMediaType>
+                                    {
+                                        ["application/json"] = new OpenApiMediaType
+                                        {
+                                            Schema = new OpenApiSchemaReference("parent")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        };
+        document.AddComponent("child", childSchema);
+        document.AddComponent("parent", parentSchema);
+        document.SetReferenceHostDocument();
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", ApiRootUrl = "https://localhost" }, _httpClient);
+        builder.SetOpenApiDocument(document);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var parentClass = codeModel.FindChildByName<CodeClass>("parent");
+        Assert.NotNull(parentClass);
+        var childProperty = parentClass.FindChildByName<CodeProperty>("child", false);
+        Assert.NotNull(childProperty);
+        // the oneOf nullable wrapper must be squished to the plain target type, not a union/composed wrapper
+        Assert.False(childProperty.Type is CodeComposedTypeBase);
+        Assert.Equal("child", childProperty.Type.Name, StringComparer.OrdinalIgnoreCase);
+        // no spurious composed-type wrapper or null-branch member class should be generated
+        Assert.Null(codeModel.FindChildByName<CodeClass>("parent_child"));
+        Assert.Null(codeModel.FindChildByName<CodeClass>("parent_childMember1"));
+    }
+
+    [Fact]
+    public void SquishesNullableOneOfReferencePropertyNullBranchFirst()
+    {
+        // Branch order independence: the { type: null } branch appears before the target reference.
+        var childSchema = new OpenApiSchema
+        {
+            Type = JsonSchemaType.Object,
+            Properties = new Dictionary<string, IOpenApiSchema> {
+                { "id", new OpenApiSchema { Type = JsonSchemaType.String } }
+            },
+        };
+        var parentSchema = new OpenApiSchema
+        {
+            Type = JsonSchemaType.Object,
+            Properties = new Dictionary<string, IOpenApiSchema> {
+                {
+                    "child", new OpenApiSchema {
+                        OneOf = [
+                            new OpenApiSchema { Type = JsonSchemaType.Null },
+                            new OpenApiSchemaReference("child")
+                        ]
+                    }
+                }
+            },
+        };
+        var document = new OpenApiDocument
+        {
+            Paths = new OpenApiPaths
+            {
+                ["thing"] = new OpenApiPathItem
+                {
+                    Operations = new()
+                    {
+                        [NetHttpMethod.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["200"] = new OpenApiResponse
+                                {
+                                    Content = new Dictionary<string, IOpenApiMediaType>
+                                    {
+                                        ["application/json"] = new OpenApiMediaType
+                                        {
+                                            Schema = new OpenApiSchemaReference("parent")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        };
+        document.AddComponent("child", childSchema);
+        document.AddComponent("parent", parentSchema);
+        document.SetReferenceHostDocument();
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", ApiRootUrl = "https://localhost" }, _httpClient);
+        builder.SetOpenApiDocument(document);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var parentClass = codeModel.FindChildByName<CodeClass>("parent");
+        Assert.NotNull(parentClass);
+        var childProperty = parentClass.FindChildByName<CodeProperty>("child", false);
+        Assert.NotNull(childProperty);
+        Assert.False(childProperty.Type is CodeComposedTypeBase);
+        Assert.Equal("child", childProperty.Type.Name, StringComparer.OrdinalIgnoreCase);
+        Assert.Null(codeModel.FindChildByName<CodeClass>("parent_childMember1"));
+    }
+
+    [Fact]
+    public void SquishesLonelyNullablesOneOf()
+    {
+        // Response-level oneOf nullable wrapper should collapse to the target type, not a union return type.
+        var uploadSessionSchema = new OpenApiSchema
+        {
+            Type = JsonSchemaType.Object,
+            AdditionalPropertiesAllowed = false,
+            Properties = new Dictionary<string, IOpenApiSchema> {
+                { "date", new OpenApiSchema { Type = JsonSchemaType.String, Format = "date-time" } },
+                { "temperature", new OpenApiSchema { Type = JsonSchemaType.Integer, Format = "int32" } }
+            },
+        };
+        var document = new OpenApiDocument
+        {
+            Paths = new OpenApiPaths
+            {
+                ["createUploadSession"] = new OpenApiPathItem
+                {
+                    Operations = new()
+                    {
+                        [NetHttpMethod.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["200"] = new OpenApiResponse
+                                {
+                                    Content = new Dictionary<string, IOpenApiMediaType>
+                                    {
+                                        ["application/json"] = new OpenApiMediaType
+                                        {
+                                            Schema = new OpenApiSchema
+                                            {
+                                                OneOf = new List<IOpenApiSchema> {
+                                                    new OpenApiSchemaReference("microsoft.graph.uploadSession"),
+                                                    new OpenApiSchema { Type = JsonSchemaType.Null }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        };
+        document.AddComponent("microsoft.graph.uploadSession", uploadSessionSchema);
+        document.SetReferenceHostDocument();
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", ApiRootUrl = "https://localhost" }, _httpClient);
+        builder.SetOpenApiDocument(document);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var sessionClass = codeModel.FindChildByName<CodeClass>("UploadSession");
+        Assert.NotNull(sessionClass);
+        var requestBuilderClass = codeModel.FindChildByName<CodeClass>("createUploadSessionRequestBuilder");
+        Assert.NotNull(requestBuilderClass);
+        var executorMethod = requestBuilderClass.Methods.FirstOrDefault(x => x.IsOfKind(CodeMethodKind.RequestExecutor));
+        Assert.NotNull(executorMethod);
+        Assert.True(executorMethod.ReturnType is CodeType); // not union
+        Assert.Null(codeModel.FindChildByName<CodeClass>("createUploadSessionResponseMember1"));
+    }
+
+    [Fact]
+    public void PreservesMultiMemberOneOfWithNull()
+    {
+        // A genuine multi-branch oneOf that also includes null must remain a union type (no accidental collapse).
+        var oneOfSchema = new OpenApiSchema
+        {
+            Type = JsonSchemaType.Object,
+            AdditionalPropertiesAllowed = false,
+            Properties = new Dictionary<string, IOpenApiSchema> {
+                {
+                    "date", new OpenApiSchema {
+                        OneOf = [
+                            new OpenApiSchema { Type = JsonSchemaType.String },
+                            new OpenApiSchema { Type = JsonSchemaType.Number, Format = "int64" },
+                            new OpenApiSchema { Type = JsonSchemaType.Null }
+                        ]
+                    }
+                }
+            },
+        };
+        var document = new OpenApiDocument
+        {
+            Paths = new OpenApiPaths
+            {
+                ["createUploadSession"] = new OpenApiPathItem
+                {
+                    Operations = new()
+                    {
+                        [NetHttpMethod.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["200"] = new OpenApiResponse
+                                {
+                                    Content = new Dictionary<string, IOpenApiMediaType>
+                                    {
+                                        ["application/json"] = new OpenApiMediaType
+                                        {
+                                            Schema = new OpenApiSchemaReference("oneOfNullable")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        };
+        document.AddComponent("oneOfNullable", oneOfSchema);
+        document.SetReferenceHostDocument();
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", ApiRootUrl = "https://localhost" }, _httpClient);
+        builder.SetOpenApiDocument(document);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var oneOfClass = codeModel.FindChildByName<CodeClass>("oneOfNullable");
+        Assert.NotNull(oneOfClass);
+        var dateProperty = oneOfClass.FindChildByName<CodeProperty>("date", false);
+        Assert.NotNull(dateProperty);
+        if (dateProperty.Type is not CodeUnionType unionType)
+            Assert.Fail("Date property type is not a union type");
+        else
+        {
+            // the union must be preserved (not collapsed) and still expose the real branches
             Assert.Contains(unionType.Types, x => x.Name.Equals("string", StringComparison.OrdinalIgnoreCase));
             Assert.Contains(unionType.Types, x => x.Name.Equals("int64", StringComparison.OrdinalIgnoreCase));
         }
@@ -7577,6 +8029,105 @@ paths:
         Assert.Empty(displayNameProperty?.DefaultValue);
     }
     [Fact]
+    public void NormalizesCompatiblePrimitiveDefaultsAndOmitsInvalidOnes()
+    {
+        var modelSchema = new OpenApiSchema
+        {
+            Type = JsonSchemaType.Object,
+            Properties = new Dictionary<string, IOpenApiSchema>
+            {
+                ["actualBoolean"] = new OpenApiSchema
+                {
+                    Type = JsonSchemaType.Boolean,
+                    Default = JsonValue.Create(false)
+                },
+                ["stringBoolean"] = new OpenApiSchema
+                {
+                    Type = JsonSchemaType.Boolean,
+                    Default = JsonValue.Create("true")
+                },
+                ["hostileBoolean"] = new OpenApiSchema
+                {
+                    Type = JsonSchemaType.Boolean,
+                    Default = JsonValue.Create("'false; Environment.Exit(1)\\\r\n\t$'")
+                },
+                ["stringNumber"] = new OpenApiSchema
+                {
+                    Type = JsonSchemaType.Number,
+                    Format = "double",
+                    Default = JsonValue.Create("1.5")
+                },
+                ["hostileNumber"] = new OpenApiSchema
+                {
+                    Type = JsonSchemaType.Number,
+                    Format = "double",
+                    Default = JsonValue.Create("1; Environment.Exit(1)")
+                },
+                ["fractionalInteger"] = new OpenApiSchema
+                {
+                    Type = JsonSchemaType.Integer,
+                    Format = "int32",
+                    Default = JsonValue.Create("1.5")
+                },
+                ["overflowingByte"] = new OpenApiSchema
+                {
+                    Type = JsonSchemaType.Integer,
+                    Format = "uint8",
+                    Default = JsonValue.Create("256")
+                }
+            },
+        };
+        var document = new OpenApiDocument
+        {
+            Paths = new OpenApiPaths
+            {
+                ["/api"] = new OpenApiPathItem
+                {
+                    Operations = new()
+                    {
+                        [NetHttpMethod.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["200"] = new OpenApiResponse
+                                {
+                                    Content = new Dictionary<string, IOpenApiMediaType>
+                                    {
+                                        ["application/json"] = new OpenApiMediaType
+                                        {
+                                            Schema = new OpenApiSchemaReference("sample.model")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        };
+        document.AddComponent("sample.model", modelSchema);
+        document.SetReferenceHostDocument();
+        var logger = new CountLogger<KiotaBuilder>();
+        var builder = new KiotaBuilder(logger, new GenerationConfiguration
+        {
+            ClientClassName = "Graph",
+            ApiRootUrl = "https://localhost"
+        }, _httpClient);
+
+        var codeModel = builder.CreateSourceModel(builder.CreateUriSpace(document));
+        var model = codeModel.FindChildByName<CodeClass>("model");
+
+        Assert.NotNull(model);
+        Assert.Equal("false", model.FindChildByName<CodeProperty>("actualBoolean", false)?.DefaultValue);
+        Assert.Equal("true", model.FindChildByName<CodeProperty>("stringBoolean", false)?.DefaultValue);
+        Assert.Empty(model.FindChildByName<CodeProperty>("hostileBoolean", false)?.DefaultValue);
+        Assert.Equal("1.5", model.FindChildByName<CodeProperty>("stringNumber", false)?.DefaultValue);
+        Assert.Empty(model.FindChildByName<CodeProperty>("hostileNumber", false)?.DefaultValue);
+        Assert.Empty(model.FindChildByName<CodeProperty>("fractionalInteger", false)?.DefaultValue);
+        Assert.Empty(model.FindChildByName<CodeProperty>("overflowingByte", false)?.DefaultValue);
+        Assert.Equal(4, logger.Count[LogLevel.Warning]);
+    }
+    [Fact]
     public void DoesNotAddReservedPathParameterSymbol()
     {
         var userSchema = new OpenApiSchema
@@ -7879,6 +8430,152 @@ components:
         Assert.Equal("directory object", codeModel.FindChildByName<CodeClass>("directoryObject").Documentation.DescriptionTemplate);
         Assert.Equal("sub1", codeModel.FindChildByName<CodeClass>("sub1").Documentation.DescriptionTemplate);
         Assert.Equal("sub2", codeModel.FindChildByName<CodeClass>("sub2").Documentation.DescriptionTemplate);
+    }
+    [Fact]
+    public async Task ModelClassDescriptionIgnoresReferenceLevelDescriptionAsync()
+    {
+        // Regression test for https://github.com/microsoft/kiota/issues/7927
+        // A component referenced from multiple properties with differing $ref-level descriptions
+        // must not adopt one of those (property-level) descriptions as its class description, as the
+        // winning one is non-deterministic. When the target schema has no description of its own, the
+        // class description must be empty, while each property keeps its own reference-level description.
+        var tempFilePath = Path.GetTempFileName();
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.1.0
+info:
+  title: Notion repro
+  version: 1.0.0
+paths:
+  /pages:
+    get:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pageResponse'
+components:
+  schemas:
+    internalFileResponse:
+      type: object
+      properties:
+        url:
+          type: string
+        expiry_time:
+          type: string
+          format: date-time
+    filePageCoverResponse:
+      type: object
+      properties:
+        cover:
+          $ref: '#/components/schemas/internalFileResponse'
+          description: 'The file URL for the cover.'
+    filePageIconResponse:
+      type: object
+      properties:
+        icon:
+          $ref: '#/components/schemas/internalFileResponse'
+          description: 'The file URL for the icon.'
+    pageResponse:
+      type: object
+      properties:
+        coverInfo:
+          $ref: '#/components/schemas/filePageCoverResponse'
+        iconInfo:
+          $ref: '#/components/schemas/filePageIconResponse'");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Notion", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs, cancellationToken: TestContext.Current.CancellationToken);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+
+        var internalFileResponseClass = codeModel.FindChildByName<CodeClass>("internalFileResponse");
+        Assert.NotNull(internalFileResponseClass);
+        Assert.Empty(internalFileResponseClass.Documentation.DescriptionTemplate);
+
+        var coverClass = codeModel.FindChildByName<CodeClass>("filePageCoverResponse");
+        Assert.NotNull(coverClass);
+        var coverProperty = coverClass.FindChildByName<CodeProperty>("cover", false);
+        Assert.NotNull(coverProperty);
+        Assert.Equal("The file URL for the cover.", coverProperty.Documentation.DescriptionTemplate);
+
+        var iconClass = codeModel.FindChildByName<CodeClass>("filePageIconResponse");
+        Assert.NotNull(iconClass);
+        var iconProperty = iconClass.FindChildByName<CodeProperty>("icon", false);
+        Assert.NotNull(iconProperty);
+        Assert.Equal("The file URL for the icon.", iconProperty.Documentation.DescriptionTemplate);
+    }
+    [Fact]
+    public async Task ModelClassDescriptionUsesReferenceTargetDescriptionAsync()
+    {
+        // Regression test for https://github.com/microsoft/kiota/issues/7927
+        // When the referenced (target) schema carries its own description, the class description must
+        // use that target description, regardless of any differing $ref-level descriptions, while each
+        // property keeps its own reference-level description.
+        var tempFilePath = Path.GetTempFileName();
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.1.0
+info:
+  title: Notion repro
+  version: 1.0.0
+paths:
+  /pages:
+    get:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pageResponse'
+components:
+  schemas:
+    internalFileResponse:
+      type: object
+      description: 'Details about an internally hosted file.'
+      properties:
+        url:
+          type: string
+        expiry_time:
+          type: string
+          format: date-time
+    filePageCoverResponse:
+      type: object
+      properties:
+        cover:
+          $ref: '#/components/schemas/internalFileResponse'
+          description: 'The file URL for the cover.'
+    filePageIconResponse:
+      type: object
+      properties:
+        icon:
+          $ref: '#/components/schemas/internalFileResponse'
+          description: 'The file URL for the icon.'
+    pageResponse:
+      type: object
+      properties:
+        coverInfo:
+          $ref: '#/components/schemas/filePageCoverResponse'
+        iconInfo:
+          $ref: '#/components/schemas/filePageIconResponse'");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Notion", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs, cancellationToken: TestContext.Current.CancellationToken);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+
+        var internalFileResponseClass = codeModel.FindChildByName<CodeClass>("internalFileResponse");
+        Assert.NotNull(internalFileResponseClass);
+        Assert.Equal("Details about an internally hosted file.", internalFileResponseClass.Documentation.DescriptionTemplate);
+
+        var coverClass = codeModel.FindChildByName<CodeClass>("filePageCoverResponse");
+        Assert.NotNull(coverClass);
+        var coverProperty = coverClass.FindChildByName<CodeProperty>("cover", false);
+        Assert.NotNull(coverProperty);
+        Assert.Equal("The file URL for the cover.", coverProperty.Documentation.DescriptionTemplate);
+
+        var iconClass = codeModel.FindChildByName<CodeClass>("filePageIconResponse");
+        Assert.NotNull(iconClass);
+        var iconProperty = iconClass.FindChildByName<CodeProperty>("icon", false);
+        Assert.NotNull(iconProperty);
+        Assert.Equal("The file URL for the icon.", iconProperty.Documentation.DescriptionTemplate);
     }
     [Fact]
     public async Task CleanupSymbolNameDoesNotCauseNameConflictsAsync()

@@ -122,3 +122,26 @@ Metrics/ModuleLength:
 # Don't raise an error if block is longer than 25 lines. This happens in "spec\defaultvalues\integration_test_defaultvalues.rb"
 Metrics/BlockLength:
   Enabled: false
+
+# Generated property names may contain letter_digit patterns (e.g. heading_1) from the OpenAPI spec
+Naming/VariableNumber:
+  Enabled: false
+
+# Generated factory methods can have many discriminator branches
+Metrics/CyclomaticComplexity:
+  Enabled: false
+
+# Composed type factories, serializers and deserializers branch once per union member,
+# so their complexity tracks the arity of the union rather than any avoidable nesting
+Metrics/PerceivedComplexity:
+  Enabled: false
+
+# Generated factory methods may just delegate to super
+Lint/UselessMethodDefinition:
+  Enabled: false
+
+# The cop matches by method name, so it flags the accessor for an API property called `inherited`
+# (the GitHub description has one). Ruby's inheritance hook is a class method, and an instance
+# method of the same name does not shadow it, so renaming the property would be the worse trade
+Lint/MissingSuper:
+  Enabled: false

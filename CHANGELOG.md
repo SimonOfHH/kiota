@@ -13,6 +13,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+## [1.35.0] - 2026-09-01
+
+### Added
+
+- Added model generation for schemas used by OpenAPI 3.1 webhooks. [#6394](https://github.com/microsoft/kiota/issues/6394)
+- Adds support for resolving JSON Schema 2020-12 `$dynamicRef` against schemas declaring `$dynamicAnchor`, so recursive types (e.g. `LocalizedCategory.children: LocalizedCategory[]`) generate correctly instead of degrading to `UntypedNode`. Phase 1 of [#7815](https://github.com/microsoft/kiota/issues/7815).
+- Added binding-aware `$dynamicRef` resolution for `$defs` / `$dynamicAnchor` contexts, generating distinct concrete models for each active binding and preserving typed request bodies, responses, and error responses. Phase 2 of [#7815](https://github.com/microsoft/kiota/issues/7815).
+
+### Changed
+
+- Go: fixed the factory reference emitted for a model whose name ends in `able` (e.g. `ProviderUnavailable`): the writer trimmed the suffix as if it were the model-interface suffix, referencing a `Create...FromDiscriminatorValue` symbol that is never generated, so the package did not compile. The suffix is now only trimmed when the type resolves to the inserted interface.
+- Fixed query parameters whose name is escaped (e.g. `export` in TypeScript) being silently dropped from the request: the original name is now kept as the serialization name, so TypeScript emits the `queryParametersMapper` entry mapping the escaped symbol back to its wire name. [kiota-typescript#2111](https://github.com/microsoft/kiota-typescript/issues/2111)
+- Fixed defaults primitive default-value handling during code generation for all languages
+- Ruby: added composed type (union/intersection) support to the factory, serializer and deserializer bodies, and stopped emitting composed type wrappers as inner classes. Un-suppresses the Twitter integration test. [kiota-abstractions-ruby#73](https://github.com/microsoft/kiota-abstractions-ruby/issues/73) [#1816](https://github.com/microsoft/kiota/issues/1816)
+- Ruby: `initialize` is now a reserved name. An API member called `initialize` previously generated a second `def initialize`, redefining the constructor; it is now escaped.
+- Ruby: removed the blank line emitted at the start of every generated class body.
+- Ruby: moved the runtime gem dependencies to 0.19.0, the first release able to serialize a primitive composed type member and to tell which member a payload holds.
+- Ruby: models whose names differ only in where a separator falls (e.g. `codeScanningVariantAnalysis_status` and `codeScanningVariantAnalysisStatus`) snake-cased to the same file name, so one silently overwrote the other and the models barrel required it twice. Colliding file names are now disambiguated, leaving the generated type names unchanged. Un-suppresses the GitHub integration test. [#1816](https://github.com/microsoft/kiota/issues/1816)
+- Ruby: fixed flattening of models nested more than one namespace deep. The separators were emitted into the class name, producing invalid constants such as `class S.v2.billingMeterEvent`, and the models namespace was itself renamed part-way through the walk, prefixing every nested model with a fragment of it (`s_v2_billing_meter_event`). Un-suppresses the Stripe integration and idempotency tests. [#1816](https://github.com/microsoft/kiota/issues/1816)
+- Fixed plugin manifest generation to omit unsafe `oauth_card_path` file references that could resolve outside the plugin package.
+- Bumped `Microsoft.OpenApi` and `Microsoft.OpenApi.YamlReader` to 3.10.2, and lifted the YAML reader scalar length limit so descriptions with large scalars (e.g. long markdown descriptions) can still be parsed.
+- Numeric scalar unions with a format (e.g. `type: ["integer", "string"]` with `format: int32`, as emitted by ASP.NET Core's OpenAPI 3.1 generator under System.Text.Json's default `JsonNumberHandling.AllowReadingFromString`) now map to the numeric type instead of degrading to `UntypedNode`. [#6541](https://github.com/microsoft/kiota/issues/6541)
+- Ruby: removed `then` from multiline `unless` and skipped empty `case` blocks in factory methods to fix RuboCop and SyntaxError offenses. [kiota-abstractions-ruby#66](https://github.com/microsoft/kiota-abstractions-ruby/issues/66) [#7856](https://github.com/microsoft/kiota/issues/7856)
+- Ruby: fixed enum default values with numeric wire names (e.g. `2.0`) to use the enum option name instead of the raw value as a Ruby symbol. [kiota-abstractions-ruby#66](https://github.com/microsoft/kiota-abstractions-ruby/issues/66)
+- Ruby: fixed `case/when` indentation and added empty line after `attr_accessor` to resolve RuboCop offenses in generated code. [kiota-abstractions-ruby#59](https://github.com/microsoft/kiota-abstractions-ruby/issues/59)
+- golang: generated code now always uses LF line endings, so `gofmt` no longer reports formatting differences when generating on Windows.
+- golang: make sure all generated code adheres to golangs coding standards
+- Fixed non-deterministic model class descriptions when a component schema is referenced from multiple properties with differing reference-level descriptions. [#7927](https://github.com/microsoft/kiota/issues/7927)
+- Fixed generation of a spurious union type/wrapper for `oneOf` nullable reference types (e.g. `oneOf: [$ref, {type: null}]` as emitted by ASP.NET Core 10's OpenAPI 3.1 generator); these now collapse to the nullable target type, matching the existing `anyOf` behavior. [#6776](https://github.com/microsoft/kiota/issues/6776)
+- TypeScript: fixed generation for primitive binary unions by handling `ArrayBuffer` as a primitive type, and deduplicated redundant serialization/deserialization branches when multiple union members map to the same runtime type (e.g. `binary` and `base64`).
+- TypeScript: fixed composed type deserialization for unions that include Kiota primitive types such as `DateOnly`.
+- C#: write `#pragma` to disable CS1591 for properties without description. [#8095](https://github.com/microsoft/kiota/issues/8095)
+- C#: don't create `<see cref="byte[]"/>` xml doc comments [#8099](https://github.com/microsoft/kiota/issues/8099)
+- Required array query parameters with `explode: true` (the OpenAPI default for query parameters) now use the exploded form expansion (`{?param*}`) in URL templates so each value repeats the key, instead of the required syntax `param={param}` which comma joins the values. Required scalar query parameters keep the required syntax since scalar expansion is identical either way. Note the tradeoff RFC 6570 forces here: a required exploded array left unset now disappears from the query string entirely instead of emitting a bare `param=` pair. [#8031](https://github.com/microsoft/kiota/issues/8031) [#4487](https://github.com/microsoft/kiota/issues/4487)
+
 ## [1.34.1] - 2026-07-09
 
 ### Added
@@ -68,7 +103,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fixed a generated-source code injection vulnerability (CWE-94) in the C# emitter where newlines in an OpenAPI `externalDocs.description` could break out of the `///` doc comment and inject arbitrary code. [#7831](https://github.com/microsoft/kiota/pull/7831)
 - Fixed a bug that generares an empty model when allOf inheritance schema is reached via a composed type [#7791](https://github.com/microsoft/kiota/issues/7791)
-- Fixed a bug in PHP generation where `parent::__construct()` was generated for parent classes without a constructor [#7809](https://github.com/microsoft/kiota/issues/7809) [#7810](https://github.com/microsoft/kiota/pull/7810) 
+- Fixed a bug in PHP generation where `parent::__construct()` was generated for parent classes without a constructor [#7809](https://github.com/microsoft/kiota/issues/7809) [#7810](https://github.com/microsoft/kiota/pull/7810)
 
 ## [1.32.2] - 2026-06-05
 
@@ -109,7 +144,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Fixed a bug where local OpenAPI documents were opened with Read/Write instead of Read, briefly preventing concurrent kiota instances from running against the same file. [#7601](https://github.com/microsoft/kiota/pull/7601) 
+- Fixed a bug where local OpenAPI documents were opened with Read/Write instead of Read, briefly preventing concurrent kiota instances from running against the same file. [#7601](https://github.com/microsoft/kiota/pull/7601)
 - Fixed a bug with default strings representations.
 
 ## [1.31.0] - 2026-04-09
@@ -177,7 +212,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed an issue where migration from lock to workspace would fail because of stream management. [#6515](https://github.com/microsoft/kiota/issues/6515)
 - Fixed a bug where media types from error responses would be missing from the accept header. [#6572](https://github.com/microsoft/kiota/issues/6572)
 - Fixed a bug where serialization names for Dart were not correct [#6624](https://github.com/microsoft/kiota/issues/6624)
-- Fixed a bug where imports from __future__ would appear below other imports in python generated code. [#4600](https://github.com/microsoft/kiota/issues/4600)
+- Fixed a bug where imports from `__future__` would appear below other imports in python generated code. [#4600](https://github.com/microsoft/kiota/issues/4600)
 
 ## [1.26.1] - 2025-05-15
 
@@ -319,7 +354,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed Python error when a class inherits from a base class and implements an interface. [#5637](https://github.com/microsoft/kiota/issues/5637)
 - Fixed a bug where one/any schemas with single schema entries would be missing properties. [#5808](https://github.com/microsoft/kiota/issues/5808)
 - Fixed anyOf/oneOf generation in TypeScript. [5353](https://github.com/microsoft/kiota/issues/5353)
-- Fixed invalid code in Php caused by "*/*/" in property description. [5635](https://github.com/microsoft/kiota/issues/5635)
+- Fixed invalid code in Php caused by `"*/*/"` in property description. [5635](https://github.com/microsoft/kiota/issues/5635)
 - Fixed a bug where discriminator property name lookup could end up in an infinite loop. [#5771](https://github.com/microsoft/kiota/issues/5771)
 - Fixed TypeScript generation error when generating usings from shaken serializers. [#5634](https://github.com/microsoft/kiota/issues/5634)
 - Multiple fixed and improvements in OpenAPI description generation for plugins. [#5806](https://github.com/microsoft/kiota/issues/5806)
@@ -460,7 +495,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added uri-form encoded serialization for PHP. [#2074](https://github.com/microsoft/kiota/issues/2074)
 - Added information message with base URL in the CLI experience. [#4635](https://github.com/microsoft/kiota/issues/4635)
 - Added optional parameter --disable-ssl-validation for generate, show, and download commands. [#4176](https://github.com/microsoft/kiota/issues/4176)
-- For *Debug* builds of kiota, the `--log-level` / `--ll` option is now observed if specified explicitly on the command line. It still defaults to `Debug` for *Debug* builds and `Warning` for *Release* builds. [#4739](https://github.com/microsoft/kiota/pull/4739)
+- For _Debug_ builds of kiota, the `--log-level` / `--ll` option is now observed if specified explicitly on the command line. It still defaults to `Debug` for _Debug_ builds and `Warning` for _Release_ builds. [#4739](https://github.com/microsoft/kiota/pull/4739)
 
 ### Changed
 
@@ -1062,7 +1097,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed unused generated import for PHP Generation.
 - Fixed a bug where long namespaces would make Ruby packaging fail.
 - Fixed a bug where classes with namespace names are generated outside namespace in Python. [#2188](https://github.com/microsoft/kiota/issues/2188)
-- Changed signature of escaped reserved names from {x}*escaped to {x}* in line with Python style guides.
+- Changed signature of escaped reserved names from `{x}*escaped` to `{x}*` in line with Python style guides.
 - Add null checks in generated Shell language code.
 - Fixed a bug where Go indexers would fail to pass the index parameter.
 - Fixed a bug where path segments with parameters could be missing words. [#2209](https://github.com/microsoft/kiota/issues/2209)
@@ -1811,5 +1846,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Initial GitHub release
-
 

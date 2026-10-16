@@ -1658,7 +1658,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         writer.Write(method);
         var result = tw.ToString();
         Assert.DoesNotContain("see */ more", result);
-        Assert.Contains("see  more", result);
+        Assert.Contains("see * / more", result);
         Assert.Contains("@see <a href=", result);
     }
     [Fact]
@@ -2059,6 +2059,33 @@ public sealed class CodeMethodWriterTests : IDisposable
         writer.Write(method);
         var result = tw.ToString();
         Assert.Contains($"this.set{propName.ToFirstCharacterUpperCase()}({defaultValue.SanitizeQuotedStringLiteral()})", result);
+    }
+    [Fact]
+    public void DoesNotWriteInvalidPrimitiveDefaultValues()
+    {
+        setup();
+        method.Kind = CodeMethodKind.Constructor;
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = "hostileBoolean",
+            DefaultValue = "\"false; injectedCall()\\\r\n\t$\"",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { Name = "boolean" }
+        });
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = "hostileNumber",
+            DefaultValue = "1; injectedCall()",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { Name = "integer" }
+        });
+
+        writer.Write(method);
+        var result = tw.ToString();
+
+        Assert.DoesNotContain("injectedCall", result);
+        Assert.DoesNotContain("setHostileBoolean", result);
+        Assert.DoesNotContain("setHostileNumber", result);
     }
     [Fact]
     public void WritesConstructorWithDefaultValuesThatRequireParsing()

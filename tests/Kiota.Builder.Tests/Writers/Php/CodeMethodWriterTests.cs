@@ -289,7 +289,7 @@ public sealed class CodeMethodWriterTests : IDisposable
         Assert.Contains("public function post(): Promise", result);
         Assert.Contains("$requestInfo = $this->createPostRequestInformation();", result);
         Assert.DoesNotContain("@link https://learn.microsoft.com/ Learning */ docs", result);
-        Assert.Contains("@link https://learn.microsoft.com/ Learning  docs", result);
+        Assert.Contains("@link https://learn.microsoft.com/ Learning * / docs", result);
         Assert.Contains("'401' => [Error401::class, 'createFromDiscriminatorValue']", result);
         Assert.Contains("$result = $this->requestAdapter->sendPrimitiveAsync($requestInfo, StreamInterface::class, $errorMappings);", result);
         Assert.Contains("return $result;", result);
@@ -1349,6 +1349,42 @@ public sealed class CodeMethodWriterTests : IDisposable
         _codeMethodWriter.WriteCodeElement(constructor, languageWriter);
         var result = stringWriter.ToString();
         Assert.Contains("$this->setType('line1\\'\\\\\\nline2')", result);
+    }
+    [Fact]
+    public async Task DoesNotWriteInvalidPrimitiveDefaultValuesAsync()
+    {
+        setup();
+        parentClass.Kind = CodeClassKind.Model;
+        var constructor = new CodeMethod
+        {
+            Name = "constructor",
+            Access = AccessModifier.Public,
+            ReturnType = new CodeType { Name = "void" },
+            Kind = CodeMethodKind.Constructor
+        };
+        parentClass.AddMethod(constructor);
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = "hostileBoolean",
+            DefaultValue = "\"false; injectedCall()\\\r\n\t$\"",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { Name = "boolean" }
+        });
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = "hostileNumber",
+            DefaultValue = "1; injectedCall()",
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { Name = "integer" }
+        });
+
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP }, root, cancellationToken: TestContext.Current.CancellationToken);
+        _codeMethodWriter.WriteCodeElement(constructor, languageWriter);
+        var result = stringWriter.ToString();
+
+        Assert.DoesNotContain("injectedCall", result);
+        Assert.DoesNotContain("setHostileBoolean", result);
+        Assert.DoesNotContain("setHostileNumber", result);
     }
     [Fact]
     public async Task WritesConstructorWithDefaultValuesThatRequireParsingAsync()

@@ -58,13 +58,35 @@ $extensionVersion = $versionParts[0] + "." + $versionParts[1] + "." + $updatedPa
 $packageJson.version = $extensionVersion
 $runtimeDependencies = $runtimeJson.runtimeDependencies
 
-# Update the version in the package.json located in the same directory as runtimeJson
+# Update the version in the npm-package package.json.
+# It normally sits next to runtime.json, but when runtime.json lives in a sub-folder
+# (e.g. lib/) the package.json is in the parent directory instead.
 $runtimeJsonDirectory = Split-Path -Path $runtimeFilePath -Parent
 $runtimePackageJsonFilePath = Join-Path -Path $runtimeJsonDirectory -ChildPath "package.json"
+if (-not (Test-Path $runtimePackageJsonFilePath)) {
+  $runtimeJsonParentDirectory = Split-Path -Path $runtimeJsonDirectory -Parent
+  if ($runtimeJsonParentDirectory) {
+    $runtimePackageJsonFilePath = Join-Path -Path $runtimeJsonParentDirectory -ChildPath "package.json"
+  }
+}
 if (Test-Path $runtimePackageJsonFilePath) {
   $runtimePackageJson = Get-Content $runtimePackageJsonFilePath | ConvertFrom-Json
   $runtimePackageJson.version = $version
   Set-Content $runtimePackageJsonFilePath ($runtimePackageJson | ConvertTo-Json -Depth 10)
+
+  # For preview builds the npm-package version becomes a prerelease (e.g. 1.x.y-preview.*).
+  # A caret range such as ^1.x.y does not satisfy a prerelease of a different patch tuple, so
+  # `npm ci` would stop resolving the dependency to the local workspace and instead pull it (plus
+  # its transitive dependencies) from the registry, breaking the committed lockfile's sync check.
+  # Pin the extension's dependency to the exact preview version so npm keeps linking the local
+  # workspace. This is intentionally limited to preview builds to preserve `npm ci` validity for
+  # regular releases, whose plain versions still satisfy the committed caret range.
+  if ($version -like "*-preview.*") {
+    $dependencyName = $runtimePackageJson.name
+    if ($dependencyName -and $packageJson.dependencies -and ($packageJson.dependencies.PSObject.Properties.Name -contains $dependencyName)) {
+      $packageJson.dependencies.$dependencyName = $version
+    }
+  }
 }
 
 if ($online) {

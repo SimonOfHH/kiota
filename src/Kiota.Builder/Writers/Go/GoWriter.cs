@@ -4,7 +4,10 @@ namespace Kiota.Builder.Writers.Go;
 
 public class GoWriter : LanguageWriter
 {
-    public GoWriter(string rootPath, string clientNamespaceName, bool excludeBackwardCompatible = false)
+    // gofmt (and Go tooling in general) requires LF line endings, so Go output always uses LF
+    // regardless of the host OS newline.
+    protected override string LineSeparator => "\n";
+    public GoWriter(string rootPath, string clientNamespaceName, bool excludeBackwardCompatible = false) : base("\t", 1)
     {
         PathSegmenter = new GoPathSegmenter(rootPath, clientNamespaceName);
         var conventionService = new GoConventionService();
